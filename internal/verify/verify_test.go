@@ -103,3 +103,16 @@ func TestUnsignedLogRefused(t *testing.T) {
 		t.Errorf("unsigned log accepted: %+v", r)
 	}
 }
+
+func TestMissingDatabaseNotCreated(t *testing.T) {
+	dir, pub := build(t, 1)
+	os.Remove(filepath.Join(dir, "hub.db"))
+	os.Remove(filepath.Join(dir, "hub.db-wal"))
+	os.Remove(filepath.Join(dir, "hub.db-shm"))
+	if _, err := Hub(context.Background(), dir, pub); err == nil {
+		t.Error("missing database: no error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hub.db")); err == nil {
+		t.Error("verify created a database")
+	}
+}

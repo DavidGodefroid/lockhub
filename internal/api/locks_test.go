@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,5 +184,21 @@ func TestNewlineInSignedFieldRefused(t *testing.T) {
 	api.LockHandler(e.Hub, "t").ServeHTTP(rec, req)
 	if rec.Code != 401 {
 		t.Errorf("newline in instance: %d", rec.Code)
+	}
+}
+
+func TestFacadeRefusesUnknownPeer(t *testing.T) {
+	e, _, ca, _ := setup(t)
+	ca.do("POST", "/v1/tickets", ca.lock.Ticket("U", "read", e.Clock.T, 0), nil)
+	// Over TCP the kernel tells no uid: a decision cannot be attributed.
+	srv := httptest.NewServer(api.FacadeHandler(e.Hub))
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/v1/tickets/a/U/decide", "application/json", strings.NewReader(`{"approved":true,"facade":"tty"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("unknown peer: %d", resp.StatusCode)
 	}
 }

@@ -104,12 +104,11 @@ func openHub(data string) (*hub.Hub, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	al, err := audit.Open(filepath.Join(data, "tickets.jsonl"))
+	al, err := audit.OpenSigned(filepath.Join(data, "tickets.jsonl"), key)
 	if err != nil {
 		st.Close()
 		return nil, nil, err
 	}
-	al.SetKey(key)
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks})
 	return h, func() { al.Close(); st.Close() }, nil
 }
@@ -173,15 +172,25 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Serve
 	if err != nil || m&0o007 != 0 {
 		return nil, fmt.Errorf("mode %q: an octal mode without access for others", mode)
 	}
+	// The socket's directory must be private: the socket is reachable
+	// through it only, whatever the socket's own mode in the instant
+	// between listen and chmod.
+	dir := filepath.Dir(path)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%s: want a directory of mode 0700", dir)
+	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
 		}
+		// Do not take over a socket another hub still serves.
+		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
+			c.Close()
+			return nil, fmt.Errorf("%s: another hub is serving it", path)
+		}
 		os.Remove(path)
 	}
-	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
-	syscall.Umask(old)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +198,8 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Serve
 		ln.Close()
 		return nil, err
 	}
-	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ConnContext: peer.ConnContext}
+	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ConnContext: peer.ConnContext}
 	go func() { errc <- srv.Serve(ln) }()
 	return srv, nil
 }

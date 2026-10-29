@@ -80,7 +80,20 @@ func (l *Log) SetKey(key ed25519.PrivateKey) { l.key = key }
 // Open opens (or creates, 0600) the log at path, verifies it and resumes
 // its chain. A broken chain refuses to open: the hub does not start on a
 // log it cannot extend honestly.
-func Open(path string) (*Log, error) {
+func Open(path string) (*Log, error) { return open(path, nil) }
+
+// OpenSigned is Open that also requires every existing record to be
+// signed by key, and signs new records with priv (key's private half).
+func OpenSigned(path string, priv ed25519.PrivateKey) (*Log, error) {
+	l, err := open(path, priv.Public().(ed25519.PublicKey))
+	if err != nil {
+		return nil, err
+	}
+	l.key = priv
+	return l, nil
+}
+
+func open(path string, key ed25519.PublicKey) (*Log, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
@@ -89,7 +102,7 @@ func Open(path string) (*Log, error) {
 		f.Close()
 		return nil, err
 	}
-	last, n, err := verify(f, nil)
+	last, n, err := verify(f, key)
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("audit %s: %w", path, err)
