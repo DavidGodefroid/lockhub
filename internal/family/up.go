@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
@@ -121,15 +122,16 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	ws, _ := filepath.Abs(filepath.Dir(u.File))
 	project := Project(ws)
-	lf := filepath.Join(ws, ".lockfamily")
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
-	for _, d := range []string{lf, filepath.Join(lf, "keys"), u.State, hubData, facadeDir} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
+	// Everything lock up writes and runs from lives in host-only
+	// directories it owns: never in the workspace, which agents can write.
+	for _, d := range []string{u.State, hubData, facadeDir} {
+		if err := privateDir(d); err != nil {
 			return err
 		}
 	}
-	composePath := filepath.Join(lf, "compose.yaml")
+	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
 	if err := os.WriteFile(composePath, []byte(Compose(c, paths)), 0o644); err != nil {
@@ -139,20 +141,19 @@ func (u *Up) Do(ctx context.Context) error {
 		return append([]string{"compose", "-p", project, "-f", composePath}, args...)
 	}
 
-	// 1. Images: pinned digests, signed by their release workflow.
-	images := map[string]string{"lockhub": c.Hub.Image}
+	// 1. Images: every distinct pinned digest, signed by its own
+	// repository's release workflow.
+	type img struct{ repo, ref string }
+	images := []img{{"lockhub", c.Hub.Image}}
 	for _, n := range c.Instances() {
-		images[c.Locks[n].Type] = c.Locks[n].Image
+		images = append(images, img{c.Locks[n].Type, c.Locks[n].Image})
 	}
-	var repos []string
-	for r := range images {
-		repos = append(repos, r)
-	}
-	slices.Sort(repos)
-	for _, r := range repos {
+	slices.SortFunc(images, func(a, b img) int { return strings.Compare(a.ref, b.ref) })
+	images = slices.Compact(images)
+	for _, im := range images {
 		if _, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"--certificate-identity-regexp", "^https://github.com/DavidGodefroid/"+r+"/.github/workflows/release.yml@refs/tags/v", images[r]); err != nil {
-			return fmt.Errorf("image %s is not signed by its release: %w", images[r], err)
+			"--certificate-identity-regexp", "^https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v", im.ref); err != nil {
+			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
 	}
 
@@ -247,6 +248,29 @@ func (u *Up) Do(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	return nil
+}
+
+// privateDir creates d (0700) if needed and refuses it unless it is a
+// real directory (not a link) owned by this user with no access for
+// group or others.
+func privateDir(d string) error {
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(d)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s: not a directory (a link?)", d)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+		return fmt.Errorf("%s: owned by uid %d, not by you", d, st.Uid)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s: mode %v, want 0700", d, fi.Mode().Perm())
+	}
 	return nil
 }
 

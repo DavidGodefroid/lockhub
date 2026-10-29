@@ -151,8 +151,8 @@ func TestChangeNeedsConfirmation(t *testing.T) {
 }
 
 func TestPreexistingDirStillFullReview(t *testing.T) {
-	// A .lockfamily/ left by someone else (no applied state on the host)
-	// gets the full review, not a diff.
+	// A .lockfamily/ left by someone else in the workspace is never read:
+	// the first run on this host gets the full review, not a diff.
 	w := newWS(t, yamlConf(""))
 	os.MkdirAll(filepath.Join(filepath.Dir(w.file), ".lockfamily", "keys"), 0o755)
 	os.WriteFile(filepath.Join(filepath.Dir(w.file), ".lockfamily", "applied.json"), []byte(`{"fingerprint":"x"}`), 0o644)
@@ -212,5 +212,57 @@ func TestComposeIsolation(t *testing.T) {
 	}
 	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"}) {
 		t.Error("compose output is not deterministic")
+	}
+}
+
+func TestComposeFileOutsideWorkspace(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(w.file), ".lockfamily", "compose.yaml")); err == nil {
+		t.Error("compose file written in the workspace")
+	}
+	if !f.ran("-f " + filepath.Join(w.dir, "state", "compose.yaml")) {
+		t.Errorf("compose not run from the state dir: %v", f.calls)
+	}
+}
+
+func TestEveryImageVerified(t *testing.T) {
+	two := yamlConf("") + `  crm-test:
+    type: locksql
+    image: ghcr.io/davidgodefroid/locksql@sha256:4444444444444444444444444444444444444444444444444444444444444444
+`
+	w := newWS(t, two)
+	f := newFake()
+	f.keys["crm-test"] = pubKey()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"2222", "4444", "3333", "1111"} {
+		if !f.ran("cosign verify") || !f.ran("@sha256:"+strings.Repeat(d, 16)) {
+			t.Errorf("image %s… not verified: %v", d, f.calls)
+		}
+	}
+	f2 := newFake()
+	f2.keys["crm-test"] = pubKey()
+	f2.failing = "4444444444444444"
+	if _, err := newWS(t, two).up("y\n", f2); err == nil {
+		t.Error("second image of the same type not verified")
+	}
+}
+
+func TestStateDirMustBePrivate(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	os.MkdirAll(filepath.Join(w.dir, "state"), 0o755)
+	os.Chmod(filepath.Join(w.dir, "state"), 0o755)
+	if _, err := w.up("y\n", newFake()); err == nil || !strings.Contains(err.Error(), "want 0700") {
+		t.Errorf("open state dir: %v", err)
+	}
+	w2 := newWS(t, yamlConf(""))
+	os.Symlink(t.TempDir(), filepath.Join(w2.dir, "state"))
+	if _, err := w2.up("y\n", newFake()); err == nil {
+		t.Error("state dir behind a link accepted")
 	}
 }
