@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- `lock add`, `lock import`, `lock doctor` (#9). `add` declares a lock
+  (image pinned by digest) in lockfamily.yaml, keeping its comments;
+  `import` merges sub-projects' lockfamily.yaml, keeping each instance's
+  first declaration and the strictest routing, and reports every
+  difference; both validate before writing and leave the review to the
+  next `lock up`. `doctor` checks the configuration, engine, images,
+  state directories, keys, routing, facade socket, containers and the
+  hub's internal network, and prints the commands that remove host
+  accounts left by pre-hub consoles; it changes nothing.
+
 - `lock up [--file] [--dry-run]` (#5), minimal: reads lockfamily.yaml
   (version 1: which locks run, images pinned by digest, facades and
   routing; a lock's target, production flag and credentials stay in its
