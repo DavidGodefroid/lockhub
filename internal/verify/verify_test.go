@@ -25,6 +25,7 @@ func build(t *testing.T, n int) (string, ed25519.PublicKey) {
 	hpub, hpriv, _ := ed25519.GenerateKey(rand.Reader)
 	st, _ := store.Open(filepath.Join(dir, "hub.db"))
 	al, _ := audit.Open(filepath.Join(dir, "tickets.jsonl"))
+	al.SetKey(hpriv)
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: ticketcodec.Codec{}, Key: hpriv, Locks: map[string]ed25519.PublicKey{"crm": lpub}})
 	for i := 0; i < n; i++ {
 		tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm"}, ticket.RiskRead,
@@ -56,7 +57,7 @@ func TestWrongHubKey(t *testing.T) {
 	dir, _ := build(t, 1)
 	other, _, _ := ed25519.GenerateKey(rand.Reader)
 	r, _ := Hub(context.Background(), dir, other)
-	if r.OK() || !strings.Contains(r.Problems[0], "signature") {
+	if r.OK() || !strings.Contains(r.Problems[0], "signed by the hub key") {
 		t.Errorf("report %+v", r)
 	}
 }
@@ -81,5 +82,24 @@ func TestEditedLog(t *testing.T) {
 	r, _ := Hub(context.Background(), dir, pub)
 	if r.OK() || !strings.Contains(r.Problems[0], "audit chain") {
 		t.Errorf("edit not seen: %+v", r)
+	}
+}
+
+func TestUnsignedLogRefused(t *testing.T) {
+	dir, pub := build(t, 1)
+	p := filepath.Join(dir, "tickets.jsonl")
+	b, _ := os.ReadFile(p)
+	// Strip the signatures: the chain still hashes, but nothing vouches for it.
+	var out []string
+	for _, l := range strings.SplitAfter(string(b), "\n") {
+		if i := strings.Index(l, `,"sig":"`); i >= 0 {
+			l = l[:i] + "}\n"
+		}
+		out = append(out, l)
+	}
+	os.WriteFile(p, []byte(strings.Join(out, "")), 0o600)
+	r, _ := Hub(context.Background(), dir, pub)
+	if r.OK() || !strings.Contains(r.Problems[0], "not signed") {
+		t.Errorf("unsigned log accepted: %+v", r)
 	}
 }

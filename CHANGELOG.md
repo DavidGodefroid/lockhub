@@ -6,7 +6,8 @@ digest).
 ## Unreleased
 
 - `lock audit verify --data DIR --hub-key-file FILE` (#4): checks the
-  hub's hash chain, every decision's signature against the pinned hub
+  hub's hash chain and that every record is signed by the pinned hub key,
+  the signed decision matching its audit record, every decision's signature against the pinned hub
   key, and that the database and the log agree (a cut log tail shows as
   a decision missing from the log). Lock audit chains follow with
   lockkit's audit chain (DavidGodefroid/lockkit#30).

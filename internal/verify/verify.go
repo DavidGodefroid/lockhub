@@ -30,7 +30,9 @@ type Report struct {
 // OK reports whether nothing is wrong.
 func (r Report) OK() bool { return len(r.Problems) == 0 }
 
-func (r *Report) bad(format string, a ...any) { r.Problems = append(r.Problems, fmt.Sprintf(format, a...)) }
+func (r *Report) bad(format string, a ...any) {
+	r.Problems = append(r.Problems, fmt.Sprintf(format, a...))
+}
 
 // Hub verifies the hub data directory dir against the hub's public key.
 func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, error) {
@@ -41,14 +43,14 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 		return r, err
 	}
 	defer f.Close()
-	n, err := audit.Verify(f)
+	n, err := audit.VerifySigned(f, hubKey)
 	r.Records = n
 	if err != nil {
 		r.bad("audit chain: %v", err)
 		return r, nil
 	}
-	// Decision hashes the audit log vouches for.
-	inLog := map[string]string{} // instance/ticket → decision hash
+	// Decisions the audit log vouches for.
+	inLog := map[string]audit.Record{} // instance/ticket → its decision record
 	f.Seek(0, 0)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
@@ -56,7 +58,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 		var rec audit.Record
 		json.Unmarshal(sc.Bytes(), &rec)
 		if rec.Decision != "" {
-			inLog[rec.Instance+"/"+rec.Ticket] = rec.Decision
+			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
 	}
 	st, err := store.Open(filepath.Join(dir, "hub.db"))
@@ -87,11 +89,17 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			}
 			sum := sha256.Sum256(d.Raw)
 			h := "sha256:" + hex.EncodeToString(sum[:])
-			switch lh, ok := inLog[key]; {
+			want := "denied"
+			if dec.Decision == ticket.Approved {
+				want = "approved"
+			}
+			switch rec, ok := inLog[key]; {
 			case !ok:
 				r.bad("decision %s: not in the audit log (log cut or edited)", key)
-			case lh != h:
+			case rec.Decision != h:
 				r.bad("decision %s: differs from the one the audit log recorded", key)
+			case rec.State != want || rec.Approver != dec.Approver.ID || rec.Facade != dec.Facade:
+				r.bad("decision %s: the audit record (%s by %s on %s) does not match the signed decision", key, rec.State, rec.Approver, rec.Facade)
 			}
 			delete(inLog, key)
 		}
