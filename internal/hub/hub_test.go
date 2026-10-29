@@ -245,3 +245,22 @@ func TestFieldLimits(t *testing.T) {
 		t.Errorf("long decision reason: %v", err)
 	}
 }
+
+func TestQueueVersionNoGap(t *testing.T) {
+	a := hubtest.NewLock("a")
+	e := hubtest.New(t, 0, a)
+	_, v0, _ := e.Hub.Queue(ctx, 0, 0)
+	// A change between two polls is not lost: polling with the last
+	// version returns at once.
+	e.Hub.Push(ctx, "a", a.Ticket("Q1", "read", e.Clock.T, 0))
+	start := time.Now()
+	tks, v1, err := e.Hub.Queue(ctx, v0, 5*time.Second)
+	if err != nil || len(tks) != 1 || v1 == v0 || time.Since(start) > time.Second {
+		t.Fatalf("Queue after a missed change: %d tickets, v %d→%d, %v, %v", len(tks), v0, v1, time.Since(start), err)
+	}
+	// Up to date: waits until the timeout.
+	start = time.Now()
+	if _, v2, _ := e.Hub.Queue(ctx, v1, 100*time.Millisecond); v2 != v1 || time.Since(start) < 90*time.Millisecond {
+		t.Errorf("up-to-date poll returned early (v %d)", v2)
+	}
+}

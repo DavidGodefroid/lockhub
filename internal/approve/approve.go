@@ -75,11 +75,12 @@ type HubError struct {
 
 func (e *HubError) Error() string { return e.Message }
 
-// Queue fetches the pending tickets, waiting up to wait for a change.
-func (c *Client) Queue(ctx context.Context, wait time.Duration) ([]api.QueueItem, error) {
+// Queue fetches the pending tickets and the queue version, waiting up to
+// wait for a change after version since.
+func (c *Client) Queue(ctx context.Context, since uint64, wait time.Duration) ([]api.QueueItem, uint64, error) {
 	var r api.QueueResult
-	err := c.do(ctx, "GET", fmt.Sprintf("/v1/queue?wait=%d", int(wait/time.Second)), nil, &r)
-	return r.Tickets, err
+	err := c.do(ctx, "GET", fmt.Sprintf("/v1/queue?since=%d&wait=%d", since, int(wait/time.Second)), nil, &r)
+	return r.Tickets, r.Version, err
 }
 
 // Decide sends a decision.
@@ -148,8 +149,10 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	skipped := map[string]bool{}
 	wait := time.Duration(0)
+	var ver uint64
 	for {
-		items, err := s.C.Queue(ctx, wait)
+		items, v, err := s.C.Queue(ctx, ver, wait)
+		ver = v
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
