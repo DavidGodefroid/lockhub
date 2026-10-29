@@ -5,6 +5,14 @@ digest).
 
 ## Unreleased
 
+- Telegram facade (#8): same rules as Slack, over long-polled
+  `getUpdates` (outbound only). Answers count only from the (chat,
+  sender) pairs of `hub.telegram.chats`; agent text is HTML-escaped and
+  kept in `<code>`/`<pre>`, link previews off; decisions signed as
+  `telegram:<chat>:<from>`. `lock add telegram --chat --from` asks for the
+  bot token at the terminal. The hub itself now refuses a production
+  ticket answered on any chat facade, and a chat facade that fails for
+  good (a revoked token) stops alone instead of stopping the hub.
 - Slack facade (#7): runs inside the hub when `hub.facades` lists
   `slack`, in Socket Mode only (an outbound websocket: the hub listens
   for nothing). Only the lock's masked screen is posted, every

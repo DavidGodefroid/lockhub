@@ -8,12 +8,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -37,6 +39,8 @@ Usage:
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp; REF pinned @sha256)
   lock add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
                                           enable the Slack facade; asks for its tokens at the terminal
+  lock add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
+                                          enable the Telegram facade; asks for the bot token at the terminal
   lock import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
@@ -73,6 +77,9 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	case "add":
 		if len(args) > 1 && args[1] == "slack" {
 			return addSlackCmd(args[2:], stdin, stdout, stderr)
+		}
+		if len(args) > 1 && args[1] == "telegram" {
+			return addTelegramCmd(args[2:], stdin, stdout, stderr)
 		}
 		return addCmd(args[1:], stdout, stderr)
 	case "import":
@@ -340,18 +347,10 @@ func addSlackCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lock add slack:", err)
 		return 2
 	}
-	// Tokens are typed (or pasted) at a terminal, never on the command
-	// line, where other processes and the shell history see them.
-	fd := int(stdin.Fd())
-	if !term.IsTerminal(fd) {
-		fmt.Fprintln(stderr, "lock add slack: the tokens are typed at a terminal; stdin is not one")
+	ask, err := tokenPrompt(stdin, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
 		return 1
-	}
-	ask := func(prompt string) (string, error) {
-		fmt.Fprint(stdout, prompt)
-		b, err := term.ReadPassword(fd)
-		fmt.Fprintln(stdout)
-		return strings.TrimSpace(string(b)), err
 	}
 	app, err := ask("Slack app-level token (xapp-…, scope connections:write): ")
 	if err != nil {
@@ -373,5 +372,80 @@ func addSlackCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", *file, strings.Join(s.Users, ", "))
+	return 0
+}
+
+// tokenPrompt reads secrets typed (or pasted) at a terminal without echo,
+// never from the command line, where other processes and the shell
+// history see them.
+func tokenPrompt(stdin *os.File, stdout io.Writer) (func(string) (string, error), error) {
+	fd := int(stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil, errors.New("tokens are typed at a terminal; stdin is not one")
+	}
+	return func(prompt string) (string, error) {
+		fmt.Fprint(stdout, prompt)
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(stdout)
+		return strings.TrimSpace(string(b)), err
+	}, nil
+}
+
+// int64sFlag is a repeatable integer flag.
+type int64sFlag []int64
+
+func (s *int64sFlag) String() string { return fmt.Sprint(*s) }
+func (s *int64sFlag) Set(v string) error {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return err
+	}
+	*s = append(*s, n)
+	return nil
+}
+
+func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("add telegram", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	var chats, froms int64sFlag
+	fs.Var(&chats, "chat", "a chat id where the bot posts tickets (a private chat: your user id; a group: negative)")
+	fs.Var(&froms, "from", "the user id who may answer in the --chat before it (repeat in pairs)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(pos) != 0 || len(chats) == 0 || len(chats) != len(froms) {
+		fmt.Fprintln(stderr, "usage: lock add telegram --chat ID --from ID [--chat ID --from ID …]")
+		return 2
+	}
+	var tg chatconf.Telegram
+	for i := range chats {
+		tg.Chats = append(tg.Chats, chatconf.TelegramChat{Chat: chats[i], From: froms[i]})
+	}
+	if err := tg.Validate(); err != nil {
+		fmt.Fprintln(stderr, "lock add telegram:", err)
+		return 2
+	}
+	ask, err := tokenPrompt(stdin, stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add telegram:", err)
+		return 1
+	}
+	tok, err := ask("Telegram bot token (from BotFather): ")
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add telegram:", err)
+		return 1
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add telegram:", err)
+		return 1
+	}
+	if err := family.AddTelegram(abs, stateDir(family.Project(filepath.Dir(abs))), tg, tok); err != nil {
+		fmt.Fprintln(stderr, "lock add telegram:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", *file, len(tg.Chats))
 	return 0
 }

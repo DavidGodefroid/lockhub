@@ -81,6 +81,11 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 	if sl := c.Hub.Slack; sl != nil {
 		s = append(s, fmt.Sprintf("hub slack team %s channel %s users %s", sl.Team, sl.Channel, strings.Join(sl.Users, ",")))
 	}
+	if tg := c.Hub.Telegram; tg != nil {
+		for _, ch := range tg.Chats {
+			s = append(s, fmt.Sprintf("hub telegram chat %d user %d", ch.Chat, ch.From))
+		}
+	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
@@ -248,7 +253,7 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(hubData, "routing.json"), append(rb, '\n'), 0o600); err != nil {
 		return err
 	}
-	cb, _ := json.MarshalIndent(chatconf.Settings{Slack: c.Hub.Slack}, "", "  ")
+	cb, _ := json.MarshalIndent(chatconf.Settings{Slack: c.Hub.Slack, Telegram: c.Hub.Telegram}, "", "  ")
 	if err := os.WriteFile(filepath.Join(hubData, chatconf.File), append(cb, '\n'), 0o600); err != nil {
 		return err
 	}
