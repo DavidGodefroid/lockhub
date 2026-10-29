@@ -12,7 +12,7 @@ import (
 // Add appends lock instance name of type typ (image pinned by digest) to
 // the lockfamily.yaml at path, keeping its comments and order. The file
 // is validated before it is written; nothing is started (run lock up).
-func Add(path, typ, name, image string, production bool) error {
+func Add(path, typ, name, image string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -47,9 +47,6 @@ func Add(path, typ, name, image string, production bool) error {
 	}
 	kv("type", typ, "")
 	kv("image", image, "")
-	if production {
-		kv("production", "true", "!!bool")
-	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: name}, entry)
 	var out bytes.Buffer
 	enc := yaml.NewEncoder(&out)

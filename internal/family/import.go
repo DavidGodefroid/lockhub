@@ -7,7 +7,7 @@ import (
 
 // Merge folds the lockfamily.yaml configurations of sub-workspaces into
 // one. An instance declared in several keeps the strictest settings
-// (production wins; routing is the intersection) and every difference is
+// (routing is the intersection) and every difference is
 // reported, for the human to read before lock up applies anything.
 // The hub section comes from base.
 func Merge(base *Config, others map[string]*Config) (*Config, []string) {
@@ -45,13 +45,6 @@ func Merge(base *Config, others map[string]*Config) (*Config, []string) {
 			}
 			if cur.Image != l.Image {
 				notes = append(notes, fmt.Sprintf("%s: lock %s pins another image: kept %s", src, name, cur.Image))
-			}
-			if l.Production && !cur.Production {
-				cur.Production = true
-				notes = append(notes, fmt.Sprintf("%s: lock %s is production there: now production", src, name))
-			}
-			if cur.Credentials != l.Credentials {
-				notes = append(notes, fmt.Sprintf("%s: lock %s uses other credentials (%s): kept %s", src, name, l.Credentials, cur.Credentials))
 			}
 			if r, ok := o.Hub.Routing[name]; ok {
 				before, had := out.Hub.Routing[name]
