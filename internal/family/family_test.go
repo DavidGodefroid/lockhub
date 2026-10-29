@@ -35,9 +35,10 @@ hub:
 }
 
 type fake struct {
-	calls   []string
-	keys    map[string]string
-	failing string
+	upCompose string
+	calls     []string
+	keys      map[string]string
+	failing   string
 }
 
 func pubKey() string {
@@ -45,9 +46,12 @@ func pubKey() string {
 	return keys.Public(p)
 }
 
-func (f *fake) Run(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	line := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, line)
+	if strings.Contains(line, " up -d") {
+		f.upCompose = string(stdin)
+	}
 	if f.failing != "" && strings.Contains(line, f.failing) {
 		return nil, errors.New("refused")
 	}
@@ -281,5 +285,33 @@ func TestRoutingApplied(t *testing.T) {
 		if fi, _ := os.Stat(filepath.Join(w.dir, "state", "hub", f)); fi.Mode().Perm() != 0o600 {
 			t.Errorf("%s mode %v", f, fi.Mode().Perm())
 		}
+	}
+}
+
+func TestConfigChangeRecreatesHub(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.upCompose, "lockfamily.config: \"sha256:") {
+		t.Fatalf("no config label on the hub:\n%s", f.upCompose)
+	}
+	if !f.ran("--project-directory "+filepath.Join(w.dir, "state")) || !f.ran("--env-file "+os.DevNull) {
+		t.Errorf("compose not pinned to the state dir: %v", f.calls)
+	}
+	first := f.upCompose
+	os.WriteFile(w.file, []byte(yamlConf("  routing:\n    crm-prod: [tty]\n")), 0o644)
+	f2 := &fake{keys: f.keys}
+	if _, err := w.up("y\n", f2); err != nil {
+		t.Fatal(err)
+	}
+	if f2.upCompose == first {
+		t.Error("a confirmed routing change leaves the hub service unchanged: compose would not recreate it")
+	}
+	f3 := &fake{keys: f.keys}
+	w.up("", f3)
+	if f3.upCompose != f2.upCompose {
+		t.Error("an unchanged config changes the hub service")
 	}
 }
