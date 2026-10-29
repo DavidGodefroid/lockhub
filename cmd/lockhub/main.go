@@ -99,12 +99,11 @@ func openHub(data string) (*hub.Hub, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	al, err := audit.Open(filepath.Join(data, "tickets.jsonl"))
+	al, err := audit.OpenSigned(filepath.Join(data, "tickets.jsonl"), key)
 	if err != nil {
 		st.Close()
 		return nil, nil, err
 	}
-	al.SetKey(key)
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks})
 	return h, func() { al.Close(); st.Close() }, nil
 }

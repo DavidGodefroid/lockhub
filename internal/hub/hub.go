@@ -140,6 +140,12 @@ func hashBytes(b []byte) string {
 	return "sha256:" + hex.EncodeToString(s[:])
 }
 
+// Every state change appends its audit record inside the store
+// transaction, before the commit: if the audit write fails, the change is
+// rolled back (fail closed). A commit that fails after a successful
+// append leaves a record of an attempted change; lock audit verify
+// reports it as a record the database does not have.
+
 // Push accepts a ticket from instance. Sending the same ticket again is
 // not an error (created is false).
 func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info, created bool, err error) {

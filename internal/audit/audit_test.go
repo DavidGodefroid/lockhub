@@ -97,3 +97,24 @@ func TestSigned(t *testing.T) {
 		t.Errorf("unsigned rebuilt chain: %v", err)
 	}
 }
+
+func TestOpenSignedRefusesForeignRecords(t *testing.T) {
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	p := filepath.Join(t.TempDir(), "tickets.jsonl")
+	write(t, p, 1) // unsigned record
+	if _, err := OpenSigned(p, priv); !errors.Is(err, ErrBroken) {
+		t.Errorf("unsigned history accepted: %v", err)
+	}
+	p2 := filepath.Join(t.TempDir(), "t2.jsonl")
+	l, err := OpenSigned(p2, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Append(Record{Event: "push", Ticket: "T", Instance: "i", State: "pending"})
+	l.Close()
+	if l, err := OpenSigned(p2, priv); err != nil {
+		t.Errorf("own signed history refused: %v", err)
+	} else {
+		l.Close()
+	}
+}
