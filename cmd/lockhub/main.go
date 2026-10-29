@@ -9,10 +9,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/peer"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 	"github.com/DavidGodefroid/lockhub/internal/ticketcodec"
 )
@@ -30,7 +33,9 @@ var version = "dev"
 const usage = `lockhub: the Lock Family approval hub
 
 Usage:
-  lockhub serve [--listen ADDR] [--data DIR]   serve the hub API (default :8443, /var/lib/lockhub)
+  lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH]
+                                               serve the lock API (default :8443, /var/lib/lockhub)
+                                               and the facade API on a unix socket (lock approve, lea deck)
   lockhub keygen [--data DIR]                  create the hub's signing key, print its public half
   lockhub version                              print the version
   lockhub help                    show this help
@@ -113,6 +118,8 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	listen := fs.String("listen", ":8443", "address to listen on")
 	data := fs.String("data", "/var/lib/lockhub", "the hub's data directory")
+	facadeSock := fs.String("facade-socket", "", "unix socket for local facades; only the host's human may reach it (empty: none)")
+	facadeMode := fs.String("facade-socket-mode", "0600", "file mode of the facade socket")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -131,8 +138,16 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go sweep(ctx, h, stderr)
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
+	if *facadeSock != "" {
+		fsrv, err := listenFacade(h, *facadeSock, *facadeMode, errc)
+		if err != nil {
+			fmt.Fprintln(stderr, "lockhub: facade socket:", err)
+			return 1
+		}
+		defer fsrv.Close()
+	}
 	fmt.Fprintf(stderr, "lockhub %s: listening on %s\n", version, *listen)
 	select {
 	case err := <-errc:
@@ -147,6 +162,35 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// listenFacade serves the facade API on a unix socket created with mode
+// (0600 by default: the hub's own account only; lock up maps that account
+// to the host user).
+func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Server, error) {
+	m, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil || m&0o007 != 0 {
+		return nil, fmt.Errorf("mode %q: an octal mode without access for others", mode)
+	}
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("%s exists and is not a socket", path)
+		}
+		os.Remove(path)
+	}
+	old := syscall.Umask(0o177)
+	ln, err := net.Listen("unix", path)
+	syscall.Umask(old)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, os.FileMode(m)); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ConnContext: peer.ConnContext}
+	go func() { errc <- srv.Serve(ln) }()
+	return srv, nil
 }
 
 // sweep expires tickets past their TTL every 30 s.
