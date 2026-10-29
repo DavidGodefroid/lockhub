@@ -72,22 +72,30 @@ func Escape(s string) string {
 	return s
 }
 
-// code is s escaped, in an inline code span.
+// code is s escaped and clipped, in an inline code span. Untrusted text
+// is clipped before the delimiters are added, never after: a cut can
+// never drop a closing backtick.
 func code(s string) string {
 	if s == "" {
 		return "`-`"
 	}
-	return "`" + Escape(s) + "`"
+	return "`" + clip(Escape(s), maxField) + "`"
 }
 
-// max lengths keep blocks within Slack's limits (3000 per text).
-const maxText = 2800
+// Lengths keep every text within Slack's 3000 limit: a section holds at
+// most three fields, or one body.
+const (
+	maxField = 700
+	maxBody  = 2800
+)
 
-func clip(s string) string {
-	if len(s) <= maxText {
+// clip cuts escaped text s to n bytes on a rune boundary. A cut may end
+// inside an entity ("&am"), which is inert.
+func clip(s string, n int) string {
+	if len(s) <= n {
 		return s
 	}
-	for i := maxText; i > 0; i-- {
+	for i := n; i > 0; i-- {
 		if s[i]&0xC0 != 0x80 {
 			return s[:i] + "…"
 		}
@@ -101,12 +109,12 @@ type text struct {
 }
 
 func md(s string) map[string]any {
-	return map[string]any{"type": "section", "text": text{"mrkdwn", clip(s)}}
+	return map[string]any{"type": "section", "text": text{"mrkdwn", s}}
 }
 
 // Blocks renders c. outcome, when set, replaces the buttons.
 func Blocks(c chat.Card, outcome string) []map[string]any {
-	head := fmt.Sprintf("*%s* · %s · %s", Escape(c.Risk), code(c.Lock), code(c.Instance))
+	head := fmt.Sprintf("*%s* · %s · %s", clip(Escape(c.Risk), maxField), code(c.Lock), code(c.Instance))
 	if c.Production {
 		head += " · *PRODUCTION*"
 	}
@@ -123,7 +131,7 @@ func Blocks(c chat.Card, outcome string) []map[string]any {
 		for _, l := range c.Body {
 			lines = append(lines, Escape(l))
 		}
-		bl = append(bl, md(clip("```"+strings.Join(lines, "\n")+"```")))
+		bl = append(bl, md("```"+clip(strings.Join(lines, "\n"), maxBody)+"```"))
 	}
 	if c.Note != "" {
 		bl = append(bl, md("note (agent): "+code(c.Note)))
@@ -136,7 +144,7 @@ func Blocks(c chat.Card, outcome string) []map[string]any {
 	}
 	switch {
 	case outcome != "":
-		bl = append(bl, map[string]any{"type": "context", "elements": []text{{"mrkdwn", Escape(outcome)}}})
+		bl = append(bl, map[string]any{"type": "context", "elements": []text{{"mrkdwn", clip(Escape(outcome), maxField)}}})
 	case c.Answerable:
 		v := c.Instance + "/" + c.ID
 		bl = append(bl, map[string]any{"type": "actions", "elements": []map[string]any{
@@ -144,7 +152,7 @@ func Blocks(c chat.Card, outcome string) []map[string]any {
 			{"type": "button", "action_id": "deny", "value": v, "style": "danger", "text": text{"plain_text", "Deny"}},
 		}})
 	default:
-		bl = append(bl, map[string]any{"type": "context", "elements": []text{{"mrkdwn", Escape(c.Why)}}})
+		bl = append(bl, map[string]any{"type": "context", "elements": []text{{"mrkdwn", clip(Escape(c.Why), maxField)}}})
 	}
 	return bl
 }

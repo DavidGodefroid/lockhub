@@ -355,3 +355,25 @@ func TestNewRefusesBadConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestLongTextStaysInsideItsCodeSpan(t *testing.T) {
+	long := strings.Repeat("a", 5000) + " <!channel> *spoof*"
+	c := chat.Card{ID: "t1", Instance: "crm", Risk: "read", Lock: "locksql", Requester: long, Header: long, Note: long, Body: []string{long, long}, Warnings: []string{long}, Answerable: true}
+	for _, b := range slack.Blocks(c, "") {
+		raw, _ := json.Marshal(b)
+		var m struct {
+			Text struct{ Text string } `json:"text"`
+		}
+		json.Unmarshal(raw, &m)
+		s := m.Text.Text
+		if len(s) > 3000 {
+			t.Errorf("text of %d bytes", len(s))
+		}
+		if n := strings.Count(s, "`"); n%2 != 0 {
+			t.Errorf("unbalanced code delimiters (%d) in %q…", n, s[:min(len(s), 80)])
+		}
+		if strings.Contains(s, "<!") {
+			t.Error("live markup")
+		}
+	}
+}
