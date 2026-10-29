@@ -183,7 +183,7 @@ func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...
 	ws, _ := filepath.Abs(filepath.Dir(d.File))
 	project := Project(ws)
 	compose := filepath.Join(d.State, "compose.yaml")
-	out, err := d.Run.Run(ctx, nil, "docker", "compose", "-p", project, "-f", compose, "ps", "--all", "--format", "json")
+	out, err := d.Run.Run(ctx, nil, "docker", "compose", "-p", project, "--project-directory", d.State, "--env-file", os.DevNull, "-f", compose, "ps", "--all", "--format", "json")
 	if err != nil {
 		fail("compose project %s: %v", project, err)
 		return
