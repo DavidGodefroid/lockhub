@@ -1,0 +1,91 @@
+// Package route decides which facade may answer which ticket.
+//
+// v1 defaults:
+//
+//	facade            read  read-pii  write  prod-write  policy-loosen  unlock  reveal
+//	tty, deck          yes    yes      yes      yes          yes         yes     yes
+//	mobile             yes    yes      yes      yes          yes         yes     yes
+//	slack, telegram    yes    yes      yes      no           no          no      no
+//
+// A workspace's configuration can only narrow this table (remove facades
+// for an instance), never widen it.
+package route
+
+import (
+	"fmt"
+	"slices"
+)
+
+// Facades.
+const (
+	TTY      = "tty"
+	Deck     = "deck"
+	Mobile   = "mobile"
+	Slack    = "slack"
+	Telegram = "telegram"
+)
+
+// Risk classes (lockkit ticket.Risk names).
+const (
+	Read         = "read"
+	ReadPII      = "read-pii"
+	Write        = "write"
+	ProdWrite    = "prod-write"
+	PolicyLoosen = "policy-loosen"
+	Unlock       = "unlock"
+)
+
+var (
+	facades = []string{TTY, Deck, Mobile, Slack, Telegram}
+	risks   = []string{Read, ReadPII, Write, ProdWrite, PolicyLoosen, Unlock}
+	// local facades show clear values and accept every risk.
+	local = []string{TTY, Deck, Mobile}
+	// chatRisks are what a chat facade may answer.
+	chatRisks = []string{Read, ReadPII, Write}
+)
+
+// KnownFacade reports whether f is a facade name.
+func KnownFacade(f string) bool { return slices.Contains(facades, f) }
+
+// KnownRisk reports whether r is a risk class.
+func KnownRisk(r string) bool { return slices.Contains(risks, r) }
+
+// Rules is the routing in force. The zero value is the defaults.
+type Rules struct {
+	// Only, per instance, lists the facades that may answer it. Facades
+	// outside the defaults are ignored: Only narrows, never widens.
+	Only map[string][]string
+}
+
+// Allowed reports whether facade f may decide a ticket of risk r from
+// instance inst, and why not.
+func (r Rules) Allowed(inst, f, risk string) error {
+	switch {
+	case !KnownFacade(f):
+		return fmt.Errorf("unknown facade %q", f)
+	case !KnownRisk(risk):
+		return fmt.Errorf("unknown risk class %q", risk)
+	case !slices.Contains(local, f) && !slices.Contains(chatRisks, risk):
+		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
+	}
+	if only, ok := r.Only[inst]; ok && !slices.Contains(only, f) {
+		return fmt.Errorf("instance %s is not routed to %s", inst, f)
+	}
+	return nil
+}
+
+// CanReveal reports whether facade f may show a ticket's clear values
+// (end-to-end encrypted to it).
+func CanReveal(f string) bool { return slices.Contains(local, f) }
+
+// Facades lists the facades that may decide risk for inst, in a fixed
+// order (for notifications).
+func (r Rules) Facades(inst, risk string) []string {
+	var out []string
+	for _, f := range facades {
+		if r.Allowed(inst, f, risk) == nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
