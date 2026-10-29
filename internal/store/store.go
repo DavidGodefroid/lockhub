@@ -109,6 +109,24 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// OpenReadOnly opens an existing database without writing to it (for
+// verification).
+func OpenReadOnly(path string) (*Store, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }
 
