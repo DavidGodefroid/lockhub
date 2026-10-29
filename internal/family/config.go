@@ -42,15 +42,15 @@ type Config struct {
 type Hub struct {
 	Image   string              `yaml:"image"`
 	Facades []string            `yaml:"facades"`
-	Routing map[string][]string `yaml:"routing"`
+	Routing map[string][]string `yaml:"routing,omitempty"`
 }
 
 // Lock is one lock instance.
 type Lock struct {
 	Type        string `yaml:"type"`
 	Image       string `yaml:"image"`
-	Production  bool   `yaml:"production"`
-	Credentials string `yaml:"credentials"`
+	Production  bool   `yaml:"production,omitempty"`
+	Credentials string `yaml:"credentials,omitempty"`
 }
 
 // Types are the lock types lock up knows, and their image repositories.
@@ -68,20 +68,28 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decode(b, path, true)
+}
+
+// decode parses and validates a lockfamily.yaml; needLocks refuses one
+// without locks (lock up has nothing to run then).
+func decode(b []byte, path string, needLocks bool) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("%s: %w (secrets are never written here: use credentials: vault:… / file:… / keychain:… / ask)", path, err)
 	}
-	if err := c.Validate(); err != nil {
+	if err := c.validate(needLocks); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &c, nil
 }
 
 // Validate checks c and fills defaults.
-func (c *Config) Validate() error {
+func (c *Config) Validate() error { return c.validate(true) }
+
+func (c *Config) validate(needLocks bool) error {
 	if c.Version != 1 {
 		return fmt.Errorf("version: want 1, got %d", c.Version)
 	}
@@ -96,7 +104,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("hub.facades: unknown facade %q", f)
 		}
 	}
-	if len(c.Locks) == 0 {
+	if needLocks && len(c.Locks) == 0 {
 		return fmt.Errorf("locks: none declared")
 	}
 	for name, l := range c.Locks {
@@ -116,6 +124,9 @@ func (c *Config) Validate() error {
 	for inst, fs := range c.Hub.Routing {
 		if _, ok := c.Locks[inst]; !ok {
 			return fmt.Errorf("hub.routing: unknown instance %q", inst)
+		}
+		if len(fs) == 0 {
+			return fmt.Errorf("hub.routing.%s: no facade could answer it (list at least one)", inst)
 		}
 		for _, f := range fs {
 			if !slices.Contains(c.Hub.Facades, f) {

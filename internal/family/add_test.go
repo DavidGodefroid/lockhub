@@ -1,6 +1,8 @@
 package family
 
 import (
+	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,5 +78,15 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 	u := upFor(t, file)
 	if out, err := u("y\n", f); err != nil || !f.ran("up -d") {
 		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// upFor runs lock up on file, with its state and runtime next to it.
+func upFor(t *testing.T, file string) func(string, *fake) (string, error) {
+	dir := t.TempDir()
+	return func(input string, f *fake) (string, error) {
+		var out strings.Builder
+		u := &Up{File: file, State: filepath.Join(dir, "state"), Runtime: filepath.Join(dir, "run"), User: "1000:1000", Run: f, In: bufio.NewReader(strings.NewReader(input)), Out: &out}
+		return out.String(), u.Do(context.Background())
 	}
 }
