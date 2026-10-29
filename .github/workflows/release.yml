@@ -1,0 +1,81 @@
+name: release
+
+# Runs only when a version tag is pushed. Creating the tag is a manual,
+# explicit decision.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test before release
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
+  # ghcr.io/davidgodefroid/lockhub:X.Y.Z, for amd64 and arm64, each built on
+  # a native runner, then joined in one manifest and signed with cosign
+  # (keyless, by digest). `lock up` pins and verifies that digest.
+  image:
+    name: image ${{ matrix.arch }}
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    env:
+      IMAGE: ghcr.io/davidgodefroid/lockhub
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: log in to ghcr.io
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: build and push
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          docker build --build-arg VERSION="$v" -t "$IMAGE:$v-${{ matrix.arch }}" .
+          docker push "$IMAGE:$v-${{ matrix.arch }}"
+
+  image-manifest:
+    name: image manifest
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # cosign keyless signing (GitHub OIDC)
+    env:
+      IMAGE: ghcr.io/davidgodefroid/lockhub
+    steps:
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - name: log in to ghcr.io
+        run: printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: manifest, signed
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          docker buildx imagetools create -t "$IMAGE:$v" "$IMAGE:$v-amd64" "$IMAGE:$v-arm64"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$v" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          cosign sign --yes "$IMAGE@$digest"
+          echo "signed $IMAGE@$digest" >> "$GITHUB_STEP_SUMMARY"
