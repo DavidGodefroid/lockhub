@@ -409,7 +409,7 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 	fs.SetOutput(stderr)
 	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
 	var chats, froms int64sFlag
-	fs.Var(&chats, "chat", "a chat id where the bot posts tickets (a private chat: your user id; a group: negative)")
+	fs.Var(&chats, "chat", "a chat id where the bot posts tickets (a private chat: your user id; a group: negative, and every member of the group sees the tickets)")
 	fs.Var(&froms, "from", "the user id who may answer in the --chat before it (repeat in pairs)")
 	pos, err := parse(fs, args)
 	if err != nil {
