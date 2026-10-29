@@ -136,8 +136,10 @@ func (u *Up) Do(ctx context.Context) error {
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.
 	composeYAML := []byte(Compose(c, paths))
+	// Pinned to the private state directory, with no env file: nothing in
+	// the workspace or the current directory can feed compose.
 	compose := func(args ...string) []string {
-		return append([]string{"compose", "-p", project, "-f", "-"}, args...)
+		return append([]string{"compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", "-"}, args...)
 	}
 
 	// 1. Images: every distinct pinned digest, signed by its own
@@ -243,6 +245,8 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(hubData, "routing.json"), append(rb, '\n'), 0o600); err != nil {
 		return err
 	}
+	paths.Config = fp
+	composeYAML = []byte(Compose(c, paths))
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}

@@ -18,6 +18,10 @@ type Paths struct {
 	// the facade socket and the data ("0:0" under rootless engines, where
 	// root is the host user).
 	User string
+	// Config is the fingerprint of the applied configuration (keys,
+	// routing). As a label of the hub service, a change of it makes
+	// compose recreate the hub, which reads its config at start.
+	Config string
 }
 
 func q(s string) string { return fmt.Sprintf("%q", s) }
@@ -41,6 +45,10 @@ func Compose(c *Config, p Paths) string {
 	w("        source: %s", q(p.FacadeDir))
 	w("        target: /run/lockhub-facade")
 	w("    networks: [lockhub]")
+	if p.Config != "" {
+		w("    labels:")
+		w("      lockfamily.config: %s", q(p.Config))
+	}
 	w("    restart: unless-stopped")
 	for _, name := range c.Instances() {
 		l := c.Locks[name]
