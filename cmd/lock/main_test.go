@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,5 +50,50 @@ func TestApproveRefusesNonTerminal(t *testing.T) {
 	var out, errb bytes.Buffer
 	if code := run([]string{"approve", "--socket", "/nonexistent"}, r, &out, &errb); code != 1 || !strings.Contains(errb.String(), "not a terminal") {
 		t.Errorf("piped stdin: %d %q", code, errb.String())
+	}
+}
+
+const (
+	hubImg = "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	sqlImg = "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	mqImg  = "ghcr.io/davidgodefroid/lockmq@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+)
+
+func TestAddImportDoctor(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(dir, "run"))
+	file := filepath.Join(dir, "lockfamily.yaml")
+	call := func(args ...string) (int, string, string) {
+		var out, errb bytes.Buffer
+		code := run(args, devNull(t), &out, &errb)
+		return code, out.String(), errb.String()
+	}
+	if code, _, e := call("add", "locksql"); code != 2 || !strings.Contains(e, "usage: lock add") {
+		t.Errorf("add without instance: %d %q", code, e)
+	}
+	// Flags after the positional arguments, as people type them.
+	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg, "--production"); code != 0 || !strings.Contains(o, "lock up") {
+		t.Fatalf("add: %d %q %q", code, o, e)
+	}
+	if code, _, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg); code != 1 || !strings.Contains(e, "already declared") {
+		t.Errorf("add twice: %d %q", code, e)
+	}
+	sub := filepath.Join(dir, "billing")
+	os.MkdirAll(sub, 0o755)
+	os.WriteFile(filepath.Join(sub, "lockfamily.yaml"), []byte("version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  events:\n    type: lockmq\n    image: "+mqImg+"\n"), 0o644)
+	// No argument: every sub-project's lockfamily.yaml.
+	if code, o, e := call("import", "--file", file); code != 0 || !strings.Contains(o, "adds lock events") || !strings.Contains(o, "lock up") {
+		t.Fatalf("import: %d %q %q", code, o, e)
+	}
+	b, _ := os.ReadFile(file)
+	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "production: true") {
+		t.Errorf("file:\n%s", b)
+	}
+	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lock up") {
+		t.Errorf("doctor before lock up: %d %q", code, o)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state", "lockfamily")); !os.IsNotExist(err) {
+		t.Error("doctor created the state directory")
 	}
 }

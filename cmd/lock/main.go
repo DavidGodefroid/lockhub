@@ -30,13 +30,19 @@ const usage = `lock: the Lock Family CLI
 Usage:
   lock up [--file lockfamily.yaml] [--dry-run]
                                           review and start the hub and the workspace's locks
+  lock add TYPE INSTANCE --image REF [--production] [--credentials REF] [--hub-image REF] [--file lockfamily.yaml]
+                                          declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp; REF pinned @sha256)
+  lock import [--file lockfamily.yaml] [SUB...]
+                                          merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
+                                          keeping the strictest settings
+  lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lock version                            print the version
   lock help                               show this help
 
-Coming: lock add, lock import, lock doctor.
+lock add and lock import only edit lockfamily.yaml: the next lock up reviews the change with you.
 `
 
 func main() {
@@ -59,6 +65,12 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return approveCmd(args[1:], stdin, stdout, stderr)
 	case "up":
 		return upCmd(args[1:], stdin, stdout, stderr)
+	case "add":
+		return addCmd(args[1:], stdout, stderr)
+	case "import":
+		return importCmd(args[1:], stdout, stderr)
+	case "doctor":
+		return doctorCmd(args[1:], stdout, stderr)
 	case "audit":
 		if len(args) < 2 || args[1] != "verify" {
 			fmt.Fprintln(stderr, "usage: lock audit verify --data DIR --hub-key-file FILE")
@@ -192,6 +204,103 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	s := &approve.Session{C: approve.Dial(*sock), In: bufio.NewReader(stdin), Out: stdout, Display: os.Getenv("USER"), Once: *once}
 	if err := s.Run(ctx); err != nil {
 		fmt.Fprintln(stderr, "lock approve:", err)
+		return 1
+	}
+	return 0
+}
+
+// parse parses fs, with flags allowed after the positional arguments, and
+// returns the positional arguments.
+func parse(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return pos, nil
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+func addCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	var o family.AddOptions
+	fs.StringVar(&o.Image, "image", "", "the lock's image, ghcr.io/davidgodefroid/TYPE@sha256:<digest> of its signed release")
+	fs.BoolVar(&o.Production, "production", false, "the lock reaches production")
+	fs.StringVar(&o.Credentials, "credentials", "", "a reference to its credentials (vault:…, file:/…, keychain:…, ask), never a secret")
+	fs.StringVar(&o.HubImage, "hub-image", "", "the hub's image, to start a new lockfamily.yaml")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(pos) != 2 || o.Image == "" {
+		fmt.Fprintln(stderr, "usage: lock add TYPE INSTANCE --image ghcr.io/davidgodefroid/TYPE@sha256:<digest> [--production] [--credentials REF] [--hub-image REF]")
+		return 2
+	}
+	o.Type, o.Name = pos[0], pos[1]
+	if err := family.Add(*file, o); err != nil {
+		fmt.Fprintln(stderr, "lock add:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lock up to review and start it\n", *file, o.Name, o.Type)
+	return 0
+}
+
+func importCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	srcs, err := parse(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(srcs) == 0 {
+		srcs, _ = filepath.Glob(filepath.Join(filepath.Dir(*file), "*", "lockfamily.yaml"))
+		if len(srcs) == 0 {
+			fmt.Fprintln(stderr, "lock import: no sub-project lockfamily.yaml next to", *file)
+			return 1
+		}
+	}
+	for i, s := range srcs {
+		if fi, err := os.Stat(s); err == nil && fi.IsDir() {
+			srcs[i] = filepath.Join(s, "lockfamily.yaml")
+		}
+	}
+	notes, err := family.Import(*file, srcs)
+	for _, n := range notes {
+		fmt.Fprintln(stdout, n)
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "lock import:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s updated; run lock up to review and apply it\n", *file)
+	return 0
+}
+
+func doctorCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	if _, err := parse(fs, args); err != nil {
+		return 2
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock doctor:", err)
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	d := &family.Doctor{File: abs, State: stateDir(family.Project(filepath.Dir(abs))), Runtime: runtimeDir(), Root: "/",
+		Run: family.Exec{Stderr: io.Discard}, Out: stdout}
+	if n := d.Do(ctx); n > 0 {
+		fmt.Fprintf(stdout, "%d problem(s)\n", n)
 		return 1
 	}
 	return 0
