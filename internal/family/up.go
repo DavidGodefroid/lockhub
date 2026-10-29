@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
@@ -258,20 +257,7 @@ func privateDir(d string) error {
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return err
 	}
-	fi, err := os.Lstat(d)
-	if err != nil {
-		return err
-	}
-	if !fi.IsDir() {
-		return fmt.Errorf("%s: not a directory (a link?)", d)
-	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("%s: owned by uid %d, not by you", d, st.Uid)
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s: mode %v, want 0700", d, fi.Mode().Perm())
-	}
-	return nil
+	return checkPrivate(d)
 }
 
 func validPub(s string) bool {
