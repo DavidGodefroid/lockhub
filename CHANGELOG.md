@@ -6,12 +6,15 @@ digest).
 ## Unreleased
 
 - `lock up [--file] [--dry-run]` (#5), minimal: reads lockfamily.yaml
-  (version 1; images pinned by digest; credentials only as references),
+  (version 1: which locks run, images pinned by digest, facades and
+  routing; a lock's target, production flag and credentials stay in its
+  own profile),
   verifies every distinct image's cosign signature against its release workflow,
   gets the hub key (created once) and each lock instance's key
   (`<lock> hub-key`), shows the human the whole configuration on the first
   run and the change afterwards, and applies only on a typed yes: writes
-  the hub's locks.json and the compose file, then `docker compose up -d`.
+  the hub's locks.json and routing.json (applied by the hub), then
+  `docker compose up -d` with the compose file on stdin.
   Everything lock up writes or runs from (compose file, applied
   fingerprint, hub data) lives in `$XDG_STATE_HOME/lockfamily/<project>/`,
   outside the projects directory; lock up refuses a state or runtime

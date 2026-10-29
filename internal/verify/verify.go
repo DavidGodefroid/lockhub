@@ -5,6 +5,7 @@ package verify
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -37,13 +38,12 @@ func (r *Report) bad(format string, a ...any) {
 // Hub verifies the hub data directory dir against the hub's public key.
 func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, error) {
 	var r Report
-	logPath := filepath.Join(dir, "tickets.jsonl")
-	f, err := os.Open(logPath)
+	// Read the log once: what is verified is what is then compared.
+	logBytes, err := os.ReadFile(filepath.Join(dir, "tickets.jsonl"))
 	if err != nil {
 		return r, err
 	}
-	defer f.Close()
-	n, err := audit.VerifySigned(f, hubKey)
+	n, err := audit.VerifySigned(bytes.NewReader(logBytes), hubKey)
 	r.Records = n
 	if err != nil {
 		r.bad("audit chain: %v", err)
@@ -51,8 +51,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	}
 	// Decisions the audit log vouches for.
 	inLog := map[string]audit.Record{} // instance/ticket → its decision record
-	f.Seek(0, 0)
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(logBytes))
 	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
 	for sc.Scan() {
 		var rec audit.Record
@@ -61,7 +60,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
 	}
-	st, err := store.Open(filepath.Join(dir, "hub.db"))
+	st, err := store.OpenReadOnly(filepath.Join(dir, "hub.db"))
 	if err != nil {
 		return r, err
 	}

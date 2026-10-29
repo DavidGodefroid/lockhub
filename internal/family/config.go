@@ -30,8 +30,10 @@ import (
 //	  crm-prod:
 //	    type: locksql
 //	    image: ghcr.io/davidgodefroid/locksql@sha256:…
-//	    production: true
-//	    credentials: vault:secret/crm   # a reference, never a secret
+//
+// A lock's profile (target, production, credentials) stays in the lock's
+// own configuration; lockfamily.yaml only says which locks run and who
+// may answer them.
 type Config struct {
 	Version int             `yaml:"version"`
 	Hub     Hub             `yaml:"hub"`
@@ -47,20 +49,14 @@ type Hub struct {
 
 // Lock is one lock instance.
 type Lock struct {
-	Type        string `yaml:"type"`
-	Image       string `yaml:"image"`
-	Production  bool   `yaml:"production"`
-	Credentials string `yaml:"credentials"`
+	Type  string `yaml:"type"`
+	Image string `yaml:"image"`
 }
 
 // Types are the lock types lock up knows, and their image repositories.
 var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
 
 var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-9a-f]{64}$`)
-
-// credentialRef is a reference to a secret: lock up never accepts one in
-// clear.
-var credentialRef = regexp.MustCompile(`^(vault:[A-Za-z0-9/_.-]+|file:/[^\s]+|keychain:[A-Za-z0-9._-]+|ask)$`)
 
 // Load reads and validates path.
 func Load(path string) (*Config, error) {
@@ -72,7 +68,7 @@ func Load(path string) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
-		return nil, fmt.Errorf("%s: %w (secrets are never written here: use credentials: vault:… / file:… / keychain:… / ask)", path, err)
+		return nil, fmt.Errorf("%s: %w (a lock's target, production flag and credentials belong to its own profile, never here)", path, err)
 	}
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -108,9 +104,6 @@ func (c *Config) Validate() error {
 		}
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
-		}
-		if l.Credentials != "" && !credentialRef.MatchString(l.Credentials) {
-			return fmt.Errorf("locks.%s.credentials: a reference (vault:…, file:/…, keychain:…, ask), never a secret", name)
 		}
 	}
 	for inst, fs := range c.Hub.Routing {
