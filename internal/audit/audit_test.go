@@ -2,6 +2,8 @@ package audit
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
@@ -64,5 +66,34 @@ func TestTamper(t *testing.T) {
 	// alone cannot see it; the store's sequence does (hub tests).
 	if n, err := Verify(bytes.NewReader([]byte(lines[0] + lines[1]))); err != nil || n != 2 {
 		t.Errorf("prefix: %d, %v", n, err)
+	}
+}
+
+func TestSigned(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	p := filepath.Join(t.TempDir(), "tickets.jsonl")
+	l, _ := Open(p)
+	l.SetKey(priv)
+	for i := 0; i < 3; i++ {
+		l.Append(Record{Event: "push", Ticket: "T", Instance: "i", State: "pending"})
+	}
+	l.Close()
+	b, _ := os.ReadFile(p)
+	if n, err := VerifySigned(bytes.NewReader(b), pub); err != nil || n != 3 {
+		t.Fatalf("VerifySigned = %d, %v", n, err)
+	}
+	other, _, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := VerifySigned(bytes.NewReader(b), other); !errors.Is(err, ErrBroken) {
+		t.Errorf("other key: %v", err)
+	}
+	// A chain rebuilt without the hub key (consistent hashes, no valid
+	// signature) is refused.
+	p2 := filepath.Join(t.TempDir(), "rebuilt.jsonl")
+	l2, _ := Open(p2)
+	l2.Append(Record{Event: "push", Ticket: "T", Instance: "i", State: "pending"})
+	l2.Close()
+	b2, _ := os.ReadFile(p2)
+	if _, err := VerifySigned(bytes.NewReader(b2), pub); !errors.Is(err, ErrBroken) {
+		t.Errorf("unsigned rebuilt chain: %v", err)
 	}
 }

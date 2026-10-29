@@ -104,6 +104,7 @@ func openHub(data string) (*hub.Hub, func(), error) {
 		st.Close()
 		return nil, nil, err
 	}
+	al.SetKey(key)
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks})
 	return h, func() { al.Close(); st.Close() }, nil
 }
