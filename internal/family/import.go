@@ -12,9 +12,8 @@ import (
 
 // Merge folds the lockfamily.yaml configurations of sub-workspaces into
 // base. An instance declared in several keeps its first declaration and
-// the strictest settings (production wins; the facades that may answer
-// it are those every declaration allows), and every difference is
-// reported, for the human to read before lock up applies anything.
+// the strictest routing (the facades that may answer it are those every
+// declaration allows), and every difference is reported, for the human to read before lock up applies anything.
 // The hub section comes from base; others are taken in the order of srcs.
 func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []string) {
 	out := *base
@@ -49,13 +48,6 @@ func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []s
 			}
 			if cur.Image != l.Image {
 				notes = append(notes, fmt.Sprintf("%s: lock %s pins another image (%s): kept %s", src, name, l.Image, cur.Image))
-			}
-			if l.Production && !cur.Production {
-				cur.Production = true
-				notes = append(notes, fmt.Sprintf("%s: lock %s is production there: now production", src, name))
-			}
-			if cur.Credentials != l.Credentials {
-				notes = append(notes, fmt.Sprintf("%s: lock %s uses other credentials (%s): kept %s", src, name, orNone(l.Credentials), orNone(cur.Credentials)))
 			}
 			before := out.facadesOf(name)
 			after := intersect(before, o.facadesOf(name))
@@ -93,13 +85,6 @@ func intersect(a, b []string) []string {
 
 func sameSet(a, b []string) bool {
 	return len(intersect(a, b)) == len(a) && len(intersect(b, a)) == len(b)
-}
-
-func orNone(s string) string {
-	if s == "" {
-		return "none"
-	}
-	return s
 }
 
 // Import merges the lockfamily.yaml files srcs (sub-projects) into the

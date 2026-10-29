@@ -4,7 +4,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +26,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 	"github.com/DavidGodefroid/lockhub/internal/ticketcodec"
 )
@@ -104,13 +108,18 @@ func openHub(data string) (*hub.Hub, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	al, err := audit.Open(filepath.Join(data, "tickets.jsonl"))
+	al, err := audit.OpenSigned(filepath.Join(data, "tickets.jsonl"), key)
 	if err != nil {
 		st.Close()
 		return nil, nil, err
 	}
-	al.SetKey(key)
-	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks})
+	routes, err := loadRoutes(filepath.Join(data, "routing.json"), locks)
+	if err != nil {
+		al.Close()
+		st.Close()
+		return nil, nil, err
+	}
+	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks, Routes: routes})
 	return h, func() { al.Close(); st.Close() }, nil
 }
 
@@ -165,6 +174,33 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	return 0
 }
 
+// loadRoutes reads routing.json (written by lock up); missing: defaults.
+func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return route.Rules{}, nil
+	} else if err != nil {
+		return route.Rules{}, err
+	}
+	var r route.Rules
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return route.Rules{}, fmt.Errorf("%s: %w", path, err)
+	}
+	for _, f := range r.Enabled {
+		if !route.KnownFacade(f) {
+			return route.Rules{}, fmt.Errorf("%s: unknown facade %q", path, f)
+		}
+	}
+	for inst := range r.Only {
+		if _, ok := locks[inst]; !ok {
+			return route.Rules{}, fmt.Errorf("%s: unknown instance %q", path, inst)
+		}
+	}
+	return r, nil
+}
+
 // listenFacade serves the facade API on a unix socket created with mode
 // (0600 by default: the hub's own account only; lock up maps that account
 // to the host user).
@@ -173,15 +209,25 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Serve
 	if err != nil || m&0o007 != 0 {
 		return nil, fmt.Errorf("mode %q: an octal mode without access for others", mode)
 	}
+	// The socket's directory must be private: the socket is reachable
+	// through it only, whatever the socket's own mode in the instant
+	// between listen and chmod.
+	dir := filepath.Dir(path)
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("%s: want a directory of mode 0700", dir)
+	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
 		}
+		// Do not take over a socket another hub still serves.
+		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
+			c.Close()
+			return nil, fmt.Errorf("%s: another hub is serving it", path)
+		}
 		os.Remove(path)
 	}
-	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
-	syscall.Umask(old)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +235,8 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Serve
 		ln.Close()
 		return nil, err
 	}
-	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ConnContext: peer.ConnContext}
+	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ConnContext: peer.ConnContext}
 	go func() { errc <- srv.Serve(ln) }()
 	return srv, nil
 }

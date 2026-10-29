@@ -73,7 +73,7 @@ func TestAddImportDoctor(t *testing.T) {
 		t.Errorf("add without instance: %d %q", code, e)
 	}
 	// Flags after the positional arguments, as people type them.
-	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg, "--production"); code != 0 || !strings.Contains(o, "lock up") {
+	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lock up") {
 		t.Fatalf("add: %d %q %q", code, o, e)
 	}
 	if code, _, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg); code != 1 || !strings.Contains(e, "already declared") {
@@ -87,7 +87,7 @@ func TestAddImportDoctor(t *testing.T) {
 		t.Fatalf("import: %d %q %q", code, o, e)
 	}
 	b, _ := os.ReadFile(file)
-	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "production: true") {
+	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "crm:") {
 		t.Errorf("file:\n%s", b)
 	}
 	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lock up") {

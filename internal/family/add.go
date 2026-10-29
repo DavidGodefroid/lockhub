@@ -15,9 +15,7 @@ import (
 type AddOptions struct {
 	Type, Name string
 	// Image is the lock's image, pinned by digest.
-	Image       string
-	Production  bool
-	Credentials string
+	Image string
 	// HubImage starts a fresh lockfamily.yaml; ignored when one exists.
 	HubImage string
 }
@@ -56,12 +54,6 @@ func Add(path string, o AddOptions) error {
 	}
 	kv("type", o.Type, "!!str")
 	kv("image", o.Image, "!!str")
-	if o.Production {
-		kv("production", "true", "!!bool")
-	}
-	if o.Credentials != "" {
-		kv("credentials", o.Credentials, "!!str")
-	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)
 	if err != nil {

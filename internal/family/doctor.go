@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // Doctor is one `lock doctor`: it checks a workspace's hub and locks and
@@ -103,6 +104,7 @@ func (d *Doctor) Do(ctx context.Context) int {
 		}
 	}
 	if c != nil {
+		d.routing(c, ok, fail)
 		d.applied(c, warn)
 	}
 
@@ -125,6 +127,34 @@ func (d *Doctor) Do(ctx context.Context) int {
 	}
 	d.accounts(warn)
 	return fails
+}
+
+// routing checks that the hub applies the routing lockfamily.yaml
+// declares (lock up writes routing.json; the hub reads it at start).
+func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
+	p := filepath.Join(d.State, "hub", "routing.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		fail("hub routing: %v (without it the hub runs every facade: run lock up)", err)
+		return
+	}
+	var r route.Rules
+	if err := json.Unmarshal(b, &r); err != nil {
+		fail("hub routing %s: %v", p, err)
+		return
+	}
+	want := route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}
+	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) {
+		fail("hub routing %s differs from lockfamily.yaml: run lock up", p)
+		return
+	}
+	for inst, fs := range want.Only {
+		if got, has := r.Only[inst]; !has || !sameSet(got, fs) {
+			fail("hub routing %s: %s differs from lockfamily.yaml: run lock up", p, inst)
+			return
+		}
+	}
+	ok("hub routing: facades %s", strings.Join(r.Enabled, ","))
 }
 
 // applied warns when lockfamily.yaml no longer matches what the last

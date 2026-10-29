@@ -118,8 +118,14 @@ func TestDoctorFindsProblems(t *testing.T) {
 			os.WriteFile(d.File, []byte(strings.Replace(yamlConf(""), "  events:", "  docs:\n    type: lockfile\n    image: "+fileImg+"\n  events:", 1)), 0o644)
 		}, "FAIL hub lock list"},
 		"yaml changed": {func(d *Doctor, a *answers) {
-			os.WriteFile(d.File, []byte(strings.Replace(yamlConf(""), "    production: true\n", "", 1)), 0o644)
+			os.WriteFile(d.File, []byte(strings.Replace(yamlConf(""), sqlImg, otherSQL, 1)), 0o644)
 		}, "warn lockfamily.yaml changed"},
+		"hub routing stale": {func(d *Doctor, a *answers) {
+			os.WriteFile(filepath.Join(d.State, "hub", "routing.json"), []byte(`{"only":{"crm-prod":["deck"]}}`), 0o600)
+		}, "FAIL hub routing"},
+		"hub routing missing": {func(d *Doctor, a *answers) {
+			os.Remove(filepath.Join(d.State, "hub", "routing.json"))
+		}, "FAIL hub routing"},
 		"yaml invalid":  {func(d *Doctor, a *answers) { os.WriteFile(d.File, []byte("version: 2\n"), 0o644) }, "FAIL lockfamily.yaml"},
 		"image missing": {func(d *Doctor, a *answers) { a.fail = []string{"image inspect"} }, "warn image"},
 	} {

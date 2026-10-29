@@ -13,7 +13,7 @@ const fileImg = "ghcr.io/davidgodefroid/lockfile@sha256:444444444444444444444444
 
 func TestAddKeepsCommentsAndValidates(t *testing.T) {
 	w := newWS(t, "# my workspace\n"+yamlConf(""))
-	if err := Add(w.file, AddOptions{Type: "lockfile", Name: "docs", Image: fileImg, Production: true, Credentials: "ask"}); err != nil {
+	if err := Add(w.file, AddOptions{Type: "lockfile", Name: "docs", Image: fileImg}); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(w.file)
@@ -25,7 +25,7 @@ func TestAddKeepsCommentsAndValidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := c.Locks["docs"]
-	if l.Type != "lockfile" || l.Image != fileImg || !l.Production || l.Credentials != "ask" {
+	if l.Type != "lockfile" || l.Image != fileImg {
 		t.Errorf("added %+v", l)
 	}
 	if len(c.Locks) != 3 {
@@ -40,7 +40,6 @@ func TestAddRefusals(t *testing.T) {
 		"wrong repo":     {Type: "lockfile", Name: "docs", Image: sqlImg},
 		"bad name":       {Type: "lockfile", Name: "Docs", Image: fileImg},
 		"unknown type":   {Type: "lockftp", Name: "docs", Image: fileImg},
-		"secret":         {Type: "lockfile", Name: "docs", Image: fileImg, Credentials: "hunter2"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newWS(t, yamlConf(""))

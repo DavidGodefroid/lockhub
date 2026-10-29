@@ -30,11 +30,11 @@ const usage = `lock: the Lock Family CLI
 Usage:
   lock up [--file lockfamily.yaml] [--dry-run]
                                           review and start the hub and the workspace's locks
-  lock add TYPE INSTANCE --image REF [--production] [--credentials REF] [--hub-image REF] [--file lockfamily.yaml]
+  lock add TYPE INSTANCE --image REF [--hub-image REF] [--file lockfamily.yaml]
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp; REF pinned @sha256)
   lock import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
-                                          keeping the strictest settings
+                                          keeping the strictest routing
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
   lock audit verify --data DIR --hub-key-file FILE
@@ -231,15 +231,13 @@ func addCmd(args []string, stdout, stderr io.Writer) int {
 	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
 	var o family.AddOptions
 	fs.StringVar(&o.Image, "image", "", "the lock's image, ghcr.io/davidgodefroid/TYPE@sha256:<digest> of its signed release")
-	fs.BoolVar(&o.Production, "production", false, "the lock reaches production")
-	fs.StringVar(&o.Credentials, "credentials", "", "a reference to its credentials (vault:…, file:/…, keychain:…, ask), never a secret")
 	fs.StringVar(&o.HubImage, "hub-image", "", "the hub's image, to start a new lockfamily.yaml")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return 2
 	}
 	if len(pos) != 2 || o.Image == "" {
-		fmt.Fprintln(stderr, "usage: lock add TYPE INSTANCE --image ghcr.io/davidgodefroid/TYPE@sha256:<digest> [--production] [--credentials REF] [--hub-image REF]")
+		fmt.Fprintln(stderr, "usage: lock add TYPE INSTANCE --image ghcr.io/davidgodefroid/TYPE@sha256:<digest> [--hub-image REF]")
 		return 2
 	}
 	o.Type, o.Name = pos[0], pos[1]

@@ -28,8 +28,6 @@ hub:
   crm-prod:
     type: locksql
     image: ` + sqlImg + `
-    production: true
-    credentials: vault:secret/crm
   events:
     type: lockmq
     image: ` + mqImg + `
@@ -103,7 +101,7 @@ func TestFirstRunReviewsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"First lock up", "lock crm-prod production true", "lock crm-prod credentials vault:secret/crm", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
+	for _, want := range []string{"First lock up", "lock crm-prod type locksql", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
 		}
@@ -173,8 +171,8 @@ func TestUnsignedImageStops(t *testing.T) {
 
 func TestConfigRefusals(t *testing.T) {
 	for name, conf := range map[string]string{
-		"literal secret": strings.Replace(yamlConf(""), "credentials: vault:secret/crm", "password: hunter2", 1),
-		"secret as ref":  strings.Replace(yamlConf(""), "vault:secret/crm", "hunter2", 1),
+		"literal secret": strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    password: hunter2", 1),
+		"profile field":  strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    production: true", 1),
 		"tag not digest": strings.Replace(yamlConf(""), sqlImg, "ghcr.io/davidgodefroid/locksql:0.9.0", 1),
 		"wrong repo":     strings.Replace(yamlConf(""), sqlImg, strings.Replace(sqlImg, "locksql", "lockmq", 1), 1),
 		"bad routing":    yamlConf("  routing:\n    crm-prod: [slack]\n"),
@@ -224,8 +222,11 @@ func TestComposeFileOutsideWorkspace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(w.file), ".lockfamily", "compose.yaml")); err == nil {
 		t.Error("compose file written in the workspace")
 	}
-	if !f.ran("-f " + filepath.Join(w.dir, "state", "compose.yaml")) {
-		t.Errorf("compose not run from the state dir: %v", f.calls)
+	if !f.ran("compose -p lockfamily-") || f.ran("-f "+filepath.Join(w.dir, "projects")) || !f.ran("-f - up -d") {
+		t.Errorf("compose not passed on stdin: %v", f.calls)
+	}
+	if fi, err := os.Stat(filepath.Join(w.dir, "state", "compose.yaml")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("reference copy of the compose file: %v", err)
 	}
 }
 
@@ -264,5 +265,21 @@ func TestStateDirMustBePrivate(t *testing.T) {
 	os.Symlink(t.TempDir(), filepath.Join(w2.dir, "state"))
 	if _, err := w2.up("y\n", newFake()); err == nil {
 		t.Error("state dir behind a link accepted")
+	}
+}
+
+func TestRoutingApplied(t *testing.T) {
+	w := newWS(t, yamlConf("  facades: [tty]\n  routing:\n    crm-prod: [tty]\n"))
+	if _, err := w.up("y\n", newFake()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(w.dir, "state", "hub", "routing.json"))
+	if err != nil || !strings.Contains(string(b), `"facades": [`) || !strings.Contains(string(b), `"crm-prod": [`) {
+		t.Errorf("routing.json: %s %v", b, err)
+	}
+	for _, f := range []string{"locks.json", "routing.json"} {
+		if fi, _ := os.Stat(filepath.Join(w.dir, "state", "hub", f)); fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode %v", f, fi.Mode().Perm())
+		}
 	}
 }

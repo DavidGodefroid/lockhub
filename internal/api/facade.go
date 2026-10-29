@@ -43,9 +43,11 @@ type QueueItem struct {
 	Ticket   json.RawMessage `json:"ticket"`
 }
 
-// QueueResult answers GET /v1/queue.
+// QueueResult answers GET /v1/queue. Version changes with every change
+// of the queue: send it back as since to wait for the next one.
 type QueueResult struct {
 	Tickets []QueueItem `json:"tickets"`
+	Version uint64      `json:"version"`
 }
 
 func waitParam(r *http.Request) (time.Duration, error) {
@@ -66,14 +68,21 @@ func (f *facades) queue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	tks, err := f.h.Queue(r.Context(), wait)
+	var since uint64
+	if v := r.URL.Query().Get("since"); v != "" {
+		if since, err = strconv.ParseUint(v, 10, 64); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_request", "since is the version of the last queue seen")
+			return
+		}
+	}
+	tks, ver, err := f.h.Queue(r.Context(), since, wait)
 	if err != nil {
 		if r.Context().Err() == nil {
 			fail(w, err)
 		}
 		return
 	}
-	res := QueueResult{Tickets: []QueueItem{}}
+	res := QueueResult{Tickets: []QueueItem{}, Version: ver}
 	for _, t := range tks {
 		it := QueueItem{ID: t.ID, Instance: t.Instance, Risk: t.Risk, Created: t.Created,
 			Facades: f.h.Routes().Facades(t.Instance, t.Risk), Ticket: t.Raw}
@@ -114,11 +123,14 @@ func (f *facades) decide(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "facade must be tty or deck on this socket")
 		return
 	}
+	// Every decision names its approver: a connection whose peer the
+	// kernel cannot tell is refused.
 	p := peer.From(r.Context())
-	approver := "host"
-	if p.Known {
-		approver = fmt.Sprintf("host:uid:%d", p.UID)
+	if !p.Known {
+		writeErr(w, http.StatusForbidden, "unknown_peer", "the facade socket cannot identify this connection's user")
+		return
 	}
+	approver := fmt.Sprintf("host:uid:%d", p.UID)
 	ref := store.Ref{Instance: r.PathValue("instance"), ID: r.PathValue("id")}
 	raw, err := f.h.Decide(r.Context(), ref, hub.Verdict{
 		Approved: req.Approved, Reason: req.Reason, Retype: req.Retype,

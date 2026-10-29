@@ -29,7 +29,6 @@ locks:
   crm:
     type: locksql
     image: `+sqlImg+`
-    credentials: vault:secret/crm
   events:
     type: lockmq
     image: `+mqImg+`
@@ -44,8 +43,6 @@ locks:
   crm:
     type: locksql
     image: `+otherSQL+`
-    production: true
-    credentials: vault:secret/billing
   events:
     type: lockfile
     image: `+fileImg+`
@@ -59,10 +56,7 @@ locks:
 		t.Fatal(err)
 	}
 	crm := c.Locks["crm"]
-	if !crm.Production {
-		t.Error("production lost: the strictest setting wins")
-	}
-	if crm.Image != sqlImg || crm.Credentials != "vault:secret/crm" {
+	if crm.Image != sqlImg {
 		t.Errorf("first declaration not kept: %+v", crm)
 	}
 	// crm: facades tty,deck in a (defaults), tty,slack in b: only tty is in both.
@@ -73,7 +67,7 @@ locks:
 		t.Errorf("type conflict resolved wrongly: %+v", c.Locks["events"])
 	}
 	all := strings.Join(notes, "\n")
-	for _, want := range []string{"adds lock crm", "adds lock events", "now production", "another image", "other credentials", "routing narrowed", "rename one"} {
+	for _, want := range []string{"adds lock crm", "adds lock events", "another image", "routing narrowed", "rename one"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("notes lack %q:\n%s", want, all)
 		}
