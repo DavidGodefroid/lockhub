@@ -1,0 +1,256 @@
+package family
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/DavidGodefroid/lockhub/internal/keys"
+)
+
+// Runner runs a command (docker, cosign) and returns its stdout.
+type Runner interface {
+	Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error)
+}
+
+// Exec runs real commands.
+type Exec struct{ Stderr io.Writer }
+
+// Run implements Runner.
+func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	if stdin != nil {
+		cmd.Stdin = strings.NewReader(string(stdin))
+	}
+	cmd.Stderr = e.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	}
+	return out, nil
+}
+
+// Up is one `lock up`.
+type Up struct {
+	// File is lockfamily.yaml; its directory is the workspace.
+	File string
+	// State is the host directory lock up keeps per workspace
+	// ($XDG_STATE_HOME/lockfamily/<id>), outside the projects directory.
+	State string
+	// Runtime is $XDG_RUNTIME_DIR (the facade socket's parent).
+	Runtime string
+	// User is the uid:gid the hub runs as (see Paths.User).
+	User   string
+	Run    Runner
+	In     *bufio.Reader
+	Out    io.Writer
+	DryRun bool
+}
+
+// Project is the compose project of a workspace: one per workspace.
+func Project(workspace string) string {
+	s := sha256.Sum256([]byte(workspace))
+	return "lockfamily-" + hex.EncodeToString(s[:4])
+}
+
+// Applied is what the last confirmed lock up applied.
+type Applied struct {
+	Fingerprint string   `json:"fingerprint"`
+	Summary     []string `json:"summary"`
+}
+
+// Summary is the reviewable form of a configuration and its keys: every
+// line that can change what the hub or a lock accepts.
+func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
+	var s []string
+	s = append(s, "hub image "+c.Hub.Image, "hub key "+hubPub, "hub facades "+strings.Join(c.Hub.Facades, ","))
+	for _, n := range c.Instances() {
+		l := c.Locks[n]
+		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
+			fmt.Sprintf("lock %s production %v", n, l.Production), fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
+		if l.Credentials != "" {
+			s = append(s, fmt.Sprintf("lock %s credentials %s", n, l.Credentials))
+		}
+		if fs, ok := c.Hub.Routing[n]; ok {
+			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
+		}
+	}
+	return s
+}
+
+func fingerprint(lines []string) string {
+	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// diff lists removed (-) and added (+) lines.
+func diff(old, new []string) []string {
+	var out []string
+	for _, l := range old {
+		if !slices.Contains(new, l) {
+			out = append(out, "- "+l)
+		}
+	}
+	for _, l := range new {
+		if !slices.Contains(old, l) {
+			out = append(out, "+ "+l)
+		}
+	}
+	return out
+}
+
+// ErrNotConfirmed is the human declining the review.
+var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
+
+// Do runs lock up.
+func (u *Up) Do(ctx context.Context) error {
+	c, err := Load(u.File)
+	if err != nil {
+		return err
+	}
+	ws, _ := filepath.Abs(filepath.Dir(u.File))
+	project := Project(ws)
+	lf := filepath.Join(ws, ".lockfamily")
+	hubData := filepath.Join(u.State, "hub")
+	facadeDir := filepath.Join(u.Runtime, "lockhub")
+	for _, d := range []string{lf, filepath.Join(lf, "keys"), u.State, hubData, facadeDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return err
+		}
+	}
+	composePath := filepath.Join(lf, "compose.yaml")
+	hubPubPath := filepath.Join(u.State, "hub.pub")
+	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
+	if err := os.WriteFile(composePath, []byte(Compose(c, paths)), 0o644); err != nil {
+		return err
+	}
+	compose := func(args ...string) []string {
+		return append([]string{"compose", "-p", project, "-f", composePath}, args...)
+	}
+
+	// 1. Images: pinned digests, signed by their release workflow.
+	images := map[string]string{"lockhub": c.Hub.Image}
+	for _, n := range c.Instances() {
+		images[c.Locks[n].Type] = c.Locks[n].Image
+	}
+	var repos []string
+	for r := range images {
+		repos = append(repos, r)
+	}
+	slices.Sort(repos)
+	for _, r := range repos {
+		if _, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+			"--certificate-identity-regexp", "^https://github.com/DavidGodefroid/"+r+"/.github/workflows/release.yml@refs/tags/v", images[r]); err != nil {
+			return fmt.Errorf("image %s is not signed by its release: %w", images[r], err)
+		}
+	}
+
+	// 2. Keys: the hub's (created once in its data dir) and each lock's.
+	hubPub, err := os.ReadFile(hubPubPath)
+	if errors.Is(err, os.ErrNotExist) {
+		out, err := u.Run.Run(ctx, nil, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "keygen", "--data", "/var/lib/lockhub")...)
+		if err != nil {
+			return fmt.Errorf("hub key: %w", err)
+		}
+		hubPub = out
+		if err := os.WriteFile(hubPubPath, []byte(strings.TrimSpace(string(out))+"\n"), 0o644); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	hp := strings.TrimSpace(string(hubPub))
+	if !validPub(hp) {
+		return fmt.Errorf("hub key %s: not a base64 Ed25519 public key", hubPubPath)
+	}
+	lockPubs := map[string]string{}
+	for _, n := range c.Instances() {
+		out, err := u.Run.Run(ctx, nil, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		if err != nil {
+			return fmt.Errorf("key of %s: %w", n, err)
+		}
+		k := strings.TrimSpace(string(out))
+		if !validPub(k) {
+			return fmt.Errorf("key of %s: not a base64 Ed25519 public key", n)
+		}
+		lockPubs[n] = k
+	}
+
+	// 3. Review with the human: everything on the first run, the change
+	// afterwards. Nothing is applied without a yes.
+	sum := Summary(c, hp, lockPubs)
+	fp := fingerprint(sum)
+	appliedPath := filepath.Join(u.State, "applied.json")
+	var prev Applied
+	b, err := os.ReadFile(appliedPath)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Fprintln(u.Out, "First lock up of this workspace. Review the whole configuration:")
+		for _, l := range sum {
+			fmt.Fprintln(u.Out, "  "+l)
+		}
+	case err != nil:
+		return err
+	default:
+		if err := json.Unmarshal(b, &prev); err != nil {
+			return fmt.Errorf("%s: %w", appliedPath, err)
+		}
+	}
+	if prev.Fingerprint == fp {
+		fmt.Fprintln(u.Out, "configuration unchanged since the last lock up")
+	} else {
+		if prev.Fingerprint != "" {
+			fmt.Fprintln(u.Out, "The configuration changed since the last lock up:")
+			for _, l := range diff(prev.Summary, sum) {
+				fmt.Fprintln(u.Out, "  "+l)
+			}
+		}
+		if u.DryRun {
+			fmt.Fprintln(u.Out, "dry run: nothing applied")
+			return nil
+		}
+		fmt.Fprint(u.Out, "Apply? [y/N] ")
+		a, _ := u.In.ReadString('\n')
+		if strings.ToLower(strings.TrimSpace(a)) != "y" {
+			return ErrNotConfirmed
+		}
+	}
+	if u.DryRun {
+		return nil
+	}
+
+	// 4. Apply: the hub's lock list, then the stack.
+	lj := map[string]map[string]map[string]string{"locks": {}}
+	for n, k := range lockPubs {
+		lj["locks"][n] = map[string]string{"public_key": k}
+	}
+	lb, _ := json.MarshalIndent(lj, "", "  ")
+	if err := os.WriteFile(filepath.Join(hubData, "locks.json"), append(lb, '\n'), 0o644); err != nil {
+		return err
+	}
+	if _, err := u.Run.Run(ctx, nil, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
+		return err
+	}
+	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")
+	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	return nil
+}
+
+func validPub(s string) bool {
+	b, err := base64.StdEncoding.DecodeString(s)
+	return err == nil && len(b) == 32 && keys.Public(b) == s
+}

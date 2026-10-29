@@ -16,9 +16,11 @@ func TestRun(t *testing.T) {
 		{nil, 2, "", "Usage:"},
 		{[]string{"version"}, 0, "lock dev", ""},
 		{[]string{"help"}, 0, "lock approve", ""},
-		{[]string{"up"}, 2, "", `unknown command "up"`},
+		{[]string{"down"}, 2, "", `unknown command "down"`},
 		{[]string{"approve", "--bogus"}, 2, "", "flag provided but not defined"},
 		{[]string{"audit"}, 2, "", "usage: lock audit verify"},
+		{[]string{"up", "--nope"}, 2, "", "flag provided but not defined"},
+		{[]string{"up"}, 1, "", "stdin is not one"},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
 	} {
 		var out, errb bytes.Buffer
@@ -29,13 +31,15 @@ func TestRun(t *testing.T) {
 	}
 }
 
+// devNull is an empty, non-terminal stdin.
 func devNull(t *testing.T) *os.File {
-	f, err := os.Open(os.DevNull)
+	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { f.Close() })
-	return f
+	w.Close()
+	t.Cleanup(func() { r.Close() })
+	return r
 }
 
 func TestApproveRefusesNonTerminal(t *testing.T) {
