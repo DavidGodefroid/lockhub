@@ -1,13 +1,17 @@
 // Package audit is the hub's append-only, hash-chained audit log
 // (tickets.jsonl): one JSON line per ticket event, each line carrying the
 // hash of the previous one, so that a removed, reordered or edited line is
-// detected by Verify.
+// detected by Verify. Each record's hash is also signed with the hub key,
+// so that whoever can write the file cannot rebuild a consistent chain
+// (VerifySigned).
 package audit
 
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -41,12 +45,20 @@ type Record struct {
 	Decision string `json:"decision,omitempty"`
 	Prev     string `json:"prev"`
 	Hash     string `json:"hash"`
+	// Sig is the hub key's signature over Hash (SignContext).
+	Sig string `json:"sig,omitempty"`
 }
 
-// hashOf hashes r without its Hash field. Field order is fixed by the
+// SignContext separates audit signatures from every other signature of
+// the hub key.
+const SignContext = "lockhub/audit/v1\x00"
+
+func signedMsg(hash string) []byte { return []byte(SignContext + hash) }
+
+// hashOf hashes r without its Hash and Sig fields. Field order is fixed by the
 // struct, so the JSON is stable.
 func hashOf(r Record) string {
-	r.Hash = ""
+	r.Hash, r.Sig = "", ""
 	b, _ := json.Marshal(r)
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
@@ -59,7 +71,11 @@ type Log struct {
 	seq  int64
 	prev string
 	now  func() time.Time
+	key  ed25519.PrivateKey
 }
+
+// SetKey makes Append sign every record with key (the hub key).
+func (l *Log) SetKey(key ed25519.PrivateKey) { l.key = key }
 
 // Open opens (or creates, 0600) the log at path, verifies it and resumes
 // its chain. A broken chain refuses to open: the hub does not start on a
@@ -73,7 +89,7 @@ func Open(path string) (*Log, error) {
 		f.Close()
 		return nil, err
 	}
-	last, n, err := verify(f)
+	last, n, err := verify(f, nil)
 	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("audit %s: %w", path, err)
@@ -95,6 +111,9 @@ func (l *Log) Append(r Record) (Record, error) {
 	r.At = l.now().UTC().Format(time.RFC3339Nano)
 	r.Prev = l.prev
 	r.Hash = hashOf(r)
+	if l.key != nil {
+		r.Sig = base64.RawURLEncoding.EncodeToString(ed25519.Sign(l.key, signedMsg(r.Hash)))
+	}
 	b, err := json.Marshal(r)
 	if err != nil {
 		return Record{}, err
@@ -121,11 +140,18 @@ var ErrBroken = errors.New("audit chain broken")
 // Verify reads a whole log and checks every link. It returns the number
 // of records.
 func Verify(r io.Reader) (int64, error) {
-	_, n, err := verify(r)
+	_, n, err := verify(r, nil)
 	return n, err
 }
 
-func verify(r io.Reader) (Record, int64, error) {
+// VerifySigned is Verify that also requires every record to be signed by
+// key.
+func VerifySigned(r io.Reader, key ed25519.PublicKey) (int64, error) {
+	_, n, err := verify(r, key)
+	return n, err
+}
+
+func verify(r io.Reader, key ed25519.PublicKey) (Record, int64, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), MaxLine+1)
 	prev, n := Genesis, int64(0)
@@ -148,6 +174,12 @@ func verify(r io.Reader) (Record, int64, error) {
 			return last, n, fmt.Errorf("%w: record %d does not follow record %d", ErrBroken, n+1, n)
 		case rec.Hash != hashOf(rec):
 			return last, n, fmt.Errorf("%w: record %d was modified", ErrBroken, n+1)
+		}
+		if key != nil {
+			sig, err := base64.RawURLEncoding.DecodeString(rec.Sig)
+			if err != nil || !ed25519.Verify(key, signedMsg(rec.Hash), sig) {
+				return last, n, fmt.Errorf("%w: record %d is not signed by the hub key", ErrBroken, n+1)
+			}
 		}
 		prev, last, n = rec.Hash, rec, n+1
 	}

@@ -152,6 +152,7 @@ func New(t testing.TB, max int, locks ...Lock) Env {
 	}
 	t.Cleanup(func() { al.Close() })
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	al.SetKey(priv)
 	m := map[string]ed25519.PublicKey{}
 	for _, l := range locks {
 		m[l.Instance] = l.Pub
