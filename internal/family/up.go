@@ -13,11 +13,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // Runner runs a command (docker, cosign) and returns its stdout.
@@ -79,10 +81,7 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
-			fmt.Sprintf("lock %s production %v", n, l.Production), fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
-		if l.Credentials != "" {
-			s = append(s, fmt.Sprintf("lock %s credentials %s", n, l.Credentials))
-		}
+			fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
 		}
@@ -134,11 +133,11 @@ func (u *Up) Do(ctx context.Context) error {
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
-	if err := os.WriteFile(composePath, []byte(Compose(c, paths)), 0o644); err != nil {
-		return err
-	}
+	// The compose file goes to docker on stdin: nothing on disk to swap
+	// before the human said yes. A copy is kept for reference afterwards.
+	composeYAML := []byte(Compose(c, paths))
 	compose := func(args ...string) []string {
-		return append([]string{"compose", "-p", project, "-f", composePath}, args...)
+		return append([]string{"compose", "-p", project, "-f", "-"}, args...)
 	}
 
 	// 1. Images: every distinct pinned digest, signed by its own
@@ -152,7 +151,7 @@ func (u *Up) Do(ctx context.Context) error {
 	images = slices.Compact(images)
 	for _, im := range images {
 		if _, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"--certificate-identity-regexp", "^https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v", im.ref); err != nil {
+			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref); err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
 	}
@@ -160,7 +159,7 @@ func (u *Up) Do(ctx context.Context) error {
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
 	hubPub, err := os.ReadFile(hubPubPath)
 	if errors.Is(err, os.ErrNotExist) {
-		out, err := u.Run.Run(ctx, nil, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "keygen", "--data", "/var/lib/lockhub")...)
+		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "keygen", "--data", "/var/lib/lockhub")...)
 		if err != nil {
 			return fmt.Errorf("hub key: %w", err)
 		}
@@ -177,7 +176,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	lockPubs := map[string]string{}
 	for _, n := range c.Instances() {
-		out, err := u.Run.Run(ctx, nil, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
 		if err != nil {
 			return fmt.Errorf("key of %s: %w", n, err)
 		}
@@ -237,10 +236,17 @@ func (u *Up) Do(ctx context.Context) error {
 		lj["locks"][n] = map[string]string{"public_key": k}
 	}
 	lb, _ := json.MarshalIndent(lj, "", "  ")
-	if err := os.WriteFile(filepath.Join(hubData, "locks.json"), append(lb, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hubData, "locks.json"), append(lb, '\n'), 0o600); err != nil {
 		return err
 	}
-	if _, err := u.Run.Run(ctx, nil, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
+	rb, _ := json.MarshalIndent(route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}, "", "  ")
+	if err := os.WriteFile(filepath.Join(hubData, "routing.json"), append(rb, '\n'), 0o600); err != nil {
+		return err
+	}
+	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
+		return err
+	}
+	if err := os.WriteFile(composePath, composeYAML, 0o600); err != nil {
 		return err
 	}
 	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")

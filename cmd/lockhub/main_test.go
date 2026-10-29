@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,5 +114,26 @@ func TestFacadeSocketGuards(t *testing.T) {
 	}
 	if _, err := listenFacade(h, filepath.Join(priv, "g.sock"), "0606", errc); err == nil {
 		t.Error("mode open to others accepted")
+	}
+}
+
+func TestLoadRoutes(t *testing.T) {
+	l := hubtest.NewLock("crm")
+	locks := map[string]ed25519.PublicKey{"crm": l.Pub}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "routing.json")
+	if r, err := loadRoutes(p, locks); err != nil || len(r.Enabled) != 0 {
+		t.Errorf("missing file: %+v %v", r, err)
+	}
+	os.WriteFile(p, []byte(`{"facades":["tty"],"only":{"crm":["tty"]}}`), 0o600)
+	r, err := loadRoutes(p, locks)
+	if err != nil || r.Allowed("crm", "deck", "read") == nil || r.Allowed("crm", "tty", "read") != nil {
+		t.Errorf("rules %+v %v", r, err)
+	}
+	for _, bad := range []string{`{"facades":["fax"]}`, `{"only":{"nope":["tty"]}}`, `{"x":1}`} {
+		os.WriteFile(p, []byte(bad), 0o600)
+		if _, err := loadRoutes(p, locks); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }
