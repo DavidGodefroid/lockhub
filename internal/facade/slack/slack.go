@@ -344,6 +344,9 @@ func (s *Slack) answer(p json.RawMessage) (chat.Answer, bool) {
 	return chat.Answer{Instance: inst, ID: id, Approve: act.ActionID == "approve",
 		ApproverID: "slack:" + team + ":" + user, Display: "slack " + user,
 		Reply: func(ctx context.Context, msg string) {
+			if msg == "" {
+				return
+			}
 			s.call(ctx, s.c.BotToken, "chat.postEphemeral", map[string]any{"channel": s.c.Channel, "user": user, "text": Escape(msg)}, nil)
 		}}, true
 }

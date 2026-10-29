@@ -109,7 +109,8 @@ type Answer struct {
 	// ApproverID is "<facade>:<workspace or team>:<user>"; Display is for
 	// screens.
 	ApproverID, Display string
-	// Reply tells the human why an answer was not taken (may be nil).
+	// Reply is called once per answer: with why it was not taken, or
+	// with "" once it was (may be nil).
 	Reply func(ctx context.Context, text string)
 }
 
@@ -247,6 +248,7 @@ func (f *Facade) answer(ctx context.Context, shown map[store.Ref]*posted, a Answ
 		}
 		return
 	}
+	reply("")
 	verb := "denied"
 	if a.Approve {
 		verb = "approved"
