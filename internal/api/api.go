@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/hub"
@@ -99,6 +100,10 @@ func (a *locks) auth(next authed) http.HandlerFunc {
 		key, known := a.h.LockKey(inst)
 		sec, terr := strconv.ParseInt(ts, 10, 64)
 		switch {
+		case strings.ContainsAny(r.Method+r.URL.RequestURI()+inst, "\n\r"):
+			// The signed message is line-based: no field may add a line.
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "malformed request")
+			return
 		case sig == "" || !known || terr != nil || !validNonce(nonce):
 			writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or malformed request signature")
 			return

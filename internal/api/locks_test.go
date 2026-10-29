@@ -173,3 +173,15 @@ func TestBadQueryAndBody(t *testing.T) {
 		t.Errorf("big body: %d", code)
 	}
 }
+
+func TestNewlineInSignedFieldRefused(t *testing.T) {
+	e, _, ca, _ := setup(t)
+	req := httptest.NewRequest("GET", "/v1/decisions", nil)
+	ca.lock.Sign(req, nil, e.Clock.T)
+	req.Header["Lock-Instance"] = []string{"a\nb"} // bypasses the client's header check
+	rec := httptest.NewRecorder()
+	api.LockHandler(e.Hub, "t").ServeHTTP(rec, req)
+	if rec.Code != 401 {
+		t.Errorf("newline in instance: %d", rec.Code)
+	}
+}
