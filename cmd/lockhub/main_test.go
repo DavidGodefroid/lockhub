@@ -74,3 +74,44 @@ func TestServeRefusesMissingConfig(t *testing.T) {
 		t.Errorf("serve on an empty dir = %d: %s", code, errb.String())
 	}
 }
+
+func TestFacadeSocketGuards(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	h, closeHub, err := openHub(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeHub()
+	dir, _ := os.MkdirTemp("", "fs")
+	defer os.RemoveAll(dir)
+	errc := make(chan error, 4)
+
+	open := filepath.Join(dir, "open")
+	os.Mkdir(open, 0o755)
+	if _, err := listenFacade(h, filepath.Join(open, "f.sock"), "0600", errc); err == nil {
+		t.Error("socket in a directory open to others accepted")
+	}
+	priv := filepath.Join(dir, "priv")
+	os.Mkdir(priv, 0o700)
+	sock := filepath.Join(priv, "f.sock")
+	srv, err := listenFacade(h, sock, "0600", errc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	if fi, _ := os.Stat(sock); fi.Mode().Perm() != 0o600 {
+		t.Errorf("socket mode %v", fi.Mode().Perm())
+	}
+	if _, err := listenFacade(h, sock, "0600", errc); err == nil || !strings.Contains(err.Error(), "another hub") {
+		t.Errorf("took over a live socket: %v", err)
+	}
+	if _, err := listenFacade(h, filepath.Join(priv, "g.sock"), "0606", errc); err == nil {
+		t.Error("mode open to others accepted")
+	}
+}
