@@ -40,7 +40,8 @@ func writeDevices(state string, devs []ticket.Device) error {
 		return err
 	}
 	tmp := DevicesFile(state) + ".tmp"
-	// 0644: the lock containers read it through a read-only bind mount.
+	// 0644 like the snapshots: the lock containers mount a reviewed
+	// snapshot of it (devicesSnapshot), never this live file.
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}

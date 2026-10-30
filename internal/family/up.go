@@ -621,6 +621,25 @@ func (u *Up) Do(ctx context.Context) error {
 	// workspace's, checks it is the user's and that no one else can write
 	// it, and checks every volume's labels with docker before mounting it.
 	sb, _ := json.MarshalIndent(st, "", "  ")
+	// A gate kind's devices are lea's gate's, read at its start: a phone
+	// paired or revoked reaches it only once lea restarts it (lock up
+	// recreates only its own consoles).
+	var devNotes []string
+	var prevUp UpState
+	if pb, err := os.ReadFile(filepath.Join(u.State, UpFile)); err == nil && json.Unmarshal(pb, &prevUp) == nil {
+		ob, _ := json.Marshal(prevUp.Devices)
+		nb, _ := json.Marshal(st.Devices)
+		for _, n := range c.Instances() {
+			l, o, nl := c.Locks[n], prevUp.Locks[n], st.Locks[n]
+			if !Kinds[l.Type].Gate {
+				continue
+			}
+			pins := o.Devices != nl.Devices || o.SealClear != nl.SealClear || !slices.Equal(o.RequireDevice, nl.RequireDevice)
+			if pins || (l.Devices && string(ob) != string(nb)) {
+				devNotes = append(devNotes, fmt.Sprintf("lea's gate for %s reads the paired devices and what it pins at its start: restart it (lea) to take the change", n))
+			}
+		}
+	}
 	if err := os.WriteFile(filepath.Join(u.State, UpFile), append(sb, '\n'), 0o600); err != nil {
 		return err
 	}
@@ -635,6 +654,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if Kinds[c.Locks[n].Type].Gate && (rot.hub || slices.Contains(rot.locks, n)) {
 			fmt.Fprintf(u.Out, "lea's gate for %s reads its keys at its start: restart it (lea) to take the new key\n", n)
 		}
+	}
+	for _, l := range devNotes {
+		fmt.Fprintln(u.Out, l)
 	}
 	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
 	for _, n := range c.Instances() {
@@ -679,7 +701,10 @@ func Routes(c *Config) route.Rules {
 	return r
 }
 
-// anyDevices reports whether a lock pins the paired devices.
+// anyDevices reports whether a lock pins the paired devices: a console
+// lock up runs (--devices-file), or a lockhttp lock, whose gate (lea's,
+// from up.json's devices; lockhttp v0.4.0 or later) pins them, since its
+// console only serves the policy.
 func (c *Config) anyDevices() bool {
 	for _, l := range c.Locks {
 		if l.Devices {
