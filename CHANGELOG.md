@@ -5,6 +5,9 @@ digest).
 
 ## Unreleased
 
+- A `lock import` or `lock add` refused for a new workspace no longer
+  leaves an empty `.lockfamily/` behind.
+
 ## v0.2.0 (2026-10-30)
 
 ### Supported locks
