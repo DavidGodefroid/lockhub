@@ -51,6 +51,12 @@ only then does `lock up` pass `--facade-keys-file`, which older images
 refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
+- Hub requests (reveal, renew) and two pollers of one instance (a lock
+  restarted while its old process still polls): a request now ends every
+  long poll that began before it was first given to a lock, not only the
+  first to take it; the others no longer sleep out their poll with it (a
+  lost wake-up). A poll that begins after the request was given still
+  waits.
 - `lock up --pin sha256:<digest>` restores a previous hub image by digest
   (reviewed, cosign-verified, written to lockfamily.yaml once applied;
   `hub-images.log` keeps the history), and `lock up --rotate
