@@ -7,14 +7,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/audit"
+	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
+	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
 
@@ -407,5 +411,56 @@ func TestRotateKeyRefusesLiveHub(t *testing.T) {
 	// Run again once done: the staged key is gone.
 	if _, err := rotateKey(data, filepath.Join(data, "rotate", "hub.key")); err == nil {
 		t.Error("second rotation without a staged key")
+	}
+}
+
+// I9 (hub plan): a hub whose configuration enables no chat facade reads
+// no chat secret, runs no chat facade, and routes no ticket to one. The
+// secret files are planted unreadable (directories): reading one is an
+// error, which the control shows.
+func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	for _, f := range []string{chatconf.SlackAppToken, chatconf.SlackBotToken, chatconf.TelegramToken} {
+		if err := os.Mkdir(filepath.Join(data, f), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// What lock up writes for a lockfamily.yaml without slack or telegram.
+	os.WriteFile(filepath.Join(data, "routing.json"), []byte(`{"facades":["tty","deck"]}`), 0o600)
+	os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{}`), 0o600)
+	open := func() (*hub.Hub, []*chat.Facade, error) {
+		h, closeHub, err := openHub(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeHub()
+		fs, err := chatFacades(h, data, io.Discard)
+		return h, fs, err
+	}
+	h, fs, err := open()
+	if err != nil || len(fs) != 0 {
+		t.Fatalf("no chat facade configured: facades %v, err %v (a secret was read?)", fs, err)
+	}
+	for _, f := range []string{route.Slack, route.Telegram} {
+		for _, risk := range []string{route.Read, route.ReadPII, route.Write, route.ProdWrite, route.PolicyLoosen, route.Unlock} {
+			if h.Routes().Allowed("crm", f, risk) == nil {
+				t.Errorf("%s may answer a %s ticket of a hub without chat facades", f, risk)
+			}
+		}
+	}
+	if got := h.Routes().Facades("crm", route.Read); slices.Contains(got, route.Slack) || slices.Contains(got, route.Telegram) {
+		t.Errorf("read tickets notify %v", got)
+	}
+	// Control: enabled, the same planted secrets are read, and refused.
+	os.WriteFile(filepath.Join(data, "routing.json"), []byte(`{"facades":["tty","deck","slack"]}`), 0o600)
+	os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{"slack":{"team":"T01","channel":"C02","users":["U03"]}}`), 0o600)
+	if _, _, err := open(); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("control: slack enabled did not read its planted secret: %v", err)
 	}
 }

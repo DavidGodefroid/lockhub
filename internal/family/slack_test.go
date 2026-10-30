@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 const slackHub = "  facades: [tty, deck, slack]\n  slack:\n    team: T01\n    channel: C02\n    users: [U03, U04]\n"
@@ -116,5 +118,60 @@ func TestDoctorSlackSecrets(t *testing.T) {
 	out, _ := doc(t, d)
 	if !strings.Contains(out, "FAIL slack tokens") {
 		t.Errorf("no secret check:\n%s", out)
+	}
+}
+
+// I9 (hub plan), lock up's side: a lockfamily.yaml without slack or
+// telegram reads no chat secret (none is in the review, though token
+// files are there), enables no chat facade in routing.json, writes no
+// chat settings and gives the hub no route out. The control, with slack
+// declared, shows the review would name the tokens it read.
+func TestI9NoChatNoSecretNoRouteNoEgress(t *testing.T) {
+	plant := func(w ws) {
+		hub := filepath.Join(w.dir, "state", "hub")
+		if err := os.MkdirAll(hub, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{chatconf.SlackAppToken, chatconf.SlackBotToken, chatconf.TelegramToken} {
+			os.WriteFile(filepath.Join(hub, f), []byte("planted-token"), 0o600)
+		}
+	}
+	w := newWS(t, yamlConf(""))
+	plant(w)
+	out, err := w.up("y\n", newFake())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "hub secret") || strings.Contains(out, "slack") || strings.Contains(out, "telegram") {
+		t.Errorf("the review names a chat secret or facade:\n%s", out)
+	}
+	hub := filepath.Join(w.dir, "state", "hub")
+	var r route.Rules
+	if b, err := os.ReadFile(filepath.Join(hub, "routing.json")); err != nil || json.Unmarshal(b, &r) != nil {
+		t.Fatalf("routing.json: %v %s", err, b)
+	}
+	if len(r.Enabled) == 0 || slices.Contains(r.Enabled, route.Slack) || slices.Contains(r.Enabled, route.Telegram) {
+		t.Errorf("routing.json enables %v (empty would mean every facade)", r.Enabled)
+	}
+	for _, f := range []string{route.Slack, route.Telegram} {
+		if r.Allowed("crm-prod", f, route.Read) == nil {
+			t.Errorf("%s may answer a read ticket", f)
+		}
+	}
+	var s chatconf.Settings
+	if b, err := os.ReadFile(filepath.Join(hub, chatconf.File)); err != nil || json.Unmarshal(b, &s) != nil || s.Slack != nil || s.Telegram != nil {
+		t.Errorf("chat.json: %v %+v", err, s)
+	}
+	cy, _ := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
+	if strings.Contains(string(cy), "egress-hub") {
+		t.Errorf("the hub has a route out without a chat facade:\n%s", cy)
+	}
+
+	// Control: with slack declared, the review reads and names its tokens.
+	c := newWS(t, yamlConf(slackHub))
+	plant(c)
+	out, err = c.up("y\n", newFake())
+	if err != nil || !strings.Contains(out, "hub secret "+chatconf.SlackBotToken+" id ") {
+		t.Errorf("control: the review does not name the slack token it read: %v\n%s", err, out)
 	}
 }
