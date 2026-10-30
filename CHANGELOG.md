@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+- A reveal or renewal request that an old lock process took (and never
+  answers) while the live lock was between polls is offered again to
+  every poller of the instance after 2 s (`ReofferAfter`), instead of
+  waiting for the live lock's poll to time out after the facade gave up
+  (30 s). A lock that does not answer is woken once per 2 s at most.
 - CI: workflow e2e-lock-up runs the hub plan's phase 1 (locksql's
   TestHubPhase1 against this tree), phase 2 (lock up, lock attach, a
   ticket approved through the facade socket, I2 directly and through a

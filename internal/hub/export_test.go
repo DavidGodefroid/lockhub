@@ -23,7 +23,8 @@ func (h *Hub) GiveStart() uint64 {
 
 // OpenRequestsFor is openRequests of a poll that began at start.
 func (h *Hub) OpenRequestsFor(instance string, start uint64) ([][]byte, bool) {
-	return h.openRequests(instance, start)
+	reqs, fresh, _ := h.openRequests(instance, start)
+	return reqs, fresh
 }
 
 // OpenCount is how many requests are open for instance.
