@@ -50,6 +50,10 @@ The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
 with every Lock.
 
+[docs/lock-up.md](docs/lock-up.md) is the contract between `lock up` and lea;
+[docs/design-notes.md](docs/design-notes.md) records where the code
+deliberately departs from the hub's design plan.
+
 ## Mobile facade
 
 A phone can approve tickets through an installable web app the hub serves.
