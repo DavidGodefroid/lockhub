@@ -19,7 +19,11 @@ import (
 )
 
 // build makes a hub data dir with n decided tickets.
-func build(t *testing.T, n int) (string, ed25519.PublicKey) {
+func build(t *testing.T, n int) (string, ed25519.PublicKey) { return buildCrash(t, n, false) }
+
+// buildCrash is build; with crash, the hub stops after the last
+// decision's commit, before its audit record reaches the log.
+func buildCrash(t *testing.T, n int, crash bool) (string, ed25519.PublicKey) {
 	dir := t.TempDir()
 	lpub, lpriv, _ := ed25519.GenerateKey(rand.Reader)
 	hpub, hpriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -35,6 +39,9 @@ func build(t *testing.T, n int) (string, ed25519.PublicKey) {
 		raw, _ := tk.Marshal()
 		if _, _, err := h.Push(context.Background(), "crm", raw); err != nil {
 			t.Fatal(err)
+		}
+		if crash && i == n-1 {
+			al.Close()
 		}
 		if _, err := h.Decide(context.Background(), store.Ref{Instance: "crm", ID: tk.ID}, hub.Verdict{Approved: i%2 == 0, ApproverID: "host:uid:1", Facade: "tty"}); err != nil {
 			t.Fatal(err)
@@ -114,5 +121,29 @@ func TestMissingDatabaseNotCreated(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "hub.db")); err == nil {
 		t.Error("verify created a database")
+	}
+}
+
+func TestOutboxedDecision(t *testing.T) {
+	dir, pub := buildCrash(t, 2, true)
+	r, err := Hub(context.Background(), dir, pub)
+	if err != nil || !r.OK() || r.Decisions != 2 || r.Records != 3 || r.Outboxed != 1 {
+		t.Fatalf("report %+v, %v", r, err)
+	}
+	// An outboxed record must still match its decision.
+	st, _ := store.Open(filepath.Join(dir, "hub.db"))
+	out, _ := st.AuditOutbox(context.Background())
+	if len(out) != 1 {
+		t.Fatalf("outbox %v", out)
+	}
+	if err := st.Tx(context.Background(), func(tx *store.Tx) error {
+		return tx.QueueAudit([]byte(strings.Replace(string(out[0].Record), `"approver":"host:uid:1"`, `"approver":"host:uid:2"`, 1)))
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st.DropAudit(context.Background(), out[0].ID)
+	st.Close()
+	if r, _ := Hub(context.Background(), dir, pub); r.OK() {
+		t.Errorf("forged outbox record accepted: %+v", r)
 	}
 }

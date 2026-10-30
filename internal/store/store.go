@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS decisions (
 	FOREIGN KEY (instance, ticket) REFERENCES tickets(instance, id)
 );
 CREATE INDEX IF NOT EXISTS decisions_instance_seq ON decisions(instance, seq);
+-- Audit records of committed changes not yet in the audit log: written
+-- in the change's transaction, appended to the log after the commit, then
+-- dropped (a transactional outbox).
+CREATE TABLE IF NOT EXISTS audit_outbox (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	record BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -321,5 +328,47 @@ func (s *Store) DueForExpiry(ctx context.Context, now time.Time) ([]Ref, error) 
 // PurgeNonces drops nonces recorded before t.
 func (s *Store) PurgeNonces(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nonces WHERE at < ?`, before.Unix())
+	return err
+}
+
+// QueueAudit stores an audit record (JSON) in the transaction, for the
+// audit log once the transaction commits (see Store.AuditOutbox).
+func (t *Tx) QueueAudit(record []byte) error {
+	_, err := t.tx.Exec(`INSERT INTO audit_outbox(record) VALUES (?)`, record)
+	return err
+}
+
+// Outboxed is an audit record of a committed change awaiting the log.
+type Outboxed struct {
+	ID     int64
+	Record []byte
+}
+
+// AuditOutbox returns the audit records awaiting the log, in commit order.
+// A database from before the outbox (read only, so not migrated) has none.
+func (s *Store) AuditOutbox(ctx context.Context) ([]Outboxed, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_outbox'`).Scan(&n); err != nil || n == 0 {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, record FROM audit_outbox ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Outboxed
+	for rows.Next() {
+		var o Outboxed
+		if err := rows.Scan(&o.ID, &o.Record); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// DropAudit removes an outboxed record once it is in the audit log.
+func (s *Store) DropAudit(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM audit_outbox WHERE id = ?`, id)
 	return err
 }

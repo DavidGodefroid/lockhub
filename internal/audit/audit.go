@@ -72,6 +72,7 @@ type Log struct {
 	prev string
 	now  func() time.Time
 	key  ed25519.PrivateKey
+	last Record
 }
 
 // SetKey makes Append sign every record with key (the hub key).
@@ -109,19 +110,21 @@ func open(path string, key ed25519.PublicKey) (*Log, error) {
 	}
 	l := &Log{f: f, seq: n, prev: Genesis, now: time.Now}
 	if n > 0 {
-		l.prev = last.Hash
+		l.prev, l.last = last.Hash, last
 	}
 	return l, nil
 }
 
-// Append chains r (Seq, At, Prev and Hash are set here), writes it and
-// syncs. An error means the event is not recorded: callers refuse the
-// event.
+// Append chains r (Seq, Prev and Hash are set here, and At unless r
+// has one), writes it and syncs. An error means the record is not in the
+// log.
 func (l *Log) Append(r Record) (Record, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	r.Seq = l.seq + 1
-	r.At = l.now().UTC().Format(time.RFC3339Nano)
+	if r.At == "" {
+		r.At = l.now().UTC().Format(time.RFC3339Nano)
+	}
 	r.Prev = l.prev
 	r.Hash = hashOf(r)
 	if l.key != nil {
@@ -140,8 +143,22 @@ func (l *Log) Append(r Record) (Record, error) {
 	if err := l.f.Sync(); err != nil {
 		return Record{}, err
 	}
-	l.seq, l.prev = r.Seq, r.Hash
+	l.seq, l.prev, l.last = r.Seq, r.Hash, r
 	return r, nil
+}
+
+// IsLast reports whether the log's last record has r's content (every
+// field but Seq, Prev, Hash and Sig): r was appended already.
+func (l *Log) IsLast(r Record) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.seq == 0 {
+		return false
+	}
+	a, b := l.last, r
+	a.Seq, a.Prev, a.Hash, a.Sig = 0, "", "", ""
+	b.Seq, b.Prev, b.Hash, b.Sig = 0, "", "", ""
+	return a == b
 }
 
 // Close closes the file.

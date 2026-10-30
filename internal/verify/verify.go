@@ -25,7 +25,10 @@ import (
 type Report struct {
 	Records   int64
 	Decisions int
-	Problems  []string
+	// Outboxed counts audit records of committed changes not yet in the
+	// log: the hub appends them at its next change or start.
+	Outboxed int
+	Problems []string
 }
 
 // OK reports whether nothing is wrong.
@@ -65,6 +68,24 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 		return r, err
 	}
 	defer st.Close()
+	// Committed changes whose records are still in the outbox (the hub
+	// stopped between its commit and the log): they vouch for their
+	// decisions too, and are reported, not refused.
+	out, err := st.AuditOutbox(ctx)
+	if err != nil {
+		return r, err
+	}
+	for _, o := range out {
+		var rec audit.Record
+		if err := json.Unmarshal(o.Record, &rec); err != nil {
+			r.bad("audit outbox record %d: %v", o.ID, err)
+			continue
+		}
+		r.Outboxed++
+		if rec.Decision != "" {
+			inLog[rec.Instance+"/"+rec.Ticket] = rec
+		}
+	}
 	var since int64
 	for {
 		ds, err := st.AllDecisions(ctx, since, 500)
