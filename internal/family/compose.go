@@ -42,7 +42,11 @@ func Compose(c *Config, p Paths) string {
 	w("    image: %s", q(c.Hub.Image))
 	w("    user: %s", q(p.User))
 	if m := c.Hub.Mobile; m != nil {
-		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\", \"--mobile-listen\", \":8444\", \"--mobile-origin\", %s]", q(m.Origin))
+		push := ""
+		if m.Push {
+			push = `, "--mobile-push"`
+		}
+		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\", \"--mobile-listen\", \":8444\", \"--mobile-origin\", %s%s]", q(m.Origin), push)
 		// Published on the host's loopback only: the human's reverse
 		// proxy or tunnel forwards the origin to it.
 		w("    ports: [%s]", q(fmt.Sprintf("127.0.0.1:%d:8444", m.Port)))
@@ -58,11 +62,12 @@ func Compose(c *Config, p Paths) string {
 	w("        source: %s", q(p.FacadeDir))
 	w("        target: /run/lockhub-facade")
 	// The hub has no route out, unless a chat facade must reach its
-	// service: then through its own network, never a lock's.
-	// Its own networks: a chat facade's route out, the mobile listener's
-	// published port (an internal network publishes none).
+	// service or the mobile facade the push services: then through its own
+	// network, never a lock's. Its own networks: that route out, the
+	// mobile listener's published port (an internal network publishes
+	// none).
 	nets := []string{"lockhub"}
-	if c.ChatEnabled() {
+	if c.HubEgress() {
 		nets = append(nets, q("egress-hub"))
 	}
 	if c.Hub.Mobile != nil {
@@ -104,7 +109,7 @@ func Compose(c *Config, p Paths) string {
 	w("networks:")
 	w("  lockhub:")
 	w("    internal: true")
-	if c.ChatEnabled() {
+	if c.HubEgress() {
 		w("  %s: {}", q("egress-hub"))
 	}
 	if c.Hub.Mobile != nil {

@@ -120,9 +120,25 @@ type Hub struct {
 
 	auditMu sync.Mutex // one outbox flush at a time
 
-	mu       sync.Mutex
-	waiters  map[string]chan struct{} // instance → closed on a new decision
-	queueVer uint64                   // bumped on every change of the pending queue
+	mu        sync.Mutex
+	waiters   map[string]chan struct{} // instance → closed on a new decision
+	queueVer  uint64                   // bumped on every change of the pending queue
+	onPending []func(Pending)
+}
+
+// Pending is a ticket that just became pending: what a facade needs to
+// tell whether it may answer it, nothing of its content.
+type Pending struct {
+	Instance, ID, Risk string
+}
+
+// OnPending registers f, called after every new ticket is committed as
+// pending. f runs on the lock API's request: it must not block (signal a
+// worker of its own) and cannot fail the push.
+func (h *Hub) OnPending(f func(Pending)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onPending = append(h.onPending, f)
 }
 
 // New returns a hub.
@@ -232,6 +248,12 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 	if err == nil && created {
 		h.flushAudit(ctx)
 		h.notify(queueKey)
+		h.mu.Lock()
+		fs := h.onPending
+		h.mu.Unlock()
+		for _, f := range fs {
+			f(Pending{Instance: instance, ID: info.ID, Risk: info.Risk})
+		}
 	}
 	return info, created, err
 }
@@ -540,6 +562,10 @@ func (h *Hub) RevokeDevice(ctx context.Context, id, approver string) error {
 			return nil
 		}
 		if err := tx.SetDeviceState(id, store.DeviceRevoked, h.c.Now()); err != nil {
+			return err
+		}
+		// Its push endpoints go with it.
+		if err := tx.DeletePushSubscriptions(id); err != nil {
 			return err
 		}
 		return h.audit(tx, audit.Record{Event: "device-revoke", State: store.DeviceRevoked, Device: id, Approver: approver})

@@ -45,11 +45,12 @@ var version = "dev"
 const usage = `lockhub: the Lock Family approval hub
 
 Usage:
-  lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH] [--mobile-listen ADDR --mobile-origin URL]
+  lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH] [--mobile-listen ADDR --mobile-origin URL [--mobile-push]]
                                                serve the lock API (default :8443, /var/lib/lockhub),
                                                the facade API on a unix socket (lock approve, lea deck)
                                                and the mobile web app on its own listener, reached through
-                                               the human's TLS reverse proxy or tunnel at URL
+                                               the human's TLS reverse proxy or tunnel at URL; with
+                                               --mobile-push, payload-less Web Push to paired phones
   lockhub keygen [--data DIR]                  create the hub's signing key, print its public half
   lockhub version                              print the version
   lockhub help                    show this help
@@ -149,11 +150,16 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	facadeMode := fs.String("facade-socket-mode", "0600", "file mode of the facade socket")
 	mobileListen := fs.String("mobile-listen", "", "address of the mobile facade's listener (with --mobile-origin; empty: none)")
 	mobileOrigin := fs.String("mobile-origin", "", "the https origin phones reach the mobile facade at, through a reverse proxy or tunnel")
+	mobilePush := fs.Bool("mobile-push", false, "wake paired phones with payload-less Web Push when a ticket they may answer is pending (needs a route out to the push services)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if (*mobileListen == "") != (*mobileOrigin == "") {
 		fmt.Fprintln(stderr, "lockhub: --mobile-listen and --mobile-origin go together")
+		return 2
+	}
+	if *mobilePush && *mobileListen == "" {
+		fmt.Fprintln(stderr, "lockhub: --mobile-push needs the mobile facade (--mobile-listen, --mobile-origin)")
 		return 2
 	}
 	h, closeHub, err := openHub(*data)
@@ -193,18 +199,29 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lock up)")
 			return 1
 		}
-		m, err := mobile.New(mobile.Config{Hub: h, Origin: *mobileOrigin, HubKeyID: ticket.KeyID(h.PublicKey()), Log: stderr})
+		mc := mobile.Config{Hub: h, Origin: *mobileOrigin, HubKeyID: ticket.KeyID(h.PublicKey()), Log: stderr}
+		if *mobilePush {
+			// Created once, kept with the hub's other keys.
+			k, err := keys.LoadOrCreateP256(filepath.Join(*data, keys.VAPIDFile))
+			if err != nil {
+				fmt.Fprintln(stderr, "lockhub: vapid key:", err)
+				return 1
+			}
+			mc.VAPID = k
+		}
+		m, err := mobile.New(mc)
 		if err != nil {
 			fmt.Fprintln(stderr, "lockhub:", err)
 			return 1
 		}
+		go m.RunPush(ctx)
 		// WriteTimeout above the queue's long poll (mobile.MaxWait).
 		msrv := &http.Server{Addr: *mobileListen, Handler: m.Handler(), ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout: 30 * time.Second, WriteTimeout: mobile.MaxWait + 30*time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
 		go func() { errc <- msrv.ListenAndServe() }()
 		defer msrv.Close()
 		extra = append(extra, m.FacadeRoutes)
-		fmt.Fprintf(stderr, "lockhub %s: mobile facade on %s for %s\n", version, *mobileListen, *mobileOrigin)
+		fmt.Fprintf(stderr, "lockhub %s: mobile facade on %s for %s (web push: %t)\n", version, *mobileListen, *mobileOrigin, m.Push())
 	} else if r := h.Routes(); slices.Contains(r.Enabled, route.Mobile) {
 		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lock up)")
 		return 1
