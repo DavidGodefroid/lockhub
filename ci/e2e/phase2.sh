@@ -86,6 +86,10 @@ cmp reviewed.yaml .lockfamily/lockfamily.yaml || die ".lockfamily/lockfamily.yam
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 jq . .lockfamily/up.json
+# What lea's gate pins (lockhub#40): said, and nothing pinned here (no
+# devices: true, no device paired).
+jq -e '.lockhttp_gate == 1 and (has("devices") | not) and ([.locks[] | select(.devices or .seal_clear or .require_device)] | length == 0)' .lockfamily/up.json >/dev/null ||
+	die "up.json does not say what the lockhttp gate pins (lockhttp_gate 1)"
 hub_is_local "$p"
 
 say "each console asks its policy at its terminal: lock attach"

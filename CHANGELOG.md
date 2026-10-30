@@ -5,6 +5,13 @@ digest).
 
 ## Unreleased
 
+- up.json says what lea's lockhttp gate pins (`"lockhttp_gate": 1`): the
+  paired devices (top-level `devices`) and, per lock, `devices`,
+  `require_device` and `seal_clear` as lock up passes them to its consoles,
+  with `profile` and `reveal` as before (#40). lea's gate in hub mode
+  (lea#209) runs only from `lockhttp_gate` 1 on, so `devices: true` now
+  reaches a lockhttp lock under lock up (lockhttp v0.4.0 or later).
+
 ## v0.2.0 (2026-10-30)
 
 ### Supported locks

@@ -3,6 +3,7 @@ package family
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
@@ -32,7 +33,16 @@ type UpState struct {
 	// as lock up does for the consoles it runs. Absent before the first
 	// apply.
 	FacadeKeys *ticket.FacadeSet `json:"facade_keys,omitempty"`
-	Locks      map[string]UpLock `json:"locks"`
+	// LockHTTPGate 1: the locks below say what a lockhttp lock's gate
+	// pins (Devices, RequireDevice, SealClear, Reveal, Profile) and
+	// Devices is the paired devices. lea runs its gate in hub mode only
+	// from 1 on (before, a lock's devices: true would not reach it).
+	LockHTTPGate int `json:"lockhttp_gate"`
+	// Devices are the paired devices the locks with UpLock.Devices pin
+	// (lockkit ticket.DeviceSet, public keys only), as lock up mounts
+	// them for its consoles. Absent while no device is paired.
+	Devices *ticket.DeviceSet `json:"devices,omitempty"`
+	Locks   map[string]UpLock `json:"locks"`
 }
 
 // UpLock is one lock of UpState.
@@ -50,15 +60,34 @@ type UpLock struct {
 	// --facade-keys-file with FacadeKeys; otherwise it does not (an
 	// older gate refuses the flag).
 	Reveal bool `json:"reveal,omitempty"`
+	// Devices: the lock pins the paired devices (lockfamily.yaml
+	// locks.<name>.devices: true). For a lockhttp instance, lea's gate
+	// then pins UpState.Devices (--devices-file) and RequireDevice and
+	// SealClear, which come from hub.mobile, as lock up passes them to the
+	// consoles it runs (--require-device, --seal-clear). Without Devices,
+	// neither is set.
+	Devices       bool     `json:"devices,omitempty"`
+	RequireDevice []string `json:"require_device,omitempty"`
+	SealClear     bool     `json:"seal_clear,omitempty"`
 }
 
-// NewUpState is the contract for c, run as compose project project.
-func NewUpState(c *Config, project, ws, hubKey string) UpState {
+// NewUpState is the contract for c, run as compose project project, with
+// devices paired.
+func NewUpState(c *Config, project, ws, hubKey string, devices []ticket.Device) UpState {
 	s := UpState{Version: 1, Project: project, Workspace: ws, HubNetwork: project + "_lockhub",
-		HubURL: "http://lockhub:8443", HubKey: hubKey, Locks: map[string]UpLock{}}
+		HubURL: "http://lockhub:8443", HubKey: hubKey, LockHTTPGate: 1, Locks: map[string]UpLock{}}
+	if len(devices) > 0 {
+		s.Devices = &ticket.DeviceSet{V: ticket.Version, Devices: devices}
+	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		ul := UpLock{Type: l.Type, Profile: l.Profile, Socket: project + "_" + n + "-run", GID: Kinds[l.Type].GID, Reveal: l.Reveal}
+		if l.Devices {
+			ul.Devices = true
+			if m := c.Hub.Mobile; m != nil {
+				ul.RequireDevice, ul.SealClear = slices.Clone(m.RequireDevice), m.SealClear
+			}
+		}
 		if Kinds[l.Type].Gate {
 			ul.GateHome = project + "_" + n + "-gate"
 		}
