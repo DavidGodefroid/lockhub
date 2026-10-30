@@ -35,6 +35,11 @@ type Info struct {
 	// Production tickets with a Retype need the human to type it.
 	Production bool
 	Retype     string
+	// NeverAuto: never approved without a human's own decision on it
+	// (no one-click renewal).
+	NeverAuto bool
+	// Flags identifies the ticket's flags (equal flags, equal Flags).
+	Flags string
 	// Renews, when set, makes this ticket the renewal of an expired one.
 	Renews *Renewal
 }
@@ -264,12 +269,9 @@ func (h *Hub) linkRenewal(tx *store.Tx, instance string, info Info, now time.Tim
 	if err != nil || !linked {
 		return err
 	}
-	if old.State != state.Pending && old.State != state.Approved {
+	to, ok := state.Renewed(old.State)
+	if !ok {
 		return nil
-	}
-	to, err := state.Next(old.State, state.Expire)
-	if err != nil {
-		return err
 	}
 	if err := tx.SetState(ref, old.State, to, now); err != nil {
 		return err

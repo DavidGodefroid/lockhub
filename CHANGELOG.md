@@ -40,19 +40,20 @@ v0.5.0; older locks ignore the new `requests` member of the decisions poll.
     or logging it; the audit log records `reveal` and `renew` events (who,
     which facade, outcome), never content.
   - Renewals: a ticket that renews another ends it expired (pending, or
-    approved and not run: new transition approved → expired) and links
-    them. A renewal asked from the terminal or the deck, unchanged and not
-    for production, is approved at once ("re-approved: nothing changed since
-    approval"); otherwise it waits with its changes, production still asks
-    for the typed name.
+    approved and not run; only a renewal ends an approval, never the
+    sweeper) and links them. A renewal asked from the terminal or the deck
+    within 24 h of the expiry, unchanged, with the old ticket's risk and
+    flags, and not for production, is approved at once; otherwise it waits
+    with its changes, production still asks for the typed name.
   - `lock up` creates per-user tty and deck facade keys
     (`$XDG_STATE_HOME/lockfamily/facades/`, 0600), reviews them
     (`facade tty key …`), mounts their public halves read-only in every lock
     at `/run/lockfamily/facades.json` with `--facade-keys-file`, and keeps a
     host-only copy of the pinned lock keys there for facades to verify a
     lock's answers.
-  - `lock approve`: `o` or Ctrl-O reveals, clearly marked and escaped; `r`
-    on an expired ticket asks again; a renewal shows what changed.
+  - `lock approve`: `o` reveals (Ctrl-O too where the terminal passes it;
+    macOS keeps ^O), clearly marked and escaped; `r` on an expired ticket
+    approves it again; a renewal shows what changed.
 
 ## v0.1.1 (2026-10-30)
 

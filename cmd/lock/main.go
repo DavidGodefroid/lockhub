@@ -47,8 +47,8 @@ Usage:
                                           keeping the strictest routing
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once] [--facade-keys DIR]
-                                          answer approval tickets in this terminal (o or Ctrl-O: clear values,
-                                          r on an expired ticket: ask again)
+                                          answer approval tickets in this terminal (o: clear values, also Ctrl-O
+                                          where the terminal passes it; r on an expired ticket: approve again)
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lock version                            print the version

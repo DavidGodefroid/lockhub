@@ -76,9 +76,23 @@ func writeFacadeSet(path string, pubs map[string]string) error {
 	if _, err := ticket.ParseFacades(b); err != nil {
 		return err
 	}
+	return writeAtomic(path, append(b, '\n'), 0o644)
+}
+
+// writeAtomic replaces path with b: a reader sees the old file or the
+// new one, never a part.
+func writeAtomic(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Chmod(tmp, mode); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }

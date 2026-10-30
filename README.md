@@ -13,14 +13,20 @@ decision bound to the exact plan that was approved.
 The hub never runs a request, never sees its results, and never sees values in
 clear.
 
-In `lock approve`, `o` (or Ctrl-O, then Enter) shows a ticket's clear values:
+In `lock approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
+not on macOS, which keeps ^O) shows a ticket's clear values:
 the terminal sends an ephemeral key signed by its facade key (which every lock
 pins, written by `lock up`), the lock seals the clear screen to it and signs
 the answer, and only the terminal opens it. The hub relays ciphertext, and
 never offers this on Slack, Telegram or mobile. An expired ticket is listed for
-re-approval (`r`): the lock asks again, and when nothing changed in the plan
-since then (and it is not for production) the hub approves it in that one step;
-otherwise the new ticket shows what changed and waits for `y`.
+re-approval (`r`, approve again): the lock asks again, and when nothing changed
+in the plan since then (and it is not for production) the hub approves it in
+that one step; otherwise the new ticket shows what changed and waits for `y`.
+
+Threat model of the facade socket: whoever can open it is the host's human (one
+user). The facade name a client sends for `decide` and `renew` is self-declared
+by that same user; a reveal is bound by the facade's own signed key, which the
+lock checks against the key it pinned.
 
 ## Status
 

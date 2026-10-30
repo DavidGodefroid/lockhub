@@ -358,7 +358,7 @@ func TestRenewUnchangedOneClick(t *testing.T) {
 	id := w.submit(t, ticket.RiskWrite, false, time.Hour)
 	w.expire(t, id)
 	out := w.run(t, "r\n")
-	if !strings.Contains(out, "EXPIRED") || !strings.Contains(out, "re-approved as ticket") {
+	if !strings.Contains(out, "EXPIRED") || !strings.Contains(out, "approved again as ticket") {
 		t.Fatalf("terminal:\n%s", out)
 	}
 	res, _ := approve.Dial(w.sock).QueueAll(context.Background(), 0, 0)
@@ -402,7 +402,7 @@ func TestRenewProductionRetype(t *testing.T) {
 	id := w.submit(t, ticket.RiskProdWrite, true, time.Hour)
 	w.expire(t, id)
 	out := w.run(t, "r\ny\ncrm\n")
-	if strings.Contains(out, "re-approved") || !strings.Contains(out, `type "crm" to approve`) || !strings.Contains(out, "nothing changed since then") {
+	if strings.Contains(out, "approved again as") || !strings.Contains(out, `type "crm" to approve`) || !strings.Contains(out, "nothing changed since then") {
 		t.Fatalf("terminal:\n%s", out)
 	}
 	ds, _ := w.st.Decisions(context.Background(), "crm", 0, 10)

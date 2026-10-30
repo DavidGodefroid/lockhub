@@ -393,3 +393,113 @@ func TestRenewOneClick(t *testing.T) {
 		})
 	}
 }
+
+// The sweeper lists due tickets, then expires each: a Decide that gets
+// in between leaves the ticket approved, its signed decision usable.
+func TestSweeperNeverEndsAnApproval(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.New(t, 0, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	ref := store.Ref{Instance: "crm", ID: "T1"}
+	if _, err := e.Hub.Decide(ctx, ref, approve("T1")); err != nil {
+		t.Fatal(err)
+	}
+	e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+	var te state.ErrTransition
+	if err := e.Hub.SweepOne(ctx, ref); !errors.As(err, &te) {
+		t.Errorf("sweep of an approved ticket: %v", err)
+	}
+	if err := e.Hub.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := ticketState(t, e, "T1"); st != state.Approved {
+		t.Fatalf("approved ticket is %s after the sweep", st)
+	}
+	if err := e.Hub.Consumed(ctx, "crm", "T1"); err != nil {
+		t.Errorf("consumed: %v", err)
+	}
+}
+
+// A delivered request does not wake the poll again: a lock that does not
+// answer it cannot spin; it still comes with the poll's answer.
+func TestPollDoesNotSpinOnDeliveredRequest(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	go e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 5*time.Second); len(reqs) != 1 {
+		t.Fatalf("first poll: %d requests", len(reqs))
+	}
+	start := time.Now()
+	_, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 300*time.Millisecond)
+	if d := time.Since(start); d < 250*time.Millisecond || len(reqs) != 1 {
+		t.Errorf("second poll returned after %s with %d requests", d, len(reqs))
+	}
+}
+
+func TestRenewOutsideTheWindow(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 50 * time.Millisecond }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+	e.Hub.Sweep(ctx)
+	e.Clock.T = e.Clock.T.Add(hub.ExpiredWindow + time.Minute)
+	if _, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty); !errors.Is(err, hub.ErrState) {
+		t.Errorf("renew after the window: %v", err)
+	}
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 0); len(reqs) != 0 {
+		t.Error("the lock was asked")
+	}
+}
+
+func TestRenewNotRouted(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.Routes = route.Rules{Only: map[string][]string{"crm": {"deck"}}} }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+	e.Hub.Sweep(ctx)
+	if _, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty); !errors.Is(err, hub.ErrNotRouted) {
+		t.Errorf("tty renew, crm routed to deck only: %v", err)
+	}
+}
+
+// No one click when the renewal is not the same request as far as the
+// hub can tell (other risk, other flags), and an error when the lock
+// answers a ticket that renews another one.
+func TestRenewNoOneClickForAnotherRequest(t *testing.T) {
+	for name, c := range map[string]struct {
+		mod    func(*hubtest.Ticket)
+		badAns bool
+	}{
+		"other risk":   {mod: func(t *hubtest.Ticket) { t.Risk = "policy-loosen" }},
+		"other flags":  {mod: func(t *hubtest.Ticket) { t.Retype = "other" }},
+		"renews other": {mod: func(t *hubtest.Ticket) { t.RenewsOf = "OTHER" }, badAns: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := hubtest.NewLock("crm")
+			e := hubtest.New(t, 0, a)
+			e.Hub.Push(ctx, "crm", a.Ticket("OTHER", "write", e.Clock.T, 48*time.Hour))
+			e.Hub.Push(ctx, "crm", a.Ticket("OLD", "write", e.Clock.T, time.Hour))
+			e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+			e.Hub.Sweep(ctx)
+			lockAnswers(t, e, "crm", func(q hubtest.Request) string {
+				e.Hub.Push(ctx, "crm", a.TicketWith("NEW", "write", e.Clock.T, time.Hour, func(t *hubtest.Ticket) {
+					t.RenewsOf, t.Unchanged = "OLD", true
+					c.mod(t)
+				}))
+				return `{"ticket":"NEW"}`
+			})
+			res, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "OLD"}, tty)
+			if c.badAns {
+				if !errors.Is(err, hub.ErrBadAnswer) {
+					t.Errorf("renewal of another ticket: %+v %v", res, err)
+				}
+			} else if err != nil || res.AutoApproved {
+				t.Errorf("Renew = %+v, %v; want pending", res, err)
+			}
+			if st := ticketState(t, e, "NEW"); st != state.Pending {
+				t.Errorf("NEW is %s", st)
+			}
+		})
+	}
+}

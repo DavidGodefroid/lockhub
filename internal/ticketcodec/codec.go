@@ -48,8 +48,13 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 		ID: t.ID, Instance: t.Source.Instance, KeyID: t.Source.KeyID,
 		Risk: string(t.Risk), PlanHash: t.PlanHash, Created: t.Created,
 		TTL:        ticket.ClampTTL(t.Risk, ttl),
-		Production: t.Flags.Production, Retype: t.Flags.Retype,
+		Production: t.Flags.Production, Retype: t.Flags.Retype, NeverAuto: t.Flags.NeverAuto,
 	}
+	fl, err := ticket.Canonical(&t.Flags)
+	if err != nil {
+		return hub.Info{}, err
+	}
+	info.Flags = string(fl)
 	if t.Renews != nil {
 		info.Renews = &hub.Renewal{Of: t.Renews.Of, Unchanged: t.Renews.Unchanged()}
 	}

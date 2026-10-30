@@ -215,7 +215,7 @@ var lockCodes = map[string]string{
 func Explain(err error) string {
 	var he *HubError
 	if !errors.As(err, &he) {
-		return err.Error()
+		return sanitize.Terminal(err.Error(), false)
 	}
 	switch he.Kind {
 	case "lock_refused":
@@ -344,7 +344,7 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 	}
 	prompt := "approve? [y]es / [n]o <reason> / [s]kip / [q]uit: "
 	if s.FacadeKey != nil {
-		prompt = "approve? [y]es / [n]o <reason> / [o] or Ctrl-O: clear values / [s]kip / [q]uit: "
+		prompt = "approve? [y]es / [n]o <reason> / [o] clear values / [s]kip / [q]uit: "
 	}
 	for {
 		a, err := s.line(prompt)
@@ -355,7 +355,9 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 		req := api.DecideRequest{Facade: "tty", Display: s.Display, Reason: strings.TrimSpace(reason)}
 		switch strings.ToLower(verb) {
 		case "o", "\x0f":
-			// Ctrl-O arrives as 0x0F before the Enter of the line.
+			// o is the key. Ctrl-O works where the terminal passes it
+			// (Linux: 0x0F before the Enter of the line); macOS takes
+			// ^O for itself (VDISCARD) and never delivers it.
 			s.reveal(ctx, it, t)
 			continue
 		case "y", "yes":
@@ -407,7 +409,7 @@ func (s *Session) reveal(ctx context.Context, it api.QueueItem, t *ticket.Ticket
 	}
 	rk, priv, err := ticket.NewRevealKey(s.FacadeKey, ticket.FacadeTTY, t, s.Now())
 	if err != nil {
-		fmt.Fprintln(s.Out, "reveal:", err)
+		fmt.Fprintln(s.Out, "reveal:", sanitize.Terminal(err.Error(), false))
 		return
 	}
 	kb, _ := json.Marshal(rk)
@@ -437,7 +439,7 @@ func (s *Session) renew(ctx context.Context, it api.QueueItem) error {
 	fmt.Fprintln(s.Out, "EXPIRED: this ticket can no longer run")
 	fmt.Fprint(s.Out, text)
 	for {
-		a, err := s.line("ask again? [r]e-approve / [s]kip / [q]uit: ")
+		a, err := s.line("approve again? [r] (approved now if nothing changed; otherwise review it) / [s]kip / [q]uit: ")
 		if err != nil {
 			return err
 		}
@@ -456,7 +458,7 @@ func (s *Session) renew(ctx context.Context, it api.QueueItem) error {
 		case err != nil:
 			fmt.Fprintln(s.Out, "not renewed:", Explain(err))
 		case res.AutoApproved:
-			fmt.Fprintf(s.Out, "re-approved as ticket %s: nothing changed since your approval\n", sanitize.Terminal(res.Ticket, false))
+			fmt.Fprintf(s.Out, "approved again as ticket %s: nothing changed since the expired ticket\n", sanitize.Terminal(res.Ticket, false))
 		default:
 			fmt.Fprintf(s.Out, "the lock asks again with ticket %s: review it\n", sanitize.Terminal(res.Ticket, false))
 		}

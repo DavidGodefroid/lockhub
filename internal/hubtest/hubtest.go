@@ -90,7 +90,7 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 	}
 	info := hub.Info{ID: t.ID, Instance: t.Instance, KeyID: t.KeyID, Risk: t.Risk, PlanHash: t.PlanHash,
 		Created: time.Unix(t.Created, 0), TTL: time.Duration(t.TTL) * time.Second,
-		Production: t.Production, Retype: t.Retype}
+		Production: t.Production, Retype: t.Retype, Flags: fmt.Sprintf("%v|%q", t.Production, t.Retype)}
 	if t.RenewsOf != "" {
 		info.Renews = &hub.Renewal{Of: t.RenewsOf, Unchanged: t.Unchanged}
 	}

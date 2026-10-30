@@ -376,6 +376,11 @@ func (h *Hub) Renew(ctx context.Context, ref store.Ref, a Asker) (Renewed, error
 	if err != nil {
 		return Renewed{}, err
 	}
+	// Only what the facades offer: an old expired ticket is planned
+	// again by the agent, not renewed in one click.
+	if tk.Updated.Before(h.c.Now().Add(-ExpiredWindow)) {
+		return Renewed{}, fmt.Errorf("%w: expired more than %s ago", ErrState, ExpiredWindow)
+	}
 	var existing string
 	var approved bool
 	err = h.c.Store.Tx(ctx, func(tx *store.Tx) error {
@@ -402,7 +407,7 @@ func (h *Hub) Renew(ctx context.Context, ref store.Ref, a Asker) (Renewed, error
 		}
 		res.Ticket = ans.Ticket
 	}
-	res.AutoApproved, err = h.reapprove(ctx, ref, res.Ticket, a, approved)
+	res.AutoApproved, err = h.reapprove(ctx, ref, info, res.Ticket, a, approved)
 	out := "renewal " + res.Ticket + ": pending"
 	if res.AutoApproved {
 		out = "renewal " + res.Ticket + ": re-approved, nothing changed"
@@ -416,9 +421,9 @@ func (h *Hub) Renew(ctx context.Context, ref store.Ref, a Asker) (Renewed, error
 	return res, err
 }
 
-// reapprove approves renewal id of old at once when H1 allows it. A
-// renewal not at the hub yet (the lock will send it again) waits.
-func (h *Hub) reapprove(ctx context.Context, old store.Ref, id string, a Asker, wasApproved bool) (bool, error) {
+// reapprove approves renewal id of old (oldInfo) at once when H1 allows
+// it. A renewal not at the hub yet (the lock will send it again) waits.
+func (h *Hub) reapprove(ctx context.Context, old store.Ref, oldInfo Info, id string, a Asker, wasApproved bool) (bool, error) {
 	ref := store.Ref{Instance: old.Instance, ID: id}
 	var tk store.Ticket
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
@@ -438,7 +443,11 @@ func (h *Hub) reapprove(ctx context.Context, old store.Ref, id string, a Asker, 
 	if info.Renews == nil || info.Renews.Of != old.ID {
 		return false, fmt.Errorf("%w: ticket %s does not renew %s", ErrBadAnswer, id, old.ID)
 	}
-	if tk.State != state.Pending || !info.Renews.Unchanged || info.Production ||
+	// One click only for the same request: the lock says nothing
+	// changed, and the hub checks what it can itself (risk and flags as
+	// the old ticket's), never for production or a never-auto ticket.
+	if tk.State != state.Pending || !info.Renews.Unchanged || info.Production || info.NeverAuto ||
+		info.Risk != oldInfo.Risk || info.Flags != oldInfo.Flags ||
 		h.c.Routes.Allowed(tk.Instance, a.Facade, tk.Risk) != nil {
 		return false, nil
 	}

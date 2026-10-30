@@ -291,7 +291,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	// The lock keys, for host facades to check what a lock sealed to
 	// them (a revealed clear screen).
-	if err := os.WriteFile(filepath.Join(facadeKeys, LockKeysFile), append(lb, '\n'), 0o600); err != nil {
+	if err := writeAtomic(filepath.Join(facadeKeys, LockKeysFile), append(lb, '\n'), 0o600); err != nil {
 		return err
 	}
 	paths.Config = fp
