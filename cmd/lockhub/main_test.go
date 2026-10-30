@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/store"
 )
 
 func TestRun(t *testing.T) {
@@ -193,5 +195,80 @@ func TestChatFacades(t *testing.T) {
 	os.Remove(filepath.Join(data, "chat.json"))
 	if _, err := open(); err == nil || !strings.Contains(err.Error(), "chat.json") {
 		t.Errorf("enabled without settings: %v", err)
+	}
+}
+
+// The hub starts only once the outbox is in the log, and never signs a
+// record it did not make.
+func TestStartFlushesOutbox(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	key, err := keys.Load(filepath.Join(data, "hub.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(data, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := func(k ed25519.PrivateKey, ticket string) {
+		rec := []byte(`{"seq":0,"at":"2027-01-01T00:00:00Z","event":"push","ticket":"` + ticket + `","instance":"crm","state":"pending","prev":"","hash":""}`)
+		if err := st.Tx(context.Background(), func(tx *store.Tx) error {
+			return tx.QueueAudit(rec, func(id int64) string { return audit.SignOutbox(k, id, rec) })
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queue(key, "T1")
+	_, closeHub, err := openHub(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeHub()
+	if b, _ := os.ReadFile(filepath.Join(data, "tickets.jsonl")); !strings.Contains(string(b), `"ticket":"T1"`) {
+		t.Fatalf("outbox not logged at start:\n%s", b)
+	}
+	_, other, _ := ed25519.GenerateKey(nil)
+	queue(other, "T2")
+	st.Close()
+	if _, _, err := openHub(data); err == nil || !strings.Contains(err.Error(), "not signed by the hub key") {
+		t.Fatalf("started past a forged outbox record: %v", err)
+	}
+}
+
+func TestServeMobilePushCreatesVAPIDKey(t *testing.T) {
+	var errb bytes.Buffer
+	if code := serve(context.Background(), []string{"--mobile-push"}, &errb); code != 2 || !strings.Contains(errb.String(), "--mobile-push needs") {
+		t.Errorf("--mobile-push alone = %d: %s", code, errb.String())
+	}
+	data := t.TempDir()
+	var out bytes.Buffer
+	if code := run(context.Background(), []string{"keygen", "--data", data}, &out, &errb); code != 0 {
+		t.Fatalf("keygen = %d: %s", code, errb.String())
+	}
+	l := hubtest.NewLock("crm-prod")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm-prod":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	args := []string{"--listen", "127.0.0.1:0", "--data", data, "--mobile-listen", "127.0.0.1:0", "--mobile-origin", "https://hub.example.net", "--mobile-push"}
+	for range 2 { // created once, then the same key
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan int)
+		errb.Reset()
+		go func() { done <- serve(ctx, args, &errb) }()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		if code := <-done; code != 0 || !strings.Contains(errb.String(), "web push: true") {
+			t.Fatalf("serve = %d, stderr %q", code, errb.String())
+		}
+		fi, err := os.Stat(filepath.Join(data, keys.VAPIDFile))
+		if err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("vapid key: %v %v", fi, err)
+		}
 	}
 }

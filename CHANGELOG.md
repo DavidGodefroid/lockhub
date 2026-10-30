@@ -5,10 +5,133 @@ digest).
 
 ## Unreleased
 
+Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
+start with the generated commands. Reveals and renewals need locks built on
+lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
+decisions poll: the facade's request times out). A reveal also needs
+`reveal: true` on the lock in `lockfamily.yaml` (opt-in, like `devices`:
+only then does `lock up` pass `--facade-keys-file`, which older images
+refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
+could not check them now) are shown as such, and never allow one click.
+
 - A lockkit compatibility check for CI (`scripts/compat.sh`): lockhub
   built on the pinned lockkit or on the release before it, its ticket
   codec checked against the signed ticket fixtures of either, or of the
   newest lockkit release (`LOCKKIT_FIXTURES`).
+
+- Mobile facade: optional Web Push (`hub.mobile.push: true` →
+  `lockhub serve --mobile-push`; off by default). When a ticket the phone
+  may answer becomes pending, the hub sends a payload-less push (no ticket
+  content at the push service; `TTL`, `Urgency: high`, `Topic`, at most
+  one round per 30 s) with VAPID (RFC 8292, ES256; P-256 key `vapid.key`
+  created once in the hub's data directory) to every subscription of an
+  active device. Endpoints are restricted to the known push services
+  (FCM, Mozilla, Apple, WNS: https, default port, public addresses, no
+  redirects); subscriptions are tied to the device session
+  (`/m/v1/push`, `/m/v1/push/subscribe|unsubscribe`, Origin and custom
+  header), dropped on revoke and on 404/410. The web app gets an "Enable
+  notifications" button; the service worker shows a generic
+  notification. `lock up` reviews push and gives the hub its `egress-hub`
+  network for it.
+- lock up runs consoles lea's agents can reach, and tells lea how
+  (docs/lock-up.md):
+  - lockfamily.yaml lives in `.lockfamily/` (lea mounts it read-only in
+    its agents' containers); a legacy `./lockfamily.yaml` is still read,
+    with a warning. lock import finds `*/.lockfamily/lockfamily.yaml` (or
+    a legacy `*/lockfamily.yaml`).
+  - After applying, lock up writes `.lockfamily/up.json`: the compose
+    project, the hub's network and key, each lock's socket volume
+    (labelled `dev.lockfamily.role=socket`, which lea checks before it
+    mounts one) and clients group.
+  - Each console runs as its image's console account, with a terminal
+    (`tty`, `stdin_open`): it asks its policy and the credentials it does
+    not take from Vault there; `lock attach INSTANCE` answers it. Its own
+    profile directory (`<workspace>/.<type>`) is never mounted: lock up
+    snapshots it (no links, the user's own files only), shows its
+    fingerprint in the review, and copies the reviewed archive into a
+    root-written volume, read-only in the lock (at the same path for
+    locksql and lockmq, whose socket name derives from the project path). `profile:` (optional)
+    names the profile; lockfile's defaults to `default`.
+  - The hub's public key reaches the locks in the `hubkey` volume, written
+    by root, read-only in the locks (locksql refuses a key file another
+    account could rewrite).
+  - lockhttp: the hub is asked by the gate, which lea runs beside its
+    proxy, not by the console (lockhttp#11). lock up runs the lockhttp
+    console (policy only, no hub network) and makes the gate's own volume
+    and instance key; lea's gate uses them.
+- lock add pins the latest release (or `--version vX.Y.Z`) of the lock,
+  and of the hub for a new workspace, by digest, once cosign verified it
+  was signed by that repository's release workflow for that tag.
+  `--image` still pins one by hand.
+- Mobile facade (#10): an installable web app (embedded, no build step) on
+  its own listener, published on host loopback for the human's TLS reverse
+  proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones
+  pair with `lock mobile pair` (one-time code, WebAuthn registration with
+  user verification, fingerprint confirmed at the terminal); `lock up`
+  reviews paired devices and pins them at the locks that set
+  `devices: true` (`--devices-file`; their image needs lockkit ≥ v0.4.0),
+  with `seal_clear` (clear screens sealed end to end to the phones) and
+  `require_device` (locks refuse approvals of those risk classes not
+  signed by a phone). Each decision on the phone is a WebAuthn assertion
+  over the decision and the hash of the lock's signed ticket, checked by
+  the hub before it signs and by the locks after (lockkit v0.4.0). Sign
+  counters, single-use challenges and drafts, `__Host-` session cookie,
+  Origin and custom-header checks on every POST, strict CSP. The phone
+  answers every risk class but `unlock`. Audit records carry the device;
+  device pairings and revocations are audited. `lock mobile list|revoke`;
+  `lock doctor` reports devices paired since the last `lock up`.
+- Requires lockkit v0.4.0 or later (this release builds on v0.6.0; compatible: tickets and decisions without
+  devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+- `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
+  lock-side audit logs (lockkit's `audit.log`, or its directory): the
+  chain (lockkit `audit.Verify`), and every record of a hub decision
+  (`approval: hub` approved or denied, or any record with `hub_sig`)
+  against the decision the hub signed for that instance and ticket: same
+  outcome, approver and facade, and same signature when the record has
+  one (locksql does not record `hub_sig` yet: its records are checked on
+  the rest, and counted). A record whose hub fields do not read fails.
+  Hub decisions the log has no record of are counted (not acted on yet,
+  or cut). With `--anchors FILE` (host only, 0600) each verified log's
+  anchor is kept between runs and the next run uses lockkit
+  `audit.VerifyAnchored`, so a log cut before it or stripped of its chain
+  is refused; a failed log keeps its old anchor (a cut after the anchor
+  is not seen until the next run). A second hub approval of one ticket
+  fails. Not checked: records a hub-mode lock should not write at all
+  (a local approval).
+
+- `lock doctor` asks the hub for its queue over the facade socket: it
+  says whether the hub answers, shows the pending caps and rate limit
+  (lockkit's defaults: each lock 20 pending plans, 10 new tickets per
+  5 min, counted in memory; the hub: 50 per lock), that this quota is per
+  lock instance, shared by every agent of the workspace, and each lock's
+  pending tickets on the hub (warned from 80%).
+
+- Audit records are written after the database commit, through a
+  transactional outbox: each change stores its record in its own
+  transaction, signed with the hub key together with its outbox row id,
+  and the record is appended to `tickets.jsonl` once the transaction
+  commits (after a crash, at the next start, before serving). A
+  rolled-back change never has an audit record, and a committed one
+  always gets one, exactly once: each record now carries its `outbox` id,
+  ids only grow along the log, and a row replayed into the database, or
+  not signed for its id, stops the flush instead of being signed into
+  the log. While the log cannot be written, every change starting after
+  the failure is refused (HTTP 503 `audit_down`); the changes already in
+  flight commit with their records waiting in the outbox, and their
+  decisions are delivered to locks meanwhile (durable and signed, not yet
+  in the log). A failed append is cut back from the log, and a torn last
+  line left by a power loss is cut at start, so a retry chains the record
+  once. `lock audit verify` reads the database as of one instant, then
+  the log, so it can run against a live hub; it accepts a decision whose
+  record is still in the outbox, says how many records await the log, and
+  reports replayed or foreign outbox rows. An older `lock audit verify`
+  refuses a log with `outbox` fields: use this release's.
+  A `hub.db` restored from a backup older than `tickets.jsonl` makes
+  every new outbox row look like a replay, and the hub refuses to start:
+  restore both together (or set `audit_outbox`'s row in `sqlite_sequence`
+  past the log's last `outbox` id). Not detected: an outbox row deleted
+  from the database by someone who can write it, before its flush, for a
+  record other than a decision (decisions are cross-checked).
 
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
@@ -26,6 +149,42 @@ digest).
   `lock up`. The first `lock up` after upgrading with a chat facade
   shows the new `hub secret` lines once, asks for a yes, and recreates
   the hub.
+- Clear values on demand (Ctrl-O) and re-approval of expired tickets
+  (decision H1).
+  - Hub requests: the hub signs a `reveal` or `renew` request
+    (lockkit `ticket.HubRequest`), hands it to the lock in its
+    `GET /v1/decisions` long poll (new `requests` member, waking the poll),
+    and relays the lock's answer (`POST /v1/requests/{id}/answer`, signed
+    like every lock call, accepted once and only from that instance) to the
+    waiting facade. In memory only, 8 open per instance, 30 s wait (504),
+    bounded bodies; a lock's error is a fixed code, never its text.
+  - Facade socket: `POST /v1/tickets/{instance}/{id}/reveal` (tty and deck
+    only, routed to the ticket, the key signed for the caller's facade) and
+    `…/renew`; `GET /v1/queue` gains an `expired` list (expired in the last
+    24 h, not renewed yet). The hub relays the sealed answer without storing
+    or logging it; the audit log records `reveal` and `renew` events (who,
+    which facade, outcome), never content.
+  - Renewals: a ticket that renews another ends it expired (pending, or
+    approved and not run; only a renewal ends an approval, never the
+    sweeper) and links them. A renewal asked from the terminal or the deck
+    within 24 h of the expiry, unchanged, with the old ticket's risk and
+    flags, and not for production, is approved at once; otherwise it waits
+    with its changes, production still asks for the typed name.
+  - `lock up` creates per-user tty and deck facade keys
+    (`$XDG_STATE_HOME/lockfamily/facades/`, 0600), reviews them
+    (`facade tty key …`), mounts their public halves read-only in every lock
+    with `reveal: true` at `/run/lockfamily-facades/facades.json` with
+    `--facade-keys-file` (reviewed: `lock … pins the host facades' keys`),
+    and keeps a host-only copy of the pinned lock keys there for facades to
+    verify a lock's answers. up.json carries the same set (`facade_keys`)
+    and each lock's `reveal` for lea's lockhttp gate (`--facade-keys-file`,
+    lockhttp#16, lockhttp v0.5.0 or later), which lock up does not run.
+  - A renewal routed to mobile with Web Push on may send a push for a
+    ticket the one-click path approves a moment later (the push carries no
+    content; the phone then finds nothing waiting).
+  - `lock approve`: `o` reveals (Ctrl-O too where the terminal passes it;
+    macOS keeps ^O), clearly marked and escaped; `r` on an expired ticket
+    approves it again; a renewal shows what changed.
 
 ## v0.1.1 (2026-10-30)
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>lockhub</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<header><h1>lockhub</h1><span id="who"></span></header>
+<main>
+  <p id="status" role="status"></p>
+
+  <section id="pair" hidden>
+    <h2>Pair this phone</h2>
+    <p>On the host, run <code>lock mobile pair --name NAME</code> and type the code it shows.</p>
+    <form id="pair-form">
+      <label>Pairing code <input id="code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" required></label>
+      <button type="submit">Pair</button>
+    </form>
+    <div id="pair-done" hidden>
+      <p>Compare this fingerprint with the one on the host's terminal, then confirm there:</p>
+      <p class="fp" id="fp"></p>
+    </div>
+  </section>
+
+  <section id="login" hidden>
+    <button id="login-btn" type="button">Sign in with this device</button>
+    <p><a href="#pair">Pair another device</a></p>
+  </section>
+
+  <section id="queue" hidden>
+    <h2>Waiting for you <span id="count"></span></h2>
+    <ul id="tickets"></ul>
+    <p><button id="push-btn" type="button" class="quiet" hidden>Enable notifications</button> <button id="logout" type="button" class="quiet">Sign out</button></p>
+  </section>
+</main>
+<template id="ticket-tpl">
+  <li class="ticket">
+    <div class="meta"><span class="risk"></span> <span class="where"></span></div>
+    <div class="header"></div>
+    <div class="requester"></div>
+    <div class="note"></div>
+    <details class="clear" hidden><summary>Clear values (sealed to this phone)</summary><pre class="clear-body"></pre></details>
+    <pre class="body"></pre>
+    <ul class="warnings"></ul>
+    <div class="why"></div>
+    <form class="answer">
+      <label class="retype-l" hidden>Type the instance name to approve <input class="retype" autocomplete="off" spellcheck="false"></label>
+      <label>Reason (optional) <input class="reason" maxlength="500"></label>
+      <div class="buttons"><button class="approve" type="button">Approve</button><button class="deny" type="button">Deny</button></div>
+    </form>
+  </li>
+</template>
+</body>
+</html>

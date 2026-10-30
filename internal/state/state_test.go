@@ -43,3 +43,17 @@ func TestFinal(t *testing.T) {
 		t.Error("Valid(bogus) = true")
 	}
 }
+
+// Only a renewal ends an approval: the table's Expire (the sweeper's)
+// never does.
+func TestRenewed(t *testing.T) {
+	if _, err := Next(Approved, Expire); err == nil {
+		t.Error("Expire ends an approved ticket")
+	}
+	for s, want := range map[State]State{Pending: Expired, Approved: Expired, Denied: Denied, Consumed: Consumed, Withdrawn: Withdrawn, Expired: Expired} {
+		got, ok := Renewed(s)
+		if got != want || ok != (s == Pending || s == Approved) {
+			t.Errorf("Renewed(%s) = %s, %v", s, got, ok)
+		}
+	}
+}

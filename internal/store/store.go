@@ -40,6 +40,40 @@ CREATE TABLE IF NOT EXISTS decisions (
 	FOREIGN KEY (instance, ticket) REFERENCES tickets(instance, id)
 );
 CREATE INDEX IF NOT EXISTS decisions_instance_seq ON decisions(instance, seq);
+-- renewals links an expired ticket to the ticket that asks again for it
+-- (lockkit Ticket.Renews): one renewal per ticket.
+CREATE TABLE IF NOT EXISTS renewals (
+	instance TEXT NOT NULL,
+	renewed  TEXT NOT NULL,
+	renewal  TEXT NOT NULL,
+	at       INTEGER NOT NULL,
+	PRIMARY KEY (instance, renewed)
+);
+-- Audit records of committed changes not yet in the audit log: written
+-- in the change's transaction, appended to the log after the commit, then
+-- dropped (a transactional outbox).
+CREATE TABLE IF NOT EXISTS audit_outbox (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	record BLOB NOT NULL,
+	sig    TEXT NOT NULL  -- the hub key's (audit.SignOutbox)
+);
+CREATE TABLE IF NOT EXISTS devices (
+	id         TEXT PRIMARY KEY,
+	record     BLOB NOT NULL,    -- the lockkit device record, as confirmed
+	state      TEXT NOT NULL,    -- active, revoked
+	sign_count INTEGER NOT NULL,
+	created    INTEGER NOT NULL,
+	updated    INTEGER NOT NULL
+);
+-- Web Push subscriptions of paired devices (mobile facade, optional):
+-- the push service's endpoint only (pushes carry no payload, so no
+-- encryption keys are kept).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+	endpoint TEXT PRIMARY KEY,
+	device   TEXT NOT NULL REFERENCES devices(id),
+	created  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_device ON push_subscriptions(device, created);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -220,6 +254,35 @@ func (t *Tx) SetState(r Ref, from, to state.State, now time.Time) error {
 	return nil
 }
 
+// HasDecision reports whether a ticket was decided.
+func (t *Tx) HasDecision(r Ref) (bool, error) {
+	var n int
+	err := t.tx.QueryRow(`SELECT count(*) FROM decisions WHERE instance = ? AND ticket = ?`, r.Instance, r.ID).Scan(&n)
+	return n > 0, err
+}
+
+// LinkRenewal records that ticket renewal of instance asks again for
+// ticket renewed. A ticket keeps its first renewal: linked is false when
+// it had one already.
+func (t *Tx) LinkRenewal(instance, renewed, renewal string, at time.Time) (linked bool, err error) {
+	res, err := t.tx.Exec(`INSERT INTO renewals(instance, renewed, renewal, at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, instance, renewed, renewal, at.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// RenewalOf is the ticket that renews r, "" when none.
+func (t *Tx) RenewalOf(r Ref) (string, error) {
+	var id string
+	err := t.tx.QueryRow(`SELECT renewal FROM renewals WHERE instance = ? AND renewed = ?`, r.Instance, r.ID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // PutDecision stores the signed decision of a ticket and returns its seq.
 func (t *Tx) PutDecision(d Decision) (int64, error) {
 	res, err := t.tx.Exec(`INSERT INTO decisions(ticket, instance, raw, at) VALUES (?, ?, ?, ?)`, d.Ticket, d.Instance, d.Raw, d.At.Unix())
@@ -264,7 +327,17 @@ func (s *Store) Decisions(ctx context.Context, instance string, since int64, lim
 // AllDecisions lists every instance's decisions after seq since, oldest
 // first (for read-only observers such as lea).
 func (s *Store) AllDecisions(ctx context.Context, since int64, limit int) ([]Decision, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, ticket, instance, raw, at FROM decisions WHERE seq > ? ORDER BY seq LIMIT ?`, since, limit)
+	return allDecisions(ctx, s.db, since, limit)
+}
+
+// querier is a database or a transaction.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func allDecisions(ctx context.Context, q querier, since int64, limit int) ([]Decision, error) {
+	rows, err := q.QueryContext(ctx, `SELECT seq, ticket, instance, raw, at FROM decisions WHERE seq > ? ORDER BY seq LIMIT ?`, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +358,29 @@ func (s *Store) AllDecisions(ctx context.Context, since int64, limit int) ([]Dec
 // Tickets lists the tickets in a state, oldest first.
 func (s *Store) Tickets(ctx context.Context, st state.State) ([]Ticket, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, instance, risk, plan_hash, state, raw, created, expires, updated FROM tickets WHERE state = ? ORDER BY created, id`, string(st))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ticket
+	for rows.Next() {
+		tk, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// Expired lists the tickets that expired at or after since and that no
+// ticket renews yet, most recent first, at most limit: what a facade
+// offers to approve again.
+func (s *Store) Expired(ctx context.Context, since time.Time, limit int) ([]Ticket, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, instance, risk, plan_hash, state, raw, created, expires, updated FROM tickets t
+		WHERE state = ? AND updated >= ?
+		AND NOT EXISTS (SELECT 1 FROM renewals r WHERE r.instance = t.instance AND r.renewed = t.id)
+		ORDER BY updated DESC, id LIMIT ?`, string(state.Expired), since.Unix(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -322,4 +418,241 @@ func (s *Store) DueForExpiry(ctx context.Context, now time.Time) ([]Ref, error) 
 func (s *Store) PurgeNonces(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nonces WHERE at < ?`, before.Unix())
 	return err
+}
+
+// QueueAudit stores an audit record (JSON) in the transaction, with the
+// hub key's signature of it and its row id (sign), for the audit log once
+// the transaction commits (see Store.AuditOutbox).
+func (t *Tx) QueueAudit(record []byte, sign func(id int64) string) error {
+	res, err := t.tx.Exec(`INSERT INTO audit_outbox(record, sig) VALUES (?, '')`, record)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	_, err = t.tx.Exec(`UPDATE audit_outbox SET sig = ? WHERE id = ?`, sign(id), id)
+	return err
+}
+
+// Outboxed is an audit record of a committed change awaiting the log.
+type Outboxed struct {
+	ID     int64
+	Record []byte
+	Sig    string
+}
+
+// AuditOutbox returns the audit records awaiting the log, in commit order.
+// A database from before the outbox (read only, so not migrated) has none.
+func (s *Store) AuditOutbox(ctx context.Context) ([]Outboxed, error) {
+	return auditOutbox(ctx, s.db)
+}
+
+func auditOutbox(ctx context.Context, q querier) ([]Outboxed, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_outbox'`).Scan(&n); err != nil || n == 0 {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id, record, sig FROM audit_outbox ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Outboxed
+	for rows.Next() {
+		var o Outboxed
+		if err := rows.Scan(&o.ID, &o.Record, &o.Sig); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// AuditSnapshot reads the outbox and every decision as of one instant
+// (one read transaction), for verification against a running hub.
+func (s *Store) AuditSnapshot(ctx context.Context) ([]Outboxed, []Decision, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	out, err := auditOutbox(ctx, tx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var ds []Decision
+	var since int64
+	for {
+		page, err := allDecisions(ctx, tx, since, 500)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(page) == 0 {
+			return out, ds, nil
+		}
+		ds = append(ds, page...)
+		since = page[len(page)-1].Seq
+	}
+}
+
+// DropAudit removes an outboxed record once it is in the audit log.
+func (s *Store) DropAudit(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM audit_outbox WHERE id = ?`, id)
+	return err
+}
+
+// Device is an approval device the human confirmed (mobile facade).
+type Device struct {
+	ID        string
+	Record    []byte
+	State     string // DeviceActive or DeviceRevoked
+	SignCount uint32
+	Created   time.Time
+	Updated   time.Time
+}
+
+// Device states.
+const (
+	DeviceActive  = "active"
+	DeviceRevoked = "revoked"
+)
+
+// ErrDeviceExists is a device id already stored.
+var ErrDeviceExists = errors.New("device already registered")
+
+// PutDevice stores a new active device.
+func (t *Tx) PutDevice(d Device) error {
+	var n int
+	if err := t.tx.QueryRow(`SELECT count(*) FROM devices WHERE id = ?`, d.ID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrDeviceExists
+	}
+	_, err := t.tx.Exec(`INSERT INTO devices (id, record, state, sign_count, created, updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Record, DeviceActive, int64(d.SignCount), d.Created.Unix(), d.Created.Unix())
+	return err
+}
+
+// Device returns device id.
+func (t *Tx) Device(id string) (Device, error) {
+	var d Device
+	var sc, created, updated int64
+	err := t.tx.QueryRow(`SELECT id, record, state, sign_count, created, updated FROM devices WHERE id = ?`, id).
+		Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+	return d, err
+}
+
+// SetDeviceState changes a device's state.
+func (t *Tx) SetDeviceState(id, st string, now time.Time) error {
+	res, err := t.tx.Exec(`UPDATE devices SET state = ?, updated = ? WHERE id = ?`, st, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSignCount records the authenticator counter of a device's last
+// assertion.
+func (t *Tx) SetSignCount(id string, n uint32, now time.Time) error {
+	_, err := t.tx.Exec(`UPDATE devices SET sign_count = ?, updated = ? WHERE id = ?`, int64(n), now.Unix(), id)
+	return err
+}
+
+// Devices lists every device, oldest first.
+func (s *Store) Devices(ctx context.Context) ([]Device, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, record, state, sign_count, created, updated FROM devices ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Device
+	for rows.Next() {
+		var d Device
+		var sc, created, updated int64
+		if err := rows.Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated); err != nil {
+			return nil, err
+		}
+		d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// PushSubscription is a Web Push endpoint of a device.
+type PushSubscription struct {
+	Endpoint string
+	Device   string
+	Created  time.Time
+}
+
+// ErrDeviceInactive is a push subscription for a device that is not
+// active.
+var ErrDeviceInactive = errors.New("device not active")
+
+// PutPushSubscription records endpoint for an active device, keeping at
+// most max per device (the oldest go). An endpoint already recorded moves
+// to device.
+func (s *Store) PutPushSubscription(ctx context.Context, device, endpoint string, max int, now time.Time) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		d, err := tx.Device(device)
+		if err != nil || d.State != DeviceActive {
+			return ErrDeviceInactive
+		}
+		if _, err := tx.tx.Exec(`INSERT INTO push_subscriptions(endpoint, device, created) VALUES (?, ?, ?)
+			ON CONFLICT(endpoint) DO UPDATE SET device = excluded.device, created = excluded.created`, endpoint, device, now.Unix()); err != nil {
+			return err
+		}
+		_, err = tx.tx.Exec(`DELETE FROM push_subscriptions WHERE device = ? AND endpoint NOT IN
+			(SELECT endpoint FROM push_subscriptions WHERE device = ? ORDER BY created DESC, rowid DESC LIMIT ?)`, device, device, max)
+		return err
+	})
+}
+
+// DeletePushSubscription drops a device's endpoint (device "": whoever's).
+func (s *Store) DeletePushSubscription(ctx context.Context, device, endpoint string) error {
+	var err error
+	if device == "" {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint = ?`, endpoint)
+	} else {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint = ? AND device = ?`, endpoint, device)
+	}
+	return err
+}
+
+// DeletePushSubscriptions drops every endpoint of a device.
+func (t *Tx) DeletePushSubscriptions(device string) error {
+	_, err := t.tx.Exec(`DELETE FROM push_subscriptions WHERE device = ?`, device)
+	return err
+}
+
+// PushSubscriptions lists the endpoints of active devices only, oldest
+// first (device "": every active device's).
+func (s *Store) PushSubscriptions(ctx context.Context, device string) ([]PushSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.endpoint, p.device, p.created FROM push_subscriptions p JOIN devices d ON d.id = p.device
+		WHERE d.state = ? AND (? = '' OR p.device = ?) ORDER BY p.created, p.endpoint`, DeviceActive, device, device)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSubscription
+	for rows.Next() {
+		var p PushSubscription
+		var created int64
+		if err := rows.Scan(&p.Endpoint, &p.Device, &created); err != nil {
+			return nil, err
+		}
+		p.Created = time.Unix(created, 0).UTC()
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
