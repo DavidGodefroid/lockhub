@@ -18,7 +18,7 @@ cd "$ws"
 agents="$E2E_ID-agents"
 gate="$E2E_ID-gate"
 cleanup() {
-	docker rm -f "$gate" "$gate-ctl" >/dev/null 2>&1 || true
+	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" >/dev/null 2>&1 || true
 	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -137,12 +137,14 @@ done
 # By another name resolving into the hub's network: the --hub-net rule.
 # The hub moves to another address of its network, under a new name:
 # neither the gates' start-time resolution nor the name rule covers it.
-newip=$(printf '%s' "$hubip" | awk -F. '{printf "%s.%s.%s.%d", $1, $2, $3, ($4 == 200 ? 201 : 200)}')
+# (compose's network has no user subnet, so no --ip: a placeholder takes
+# the hub's old address while it reconnects.)
 docker network disconnect "$hubnet" "${p}-lockhub-1"
-docker network connect --ip "$newip" --alias lockhub --alias e2ehubalias "$hubnet" "${p}-lockhub-1"
+docker run -d --name "$E2E_ID-squat" --network "$hubnet" alpine:3.22 sleep 900 >/dev/null
+docker network connect --alias lockhub --alias e2ehubalias "$hubnet" "${p}-lockhub-1"
 got=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$hubnet\").IPAddress}}" "${p}-lockhub-1")
 echo "hub moved from $hubip to $got"
-[ "$got" = "$newip" ] && [ "$got" != "$hubip" ] || die "the hub did not move to a new address"
+[ -n "$got" ] && [ "$got" != "$hubip" ] || die "the hub did not move to a new address"
 docker run --rm --network "$hubnet" curlimages/curl:8.11.1 -sS -m 10 -o /dev/null -w '%{http_code}\n' "http://e2ehubalias:8443/v1/hello" | grep -qx 200 ||
 	die "the alias does not reach the hub on its network"
 code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "http://e2ehubalias:8443/v1/hello" || true)
