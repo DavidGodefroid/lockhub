@@ -174,14 +174,14 @@ func TestReleasesLatestSignedDigest(t *testing.T) {
 		switch {
 		case r.URL.Path == "/repos/DavidGodefroid/locksql/releases":
 			auth = r.Header.Get("Authorization")
-			w.Write([]byte(`[{"tag_name":"v0.9.0"},{"tag_name":"v0.10.0"},{"tag_name":"v0.11.0-rc.1","prerelease":true},{"tag_name":"v0.12.0","draft":true}]`))
+			w.Write([]byte(`[{"tag_name":"v0.10.0"},{"tag_name":"v0.11.0"},{"tag_name":"v0.12.0-rc.1","prerelease":true},{"tag_name":"v0.13.0","draft":true}]`))
 		case r.URL.Path == "/repos/DavidGodefroid/lockhttp/releases":
 			w.Write([]byte(`[{"tag_name":"v0.2.0","prerelease":true},{"tag_name":"v0.2.1","prerelease":true}]`))
 		case r.URL.Path == "/repos/DavidGodefroid/lockmq/releases":
 			w.Write([]byte(`[]`))
 		case r.URL.Path == "/token":
 			w.Write([]byte(`{"token":"t"}`))
-		case r.URL.Path == "/v2/davidgodefroid/locksql/manifests/0.10.0" && r.Method == http.MethodHead && r.Header.Get("Authorization") == "Bearer t":
+		case r.URL.Path == "/v2/davidgodefroid/locksql/manifests/0.11.0" && r.Method == http.MethodHead && r.Header.Get("Authorization") == "Bearer t":
 			w.Header().Set("Docker-Content-Digest", dg)
 		default:
 			http.NotFound(w, r)
@@ -192,7 +192,7 @@ func TestReleasesLatestSignedDigest(t *testing.T) {
 	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf, Token: "gh"}
 	ctx := context.Background()
 	tag, pre, err := r.Latest(ctx, "locksql")
-	if err != nil || tag != "v0.10.0" || pre || auth != "Bearer gh" {
+	if err != nil || tag != "v0.11.0" || pre || auth != "Bearer gh" {
 		t.Fatalf("latest: %s %v %v %q", tag, pre, err, auth)
 	}
 	if tag, pre, _ := r.Latest(ctx, "lockhttp"); tag != "v0.2.1" || !pre {
@@ -201,24 +201,24 @@ func TestReleasesLatestSignedDigest(t *testing.T) {
 	if _, _, err := r.Latest(ctx, "lockmq"); err == nil {
 		t.Error("no release: no error")
 	}
-	ref, err := r.Image(ctx, "locksql", "v0.10.0")
+	ref, err := r.Image(ctx, "locksql", "v0.11.0")
 	if err != nil || ref != "ghcr.io/davidgodefroid/locksql@"+dg {
 		t.Fatalf("image: %s %v", ref, err)
 	}
-	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `^https://github\.com/DavidGodefroid/locksql/\.github/workflows/release\.yml@refs/tags/v0\.10\.0$ `+ref) {
+	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `^https://github\.com/DavidGodefroid/locksql/\.github/workflows/release\.yml@refs/tags/v0\.11\.0$ `+ref) {
 		t.Errorf("cosign: %v", cf.calls)
 	}
-	if _, err := r.Image(ctx, "locksql", "v0.9.0"); err == nil || !strings.Contains(err.Error(), "v0.10.0 or later") {
+	if _, err := r.Image(ctx, "locksql", "v0.10.0"); err == nil || !strings.Contains(err.Error(), "v0.11.0 or later") {
 		t.Errorf("a release without hub mode was pinned: %v", err)
 	}
-	if _, err := r.Image(ctx, "locksql", "v0.10.1"); err == nil {
+	if _, err := r.Image(ctx, "locksql", "v0.11.1"); err == nil {
 		t.Error("an image the registry does not serve was pinned")
 	}
 	if _, err := r.Image(ctx, "locksql", "latest"); err == nil {
 		t.Error("a non-release tag was accepted")
 	}
 	r.Run = &fake{failing: "cosign"}
-	if _, err := r.Image(ctx, "locksql", "v0.10.0"); err == nil || !strings.Contains(err.Error(), "not signed") {
+	if _, err := r.Image(ctx, "locksql", "v0.11.0"); err == nil || !strings.Contains(err.Error(), "not signed") {
 		t.Errorf("unsigned digest pinned: %v", err)
 	}
 }
