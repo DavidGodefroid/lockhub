@@ -19,6 +19,21 @@ answered in the terminal, the deck or a paired phone, unlocks in the terminal
 or the deck (`hub.Decide`, `internal/route`). A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
+In `lock approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
+not on macOS, which keeps ^O) shows a ticket's clear values:
+the terminal sends an ephemeral key signed by its facade key (which every lock
+pins, written by `lock up`), the lock seals the clear screen to it and signs
+the answer, and only the terminal opens it. The hub relays ciphertext, and
+never offers this on Slack, Telegram or mobile. An expired ticket is listed for
+re-approval (`r`, approve again): the lock asks again, and when nothing changed
+in the plan since then (and it is not for production) the hub approves it in
+that one step; otherwise the new ticket shows what changed and waits for `y`.
+
+Threat model of the facade socket: whoever can open it is the host's human (one
+user). The facade name a client sends for `decide` and `renew` is self-declared
+by that same user; a reveal is bound by the facade's own signed key, which the
+lock checks against the key it pinned.
+
 ## Status
 
 Early development. This repository holds:
@@ -58,12 +73,17 @@ locks:
     type: locksql
     image: ghcr.io/davidgodefroid/locksql@sha256:…
     devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
+    reveal: true                         # Ctrl-O reveals on tty/deck (lockkit ≥ v0.5.0)
 ```
 
 A lock without `devices: true` pins no phone: `lock up` routes it away from
 mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
 hub's approvals from the other facades as before). The review names what each
 lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
+Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
+lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lock
+approve` or lea's deck can show its clear screen; without it the lock refuses
+reveals.
 
 **Exposure.** `lock up` publishes the mobile listener on `127.0.0.1:8444`
 only. The phone reaches it through a TLS reverse proxy or tunnel that you run
@@ -98,8 +118,39 @@ malicious code could ask you to verify yourself for another pending ticket of
 the same lock than the one it shows, and could read the clear values sealed to
 the phone while they are on screen. Locks still refuse anything not signed by
 the phone over a ticket they signed themselves. A synced passkey also lives in
-your platform account. Notifications: none yet; keep the app open (it
-long-polls).
+your platform account.
+
+**Notifications.** Off by default: the app long-polls the queue while it is
+open. With `hub.mobile.push: true`, the hub wakes the paired phones with Web
+Push when a ticket they may answer (the same routing as the queue) becomes
+pending: tap "Enable notifications" in the app, allow notifications, and the
+browser's push subscription is recorded for that device (at most 4 per device;
+dropped by `lock mobile revoke`, or when the push service answers 404/410).
+Pushes carry no payload: the service worker shows "A Lock approval is pending"
+and the app reads the ticket from the hub as usual. The hub signs each push
+with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
+data directory, 0600) and POSTs only to the known push services
+(`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`,
+`wns2-*.notify.windows.com`, https on the default port, public addresses only
+(no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
+redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
+offline phone, `TTL` 30 min). The hub logs only the push service's host, never
+an endpoint. `lock up` reviews the change and gives the hub its `egress-hub`
+network for it. That network gives the hub general outbound access, as with
+the chat facades: the restriction to the push services above is enforced by
+the hub's code, not by the network. Signing out of the app keeps the device's
+push subscription (it belongs to the device, not to the session): tap "Disable
+notifications" before signing out to stop them on that phone, or revoke the
+device. What remains exposed: the push service (Google, Mozilla, Apple,
+Microsoft) learns when a ticket waits and which subscription is woken, though
+nothing of the ticket.
+
+```yaml
+hub:
+  mobile:
+    origin: https://hub.example.ts.net
+    push: true
+```
 
 ## Build
 

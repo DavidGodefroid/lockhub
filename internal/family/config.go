@@ -70,6 +70,7 @@ type Hub struct {
 //	    port: 8444                       # default
 //	    seal_clear: true                 # locks seal clear screens to paired phones
 //	    require_device: [prod-write]     # locks accept only device-signed approvals of these
+//	    push: true                       # payload-less Web Push to the paired phones
 //	locks:
 //	  crm-prod:
 //	    type: locksql
@@ -80,6 +81,10 @@ type Mobile struct {
 	Port          int      `yaml:"port,omitempty"`
 	SealClear     bool     `yaml:"seal_clear,omitempty"`
 	RequireDevice []string `yaml:"require_device,omitempty"`
+	// Push: the hub wakes the paired phones with payload-less Web Push
+	// when a ticket they may answer is pending (the hub gets a route out,
+	// to the known push services only).
+	Push bool `yaml:"push,omitempty"`
 }
 
 func (m *Mobile) validate() error {
@@ -114,6 +119,11 @@ type Lock struct {
 	// v0.4.0 or later and takes --devices-file). Without it, the lock
 	// refuses every decision taken on a phone.
 	Devices bool `yaml:"devices,omitempty"`
+	// Reveal: the lock pins the host facades' keys (its image is on
+	// lockkit v0.5.0 or later and takes --facade-keys-file), so Ctrl-O on
+	// the terminal or the deck can reveal its clear screen. Without it the
+	// lock refuses reveals; renewals need no facade key.
+	Reveal bool `yaml:"reveal,omitempty"`
 }
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -253,6 +263,13 @@ func (c *Config) validate(needLocks bool) error {
 func (c *Config) ChatEnabled() bool {
 	return slices.ContainsFunc(c.Hub.Facades, isChat)
 }
+
+// MobilePush reports whether the mobile facade sends Web Push.
+func (c *Config) MobilePush() bool { return c.Hub.Mobile != nil && c.Hub.Mobile.Push }
+
+// HubEgress reports whether the hub needs a route out: a chat facade's
+// service, the push services.
+func (c *Config) HubEgress() bool { return c.ChatEnabled() || c.MobilePush() }
 
 func isChat(f string) bool { return f == route.Slack || f == route.Telegram }
 

@@ -20,6 +20,9 @@ type Paths struct {
 	HubData string
 	// FacadeDir holds the facade socket ($XDG_RUNTIME_DIR/lockhub).
 	FacadeDir string
+	// Facades is the facade keys file (FacadesFile), mounted read-only
+	// in locks at LockFacadesPath; empty: none.
+	Facades string
 	// User is the uid:gid the hub runs as, so that the host user owns
 	// the facade socket and the data ("0:0" under rootless engines, where
 	// root is the host user).
@@ -116,7 +119,11 @@ func Compose(c *Config, p Paths) string {
 	w("    image: %s", q(c.Hub.Image))
 	w("    user: %s", q(p.User))
 	if m := c.Hub.Mobile; m != nil {
-		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\", \"--mobile-listen\", \":8444\", \"--mobile-origin\", %s]", q(m.Origin))
+		push := ""
+		if m.Push {
+			push = `, "--mobile-push"`
+		}
+		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\", \"--mobile-listen\", \":8444\", \"--mobile-origin\", %s%s]", q(m.Origin), push)
 		// Published on the host's loopback only: the human's reverse
 		// proxy or tunnel forwards the origin to it.
 		w("    ports: [%s]", q(fmt.Sprintf("127.0.0.1:%d:8444", m.Port)))
@@ -132,11 +139,12 @@ func Compose(c *Config, p Paths) string {
 	w("        source: %s", q(p.FacadeDir))
 	w("        target: /run/lockhub-facade")
 	// The hub has no route out, unless a chat facade must reach its
-	// service: then through its own network, never a lock's.
-	// Its own networks: a chat facade's route out, the mobile listener's
-	// published port (an internal network publishes none).
+	// service or the mobile facade the push services: then through its own
+	// network, never a lock's. Its own networks: that route out, the
+	// mobile listener's published port (an internal network publishes
+	// none).
 	nets := []string{"lockhub"}
-	if c.ChatEnabled() {
+	if c.HubEgress() {
 		nets = append(nets, q("egress-hub"))
 	}
 	if c.Hub.Mobile != nil {
@@ -185,6 +193,9 @@ func Compose(c *Config, p Paths) string {
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)
 			cmd = append(cmd, deviceArgs(c, l, p)...)
+			if p.Facades != "" && l.Reveal {
+				cmd = append(cmd, "--facade-keys-file", LockFacadesPath)
+			}
 		}
 		if !k.Gate {
 			// The locks' profile tools name a database or broker on the
@@ -227,6 +238,12 @@ func Compose(c *Config, p Paths) string {
 			w("      - type: bind")
 			w("        source: %s", q(p.Devices))
 			w("        target: /run/lockfamily-devices/devices.json")
+			w("        read_only: true")
+		}
+		if p.Facades != "" && l.Reveal && !k.Gate {
+			w("      - type: bind")
+			w("        source: %s", q(p.Facades))
+			w("        target: %s", q(LockFacadesPath))
 			w("        read_only: true")
 		}
 		if k.Gate {
@@ -307,7 +324,7 @@ func Compose(c *Config, p Paths) string {
 	w("  lockhub:")
 	w("    internal: true")
 	labels(RoleHub, "", "")
-	if c.ChatEnabled() {
+	if c.HubEgress() {
 		w("  %s: {}", q("egress-hub"))
 	}
 	if c.Hub.Mobile != nil {

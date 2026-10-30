@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,15 +79,40 @@ func (e *HubError) Error() string { return e.Message }
 // Queue fetches the pending tickets and the queue version, waiting up to
 // wait for a change after version since.
 func (c *Client) Queue(ctx context.Context, since uint64, wait time.Duration) ([]api.QueueItem, uint64, error) {
+	r, err := c.QueueAll(ctx, since, wait)
+	return r.Tickets, r.Version, err
+}
+
+// QueueAll is Queue with the expired tickets offered for re-approval.
+func (c *Client) QueueAll(ctx context.Context, since uint64, wait time.Duration) (api.QueueResult, error) {
 	var r api.QueueResult
 	err := c.do(ctx, "GET", fmt.Sprintf("/v1/queue?since=%d&wait=%d", since, int(wait/time.Second)), nil, &r)
-	return r.Tickets, r.Version, err
+	return r, err
+}
+
+func ticketPath(instance, id, verb string) string {
+	return "/v1/tickets/" + url.PathEscape(instance) + "/" + url.PathEscape(id) + "/" + verb
+}
+
+// Reveal asks the lock, through the hub, for the clear screen of a
+// ticket sealed to req.Key, and returns the lock's signed answer.
+func (c *Client) Reveal(ctx context.Context, instance, id string, req api.RevealRequest) ([]byte, error) {
+	var r api.RevealResult
+	err := c.do(ctx, "POST", ticketPath(instance, id, "reveal"), req, &r)
+	return r.Answer, err
+}
+
+// Renew asks the lock, through the hub, again for an expired ticket.
+func (c *Client) Renew(ctx context.Context, instance, id string, req api.RenewRequest) (api.RenewResult, error) {
+	var r api.RenewResult
+	err := c.do(ctx, "POST", ticketPath(instance, id, "renew"), req, &r)
+	return r, err
 }
 
 // Decide sends a decision.
 func (c *Client) Decide(ctx context.Context, instance, id string, req api.DecideRequest) error {
 	var r api.DecideResult
-	return c.do(ctx, "POST", "/v1/tickets/"+url.PathEscape(instance)+"/"+url.PathEscape(id)+"/decide", req, &r)
+	return c.do(ctx, "POST", ticketPath(instance, id, "decide"), req, &r)
 }
 
 // Screen renders a queue item for the terminal. Everything that comes
@@ -107,7 +133,11 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 	fmt.Fprintf(&b, "%s · %s · %s%s\n", clean(t.Source.Lock), clean(it.Instance), clean(it.Risk), prod)
 	fmt.Fprintf(&b, "ticket %s · asked by (unverified) %s · workspace %s\n", clean(it.ID), clean(t.Requester.Agent), clean(t.Workspace))
 	if it.Expires != nil {
-		fmt.Fprintf(&b, "expires in %s\n", it.Expires.Sub(now).Round(time.Minute))
+		if d := it.Expires.Sub(now).Round(time.Minute); d >= 0 {
+			fmt.Fprintf(&b, "expires in %s\n", d)
+		} else {
+			fmt.Fprintf(&b, "expired %s ago\n", -d)
+		}
 	}
 	fmt.Fprintln(&b, rule)
 	if t.Screen.Header != "" {
@@ -125,7 +155,94 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 	if len(t.PII.Touched) > 0 {
 		fmt.Fprintf(&b, "personal data touched: %s (masked)\n", clean(strings.Join(t.PII.Touched, ", ")))
 	}
+	if r := t.Renews; r != nil {
+		why := "it expired before a decision"
+		if r.Reason == ticket.RenewApprovalExpired {
+			why = "its approval expired before the run"
+			if r.ApprovedAt != nil {
+				why += " (approved " + r.ApprovedAt.Local().Format("2006-01-02 15:04") + ")"
+			}
+		}
+		fmt.Fprintf(&b, "asks again for ticket %s: %s\n", clean(r.Of), why)
+		switch {
+		case !r.Checked:
+			fmt.Fprintln(&b, "the lock could not compare the plan's inputs with the expired ticket's (the run still checks the plan)")
+		case len(r.Changes) == 0:
+			fmt.Fprintln(&b, "nothing changed since then")
+		default:
+			fmt.Fprintln(&b, "changed since then:")
+			for _, c := range r.Changes {
+				fmt.Fprintf(&b, "  %s: %s\n", clean(c.Input), changeWords(c.Change))
+			}
+		}
+	}
 	return b.String(), &t, nil
+}
+
+// changeWords says what happened to a plan-hash input since the expired
+// ticket (lockkit ticket.Change kinds).
+func changeWords(kind string) string {
+	switch kind {
+	case ticket.ChangeChanged, ticket.ChangeNew, ticket.ChangeGone:
+		return kind
+	case ticket.ChangeUnchecked:
+		return "not checked now — the run checks it"
+	}
+	return sanitize.Terminal(kind, false)
+}
+
+// RenderClear renders a revealed clear screen, clearly set apart from
+// the masked one. It is the lock's and the agent's words: escaped like
+// the masked screen.
+func RenderClear(s ticket.Screen) string {
+	clean := func(x string) string { return sanitize.Terminal(x, false) }
+	var b strings.Builder
+	fmt.Fprintln(&b, "════ CLEAR VALUES · sealed by the lock to this terminal, not kept ════")
+	if s.Header != "" {
+		fmt.Fprintln(&b, clean(s.Header))
+	}
+	for _, l := range s.Body {
+		fmt.Fprintln(&b, "  "+sanitize.Terminal(l, true))
+	}
+	if s.Note != "" {
+		fmt.Fprintln(&b, clean(s.Note))
+	}
+	for _, w := range s.Warnings {
+		fmt.Fprintln(&b, "! "+clean(w))
+	}
+	fmt.Fprintln(&b, "════ end of clear values ════")
+	return b.String()
+}
+
+// lockCodes are the human words of a lock's answer codes (lockkit
+// hubclient Code*). A lock's own text never reaches the terminal.
+var lockCodes = map[string]string{
+	"facade_refused":  "the lock does not pin this terminal's facade key (run lock up)",
+	"not_pending":     "the ticket is no longer pending at the lock: nothing to reveal",
+	"no_clear_screen": "the lock kept no clear screen for this ticket",
+	"not_renewable":   "the lock cannot ask again for this ticket (not expired there, or gone)",
+	"recheck_failed":  "the lock could not check the plan again",
+	"policy_changed":  "the policy changed: the agent must plan again",
+	"rate_limited":    "the lock limits new tickets right now: try again later",
+	"failed":          "the lock could not answer",
+}
+
+// Explain is the human message of a hub error.
+func Explain(err error) string {
+	var he *HubError
+	if !errors.As(err, &he) {
+		return sanitize.Terminal(err.Error(), false)
+	}
+	switch he.Kind {
+	case "lock_refused":
+		if m, ok := lockCodes[he.Message]; ok {
+			return m
+		}
+		return "the lock refused"
+	case "timeout":
+		return "the lock did not answer in time (is it running?)"
+	}
+	return sanitize.Terminal(he.Message, false)
 }
 
 // Session is one `lock approve` run.
@@ -137,6 +254,12 @@ type Session struct {
 	Now     func() time.Time
 	// Once stops when the queue is empty instead of waiting.
 	Once bool
+	// FacadeKey is this terminal's facade key (tty), which the locks pin:
+	// with it, Ctrl-O shows a ticket's clear values. Nil: no reveal.
+	FacadeKey ed25519.PrivateKey
+	// LockKeys are the lock keys pinned by lock up, by instance: a
+	// revealed screen opens only if its lock signed it.
+	LockKeys map[string]ed25519.PublicKey
 }
 
 var errQuit = errors.New("quit")
@@ -151,19 +274,35 @@ func (s *Session) Run(ctx context.Context) error {
 	wait := time.Duration(0)
 	var ver uint64
 	for {
-		items, v, err := s.C.Queue(ctx, ver, wait)
-		ver = v
+		q, err := s.C.QueueAll(ctx, ver, wait)
+		ver = q.Version
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			return fmt.Errorf("hub: %w", err)
 		}
-		var todo []api.QueueItem
-		for _, it := range items {
+		var todo, expired []api.QueueItem
+		for _, it := range q.Tickets {
 			if !skipped[it.Instance+"/"+it.ID] {
 				todo = append(todo, it)
 			}
+		}
+		for _, it := range q.Expired {
+			if !skipped["expired:"+it.Instance+"/"+it.ID] && local(it.Facades) {
+				expired = append(expired, it)
+			}
+		}
+		if len(todo) == 0 && len(expired) > 0 {
+			it := expired[0]
+			skipped["expired:"+it.Instance+"/"+it.ID] = true
+			if err := s.renew(ctx, it); errors.Is(err, errQuit) {
+				return nil
+			} else if err != nil && !errors.Is(err, errSkip) {
+				return err
+			}
+			wait = 0
+			continue
 		}
 		if len(todo) == 0 {
 			if s.Once {
@@ -187,7 +326,7 @@ func (s *Session) Run(ctx context.Context) error {
 			case err != nil:
 				var he *HubError
 				if errors.As(err, &he) {
-					fmt.Fprintln(s.Out, "hub refused:", sanitize.Terminal(he.Message, false))
+					fmt.Fprintln(s.Out, "hub refused:", Explain(he))
 					skipped[it.Instance+"/"+it.ID] = true
 					continue
 				}
@@ -219,14 +358,24 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 		fmt.Fprintln(s.Out, "this ticket cannot be answered here")
 		return errSkip
 	}
+	prompt := "approve? [y]es / [n]o <reason> / [s]kip / [q]uit: "
+	if s.FacadeKey != nil {
+		prompt = "approve? [y]es / [n]o <reason> / [o] clear values / [s]kip / [q]uit: "
+	}
 	for {
-		a, err := s.line("approve? [y]es / [n]o <reason> / [s]kip / [q]uit: ")
+		a, err := s.line(prompt)
 		if err != nil {
 			return err
 		}
 		verb, reason, _ := strings.Cut(strings.TrimSpace(a), " ")
 		req := api.DecideRequest{Facade: "tty", Display: s.Display, Reason: strings.TrimSpace(reason)}
 		switch strings.ToLower(verb) {
+		case "o", "\x0f":
+			// o is the key. Ctrl-O works where the terminal passes it
+			// (Linux: 0x0F before the Enter of the line); macOS takes
+			// ^O for itself (VDISCARD) and never delivers it.
+			s.reveal(ctx, it, t)
+			continue
 		case "y", "yes":
 			req.Approved = true
 			if t.Flags.Production && t.Flags.Retype != "" {
@@ -255,6 +404,79 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 			fmt.Fprintln(s.Out, "approved")
 		} else {
 			fmt.Fprintln(s.Out, "denied")
+		}
+		return nil
+	}
+}
+
+// reveal shows the clear values of t: an ephemeral key signed by the tty
+// facade key goes to the lock through the hub; the lock seals the clear
+// screen to it and signs the answer; it opens here only, and the key is
+// dropped once shown.
+func (s *Session) reveal(ctx context.Context, it api.QueueItem, t *ticket.Ticket) {
+	if s.FacadeKey == nil {
+		fmt.Fprintln(s.Out, "no facade key: clear values cannot be shown here (run lock up)")
+		return
+	}
+	lockPub := s.LockKeys[it.Instance]
+	if lockPub == nil || ticket.KeyID(lockPub) != t.Source.KeyID {
+		fmt.Fprintln(s.Out, "this lock's key is not the one lock up pinned: clear values cannot be shown")
+		return
+	}
+	rk, priv, err := ticket.NewRevealKey(s.FacadeKey, ticket.FacadeTTY, t, s.Now())
+	if err != nil {
+		fmt.Fprintln(s.Out, "reveal:", sanitize.Terminal(err.Error(), false))
+		return
+	}
+	kb, _ := json.Marshal(rk)
+	fmt.Fprintln(s.Out, "asking the lock for the clear values…")
+	ans, err := s.C.Reveal(ctx, it.Instance, it.ID, api.RevealRequest{Facade: ticket.FacadeTTY, Display: s.Display, Key: kb})
+	if err != nil {
+		fmt.Fprintln(s.Out, "no clear values:", Explain(err))
+		return
+	}
+	// priv lives in this call only: once it returns, the reveal cannot
+	// be opened again.
+	scr, err := ticket.OpenReveal(lockPub, priv, rk, ans)
+	if err != nil {
+		fmt.Fprintln(s.Out, "the answer does not verify under the pinned lock key: not shown")
+		return
+	}
+	fmt.Fprint(s.Out, RenderClear(scr))
+}
+
+// renew offers an expired ticket for re-approval.
+func (s *Session) renew(ctx context.Context, it api.QueueItem) error {
+	text, _, err := Screen(it, s.Now())
+	if err != nil {
+		fmt.Fprintln(s.Out, err)
+		return errSkip
+	}
+	fmt.Fprintln(s.Out, "EXPIRED: this ticket can no longer run")
+	fmt.Fprint(s.Out, text)
+	for {
+		a, err := s.line("approve again? [r] (approved now if nothing changed; otherwise review it) / [s]kip / [q]uit: ")
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case "r":
+		case "s", "skip":
+			return errSkip
+		case "q", "quit":
+			return errQuit
+		default:
+			continue
+		}
+		fmt.Fprintln(s.Out, "asking the lock again…")
+		res, err := s.C.Renew(ctx, it.Instance, it.ID, api.RenewRequest{Facade: ticket.FacadeTTY, Display: s.Display})
+		switch {
+		case err != nil:
+			fmt.Fprintln(s.Out, "not renewed:", Explain(err))
+		case res.AutoApproved:
+			fmt.Fprintf(s.Out, "approved again as ticket %s: nothing changed since the expired ticket\n", sanitize.Terminal(res.Ticket, false))
+		default:
+			fmt.Fprintf(s.Out, "the lock asks again with ticket %s: review it\n", sanitize.Terminal(res.Ticket, false))
 		}
 		return nil
 	}

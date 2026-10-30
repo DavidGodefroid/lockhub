@@ -3,6 +3,7 @@ package mobile_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
@@ -54,7 +55,10 @@ type env struct {
 	routes  route.Rules
 }
 
-func newEnv(t *testing.T, routes route.Rules) *env {
+func newEnv(t *testing.T, routes route.Rules) *env { t.Helper(); return newEnvWith(t, routes, nil) }
+
+// newEnvWith is newEnv with Web Push on (vapid non-nil).
+func newEnvWith(t *testing.T, routes route.Rules, vapid *ecdsa.PrivateKey) *env {
 	t.Helper()
 	dir := t.TempDir()
 	_, hubKey, _ := ed25519.GenerateKey(rand.Reader)
@@ -70,7 +74,7 @@ func newEnv(t *testing.T, routes route.Rules) *env {
 	t.Cleanup(func() { al.Close(); st.Close() })
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: ticketcodec.Codec{}, Key: hubKey,
 		Locks: map[string]ed25519.PublicKey{inst: lockPub}, Routes: routes})
-	svc, err := mobile.New(mobile.Config{Hub: h, Origin: origin, HubKeyID: ticket.KeyID(hubKey.Public().(ed25519.PublicKey))})
+	svc, err := mobile.New(mobile.Config{Hub: h, Origin: origin, HubKeyID: ticket.KeyID(hubKey.Public().(ed25519.PublicKey)), VAPID: vapid})
 	if err != nil {
 		t.Fatal(err)
 	}

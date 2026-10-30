@@ -1,12 +1,16 @@
 // Package state is the life cycle of a ticket in the hub.
 //
 //	pending ──approve──► approved ──consume──► consumed
-//	   ├────deny─────► denied
+//	   ├────deny─────► denied        └──renewed──► expired
 //	   ├────withdraw─► withdrawn
 //	   └────expire───► expired
 //
 // Every state but pending and approved is final. A ticket gets at most one
-// decision.
+// decision. An approved ticket expires only when the lock asks again for
+// it (its approval aged past its risk class's TTL before the run, decision
+// H1, and the lock pushed a renewal): Renewed, not Next, since no event
+// of the table (a sweep's Expire) may end an approval. An expired ticket
+// is asked again by a new ticket, never reopened.
 package state
 
 import "fmt"
@@ -55,6 +59,16 @@ func Next(from State, ev Event) (State, error) {
 		return to, nil
 	}
 	return from, ErrTransition{from, ev}
+}
+
+// Renewed is the state a ticket ends in when a renewal of it arrives:
+// expired, from pending or approved (an approval the lock will no longer
+// use); any other state stays.
+func Renewed(from State) (State, bool) {
+	if from == Pending || from == Approved {
+		return Expired, true
+	}
+	return from, false
 }
 
 // Final reports whether no event can leave s.

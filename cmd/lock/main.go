@@ -57,7 +57,9 @@ Usage:
                                           answer a lock console's start-up questions (policy, credentials);
                                           detach with Ctrl-P Ctrl-Q
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
-  lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
+  lock approve [--socket PATH] [--once] [--facade-keys DIR]
+                                          answer approval tickets in this terminal (o: clear values, also Ctrl-O
+                                          where the terminal passes it; r on an expired ticket: approve again)
   lock mobile pair --name NAME [--file FILE] [--socket PATH]
                                           pair a phone with the mobile facade (confirmed at this terminal)
   lock mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
@@ -256,14 +258,16 @@ func runtimeDir() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("lockhub-%d", os.Getuid()))
 }
 
-func stateDir(project string) string {
+func stateHome() string {
 	d := os.Getenv("XDG_STATE_HOME")
 	if d == "" {
 		home, _ := os.UserHomeDir()
 		d = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(d, "lockfamily", project)
+	return d
 }
+
+func stateDir(project string) string { return filepath.Join(stateHome(), "lockfamily", project) }
 
 // hubUser is the uid:gid that makes the hub's files and facade socket the
 // host user's: root under a rootless engine (it is the host user there),
@@ -333,7 +337,7 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	r := family.Exec{Stderr: stderr}
-	u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(),
+	u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
 		Pin: *pin, Rotate: rotate}
 	if err := u.Do(ctx); err != nil {
@@ -351,6 +355,7 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
 	once := fs.Bool("once", false, "answer what is waiting, then exit")
+	keysDir := fs.String("facade-keys", family.FacadeKeysDir(stateHome()), "the host facades' keys and the pinned lock keys, as lock up wrote them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -362,6 +367,16 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	s := &approve.Session{C: approve.Dial(*sock), In: bufio.NewReader(stdin), Out: stdout, Display: os.Getenv("USER"), Once: *once}
+	// Clear values (Ctrl-O) need this terminal's facade key, which the
+	// locks pin, and the lock keys lock up pinned to check their answers.
+	if fk, err := keys.Load(family.FacadeKeyPath(*keysDir, "tty")); err == nil {
+		if lk, err := keys.LoadLocks(filepath.Join(*keysDir, family.LockKeysFile)); err == nil {
+			s.FacadeKey, s.LockKeys = fk, lk
+		}
+	}
+	if s.FacadeKey == nil {
+		fmt.Fprintln(stderr, "lock approve: no facade key or pinned lock keys in", *keysDir, "(run lock up): clear values cannot be shown")
+	}
 	if err := s.Run(ctx); err != nil {
 		fmt.Fprintln(stderr, "lock approve:", err)
 		return 1
