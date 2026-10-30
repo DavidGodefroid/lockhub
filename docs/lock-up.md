@@ -42,13 +42,33 @@ project and state.
   "hub_url": "http://lockhub:8443",
   "hub_key": "<base64 Ed25519 public key>",
   "facade_keys": {"v": 1, "facades": [{"facade": "tty", "key": "<base64>"}, {"facade": "deck", "key": "<base64>"}]},
+  "lockhttp_gate": 1,
+  "devices": {"v": 1, "devices": [{"id": "<device id>", "...": "..."}]},
   "locks": {
     "crm": {"type": "locksql", "socket_volume": "lockfamily-1a2b3c4d_crm-run", "client_gid": "10000"},
-    "web": {"type": "lockhttp", "socket_volume": "lockfamily-1a2b3c4d_web-run",
-            "gate_home_volume": "lockfamily-1a2b3c4d_web-gate", "client_gid": "10020", "reveal": true}
+    "web": {"type": "lockhttp", "profile": "strict", "socket_volume": "lockfamily-1a2b3c4d_web-run",
+            "gate_home_volume": "lockfamily-1a2b3c4d_web-gate", "client_gid": "10020", "reveal": true,
+            "devices": true, "require_device": ["prod-write"], "seal_clear": true}
   }
 }
 ```
+
+What a lock's gate pins (lea's lockhttp gate; `"lockhttp_gate": 1` says
+these members are written, and lea runs its gate in hub mode only then):
+
+- `devices` (top level): the paired devices (lockkit `ticket.DeviceSet`,
+  public keys only), the set lock up mounts read-only for the consoles at
+  `/run/lockfamily-devices/devices.json`. Absent while no device is
+  paired (`lock mobile pair`).
+- per lock, `devices: true` when the lock pins them (lockfamily.yaml
+  `locks.<name>.devices`); then `require_device` and `seal_clear`, from
+  `hub.mobile`, exactly as lock up passes `--require-device` and
+  `--seal-clear` to its consoles once a device is paired (with none
+  paired, the gate pins none, as the consoles). Without `devices`, neither
+  is written.
+- per lock, `profile`: the console's profile (absent: `default`), which
+  the gate takes as `--profile`.
+- per lock, `reveal` (below).
 
 lea reads up.json only if it is a regular file of the user's that no one
 else can write, in a `.lockfamily/` of the same kind. Then, for each lock of
@@ -76,7 +96,13 @@ network's subnet>`. When the lock has `"reveal": true` (lockfamily.yaml
 read-only input of its own and passes `--facade-keys-file …` (or
 `LOCKHTTP_FACADE_KEYS_FILE`): a reveal (Ctrl-O) is sealed only to an
 ephemeral key one of those facade keys signed. Without it the gate pins no
-facade and refuses reveals; renewals work either way. The gate refuses the hub's addresses as targets,
+facade and refuses reveals; renewals work either way. When the lock has
+`"devices": true` (lockhttp v0.4.0 or later), the gate writes the top-level
+`devices` to a read-only input of its own and passes `--devices-file …`,
+with `--require-device` and `--seal-clear` as the lock says: a decision
+of those risk classes must be device-signed, and clear screens go to the
+phones sealed. lea refuses hub mode (and runs the standalone gate, saying
+why) when `require_device` is set and no device is paired. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
 
@@ -192,10 +218,10 @@ vouches for it.
 
 ## Why lockhttp is different
 
-(lea's side of this, the gate in hub mode, is not in lea yet: until it is,
-a lockhttp lock under lock up runs a console that only a gate you start
-yourself reaches.)
-
+(lea's side of this is lea#209: lea runs its gate in hub mode for the one
+lockhttp lock of a workspace's up.json from `"lockhttp_gate": 1` on; with
+an older lock up, or anything in up.json it cannot check, it keeps its
+standalone gate and says why.)
 
 lockhttp's hub mode is in the gate (`lockhttp gate --hub`, lockhttp#11),
 not in its console, and the gate must sit in the network namespace of

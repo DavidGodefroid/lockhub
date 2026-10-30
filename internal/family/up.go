@@ -620,7 +620,7 @@ func (u *Up) Do(ctx context.Context) error {
 			fmt.Fprintf(u.Out, "%s now lives in %s (lea's agents only read it there); remove %s\n", FileName, nf, u.File)
 		}
 	}
-	st := NewUpState(c, project, ws, hp)
+	st := NewUpState(c, project, ws, hp, devices)
 	fs := facadeSet(facadePubs)
 	st.FacadeKeys = &fs
 	// The authoritative copy is lock up's own (host only); lea reads the

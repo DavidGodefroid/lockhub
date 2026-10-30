@@ -51,8 +51,17 @@ func TestUpWritesLeaContract(t *testing.T) {
 	if l := s.Locks["crm-prod"]; l.Type != "locksql" || l.Socket != p+"_crm-prod-run" || l.GID != "10000" || l.GateHome != "" {
 		t.Errorf("crm-prod: %+v", l)
 	}
-	if l := s.Locks["web"]; l.Socket != p+"_web-run" || l.GateHome != p+"_web-gate" {
+	if l := s.Locks["web"]; l.Socket != p+"_web-run" || l.GateHome != p+"_web-gate" || l.Devices || l.RequireDevice != nil || l.SealClear {
 		t.Errorf("web: %+v", l)
+	}
+	// What a lockhttp gate pins is said (lea's hub mode needs 1); no
+	// device paired: no devices member.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if s.LockHTTPGate != 1 || raw["devices"] != nil {
+		t.Errorf("up.json lockhttp_gate %d, devices %s", s.LockHTTPGate, raw["devices"])
 	}
 	// The facade keys, for lea's lockhttp gate (--facade-keys-file): the
 	// same set the consoles pin.

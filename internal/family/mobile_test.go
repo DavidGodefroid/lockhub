@@ -1,11 +1,13 @@
 package family
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/DavidGodefroid/lockkit/ticket"
 	"github.com/DavidGodefroid/lockkit/ticket/devicetest"
 )
 
@@ -219,5 +221,63 @@ func TestMobilePushComposeAndReview(t *testing.T) {
 	os.WriteFile(p, []byte(yamlConf("  mobile:\n    origin: https://hub.example.net\n    push: true\n")), 0o644)
 	if _, err := Load(p); err == nil {
 		t.Error("push without the mobile facade: accepted")
+	}
+}
+
+// up.json says what lea's lockhttp gate must pin, as lock up passes it to
+// the consoles it runs (deviceArgs): the paired devices, and for a lock
+// with devices: true, hub.mobile's require_device and seal_clear; the
+// profile the console serves (lockhub#40).
+func TestUpJSONSaysWhatTheGatePins(t *testing.T) {
+	conf := mobileYAML() + "  web:\n    type: lockhttp\n    image: " + httpImg + "\n    devices: true\n    reveal: true\n    profile: strict\n"
+	w := newWS(t, conf)
+	a := devicetest.New("hub.example.net", "https://hub.example.net", "phone")
+	state := filepath.Join(w.dir, "state")
+	if err := PinDevice(state, a.Device()); err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	f.keys["web"] = pubKey()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(w.file), UpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s UpState
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.LockHTTPGate != 1 {
+		t.Errorf("lockhttp_gate %d", s.LockHTTPGate)
+	}
+	// The devices, exactly the set the consoles mount, in a form the gate
+	// reads once canonical.
+	want, _ := ReadDevices(state)
+	if s.Devices == nil || s.Devices.V != ticket.Version || len(s.Devices.Devices) != 1 || s.Devices.Devices[0].ID != want[0].ID {
+		t.Fatalf("devices %+v", s.Devices)
+	}
+	cb, err := ticket.MarshalDevices(s.Devices.Devices)
+	snaps, _ := filepath.Glob(filepath.Join(state, "devices-*.json"))
+	if err != nil || len(snaps) != 1 {
+		t.Fatalf("%v %v", err, snaps)
+	}
+	if mounted, _ := os.ReadFile(snaps[0]); string(cb) != string(mounted) {
+		t.Errorf("up.json devices differ from the consoles' snapshot:\n%s\n%s", cb, mounted)
+	}
+	if _, err := ticket.ParseDevices(cb); err != nil {
+		t.Errorf("the gate would refuse the devices: %v", err)
+	}
+	web := s.Locks["web"]
+	if !web.Devices || !web.SealClear || strings.Join(web.RequireDevice, ",") != "prod-write,policy-loosen" || !web.Reveal || web.Profile != "strict" {
+		t.Errorf("web: %+v", web)
+	}
+	if crm := s.Locks["crm-prod"]; !crm.Devices || !crm.SealClear || len(crm.RequireDevice) != 2 {
+		t.Errorf("crm-prod: %+v", crm)
+	}
+	// A lock without devices: true pins none, whatever hub.mobile says.
+	if ev := s.Locks["events"]; ev.Devices || ev.SealClear || ev.RequireDevice != nil {
+		t.Errorf("events: %+v", ev)
 	}
 }
