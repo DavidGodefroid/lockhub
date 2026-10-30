@@ -7,12 +7,18 @@ digest).
 
 - `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
   lock-side audit logs (lockkit's `audit.log`, or its directory): the
-  chain (lockkit `audit.Verify`), and every record naming a hub decision
-  (`hub_sig`) against the decision the hub signed (same signature,
-  approver and facade). With `--anchors FILE` (host only, 0600) each
-  verified log's anchor is kept between runs and the next run uses
-  lockkit `audit.VerifyAnchored`, so a log cut or stripped of its chain
-  since is refused; a failed log keeps its old anchor.
+  chain (lockkit `audit.Verify`), and every record of a hub decision
+  (`approval: hub` approved or denied, or any record with `hub_sig`)
+  against the decision the hub signed for that instance and ticket: same
+  outcome, approver and facade, and same signature when the record has
+  one (locksql does not record `hub_sig` yet: its records are checked on
+  the rest, and counted). A record whose hub fields do not read fails.
+  Hub decisions the log has no record of are counted (not acted on yet,
+  or cut). With `--anchors FILE` (host only, 0600) each verified log's
+  anchor is kept between runs and the next run uses lockkit
+  `audit.VerifyAnchored`, so a log cut before it or stripped of its chain
+  is refused; a failed log keeps its old anchor. Lines after the anchor
+  are checked by the chain only.
 
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries

@@ -179,10 +179,18 @@ func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anch
 			continue
 		}
 		how := "not anchored (pass --anchors FILE to see a cut tail next time)"
-		if r.Anchored {
-			how = "anchored"
+		if _, had := anchors[r.Instance]; r.Anchored {
+			how = fmt.Sprintf("anchored at line %d of the last run", anchors[r.Instance].Line)
+		} else if anchorsFile != "" && len(anchors) > 0 && !had {
+			how = "not anchored: no anchor kept for it yet (a first run, or its entry was removed)"
 		}
 		fmt.Fprintf(stdout, "OK: %s: %d audit records chained (%d before the chain), %d hub decisions match the hub's, %s\n", r.Instance, r.Records, r.Legacy, r.HubDecisions, how)
+		if r.Unsigned > 0 {
+			fmt.Fprintf(stdout, "  %s: %d of them without the hub's signature (checked on ticket, outcome, approver and facade)\n", r.Instance, r.Unsigned)
+		}
+		if r.Unrecorded > 0 {
+			fmt.Fprintf(stdout, "  %s: %d hub decision(s) on it not in this log (not acted on yet, or cut from it)\n", r.Instance, r.Unrecorded)
+		}
 		anchors[r.Instance] = r.Anchor
 	}
 	if anchorsFile != "" {

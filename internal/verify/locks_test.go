@@ -46,7 +46,8 @@ func lockLog(t *testing.T, dir string, pub ed25519.PublicKey, edit func(*lkaudit
 		if dec.Decision == ticket.Approved {
 			ev = lkaudit.EventApproved
 		}
-		rec := lkaudit.Base{Event: ev, Ticket: d.Ticket, Approver: &dec.Approver, Facade: dec.Facade, HubSig: dec.Sig}
+		// As lockmq and lockfile write it (locksql: without HubSig).
+		rec := lkaudit.Base{Event: ev, Decision: string(dec.Decision), Approval: "hub", Ticket: d.Ticket, Approver: &dec.Approver, Facade: dec.Facade, HubSig: dec.Sig}
 		if edit != nil {
 			edit(&rec)
 		}
@@ -91,9 +92,16 @@ func TestLockLogClaimsADecisionTheHubDidNotMake(t *testing.T) {
 		"other approver":  func(b *lkaudit.Base) { b.Approver = &ticket.Approver{ID: "slack:U99"} },
 		"other facade":    func(b *lkaudit.Base) { b.Facade = "slack" },
 		"other ticket":    func(b *lkaudit.Base) { b.Ticket = "01NOTAHUBTICKET" },
+		// build(t, 2): the first decision approved, the second denied.
+		"approved on a denial":  func(b *lkaudit.Base) { b.Event, b.Decision = lkaudit.EventApproved, "approved" },
+		"denied on an approval": func(b *lkaudit.Base) { b.Event, b.Decision = lkaudit.EventDenied, "denied" },
+		"unsigned, other approver": func(b *lkaudit.Base) {
+			b.HubSig, b.Approver = "", &ticket.Approver{ID: "slack:U99"}
+		},
+		"unsigned, unknown ticket": func(b *lkaudit.Base) { b.HubSig, b.Ticket = "", "01NOTAHUBTICKET" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			dir, pub := build(t, 1)
+			dir, pub := build(t, 2)
 			reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", lockLog(t, dir, pub, edit)}}, nil)
 			if err != nil || reps[0].OK() {
 				t.Fatalf("accepted: %+v %v", reps, err)
@@ -119,7 +127,7 @@ func TestAnchorsFile(t *testing.T) {
 	if a, err := LoadAnchors(p); err != nil || len(a) != 0 {
 		t.Fatal(a, err)
 	}
-	want := map[string]lkaudit.Anchor{"crm": {Line: 3, Hash: "sha256:ab"}, "none": {}}
+	want := map[string]lkaudit.Anchor{"crm": {Line: 3, Hash: "sha256:ab"}, "events": {Line: 9, Hash: "sha256:cd"}, "none": {}}
 	if err := SaveAnchors(p, want); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +135,7 @@ func TestAnchorsFile(t *testing.T) {
 		t.Errorf("mode %v", fi.Mode().Perm())
 	}
 	got, err := LoadAnchors(p)
-	if err != nil || len(got) != 1 || got["crm"] != want["crm"] {
+	if err != nil || len(got) != 2 || got["crm"] != want["crm"] || got["events"] != want["events"] {
 		t.Fatalf("%v %v", got, err)
 	}
 	os.WriteFile(p, []byte(`{"crm":{"line":0,"hash":""}}`), 0o600)
@@ -135,3 +143,33 @@ func TestAnchorsFile(t *testing.T) {
 		t.Error("empty anchor accepted")
 	}
 }
+
+// locksql records hub decisions without the hub's signature: still
+// checked, and counted.
+func TestUnsignedHubRecords(t *testing.T) {
+	dir, pub := build(t, 2)
+	path := lockLog(t, dir, pub, func(b *lkaudit.Base) { b.HubSig = "" })
+	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	if err != nil || !reps[0].OK() || reps[0].HubDecisions != 2 || reps[0].Unsigned != 2 || reps[0].Unrecorded != 0 {
+		t.Fatalf("%+v %v", reps, err)
+	}
+}
+
+// A record whose hub fields do not read is no record to skip.
+func TestUnreadableHubRecord(t *testing.T) {
+	dir, pub := build(t, 1)
+	state := t.TempDir()
+	l, _ := lkaudit.Open(kit.Product{Name: "locksql"}, state)
+	l.Append(rawRecord(`{"event":"approved","ticket":"01FORGED","approver":"slack:evil","hub_sig":"Zm9yZ2Vk"}`))
+	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", filepath.Join(state, "locksql")}}, nil)
+	if err != nil || reps[0].OK() || reps[0].Unrecorded != 1 {
+		t.Fatalf("%+v %v", reps, err)
+	}
+}
+
+// rawRecord is a record of arbitrary JSON.
+type rawRecord string
+
+func (r rawRecord) AuditEvent() string { return "approved" }
+
+func (r rawRecord) MarshalJSON() ([]byte, error) { return []byte(r), nil }

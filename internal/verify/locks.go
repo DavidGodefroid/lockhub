@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	lkaudit "github.com/DavidGodefroid/lockkit/audit"
 	"github.com/DavidGodefroid/lockkit/ticket"
@@ -25,8 +26,12 @@ type LockLog struct{ Instance, Path string }
 type LockReport struct {
 	Instance string
 	// Records and Legacy are lockkit's Summary (Legacy: lines from before
-	// the chain); HubDecisions the records that name a hub decision.
-	Records, Legacy, HubDecisions int
+	// the chain); HubDecisions the records of a hub decision, Unsigned
+	// those of them without the hub's signature (locksql does not record
+	// it yet: checked on ticket, outcome, approver and facade only);
+	// Unrecorded the hub's decisions for the instance the log has no
+	// record of (decided, not yet acted on, or cut from the log).
+	Records, Legacy, HubDecisions, Unsigned, Unrecorded int
 	// Anchored is whether the log was checked against a kept anchor;
 	// Anchor is its anchor now (empty: no chained line yet).
 	Anchored bool
@@ -44,11 +49,16 @@ func (r *LockReport) bad(format string, a ...any) {
 // lockRecord is what Locks reads of a lockkit audit record.
 type lockRecord struct {
 	Event    string           `json:"event"`
+	Decision string           `json:"decision"`
+	Approval string           `json:"approval"`
 	Ticket   string           `json:"ticket"`
 	Approver *ticket.Approver `json:"approver"`
 	Facade   string           `json:"facade"`
 	HubSig   string           `json:"hub_sig"`
 }
+
+// hubFields are the fields that make a record about a hub decision.
+var hubFields = []string{"approval", "ticket", "approver", "facade", "hub_sig"}
 
 // Locks verifies lock-side audit logs: each one's chain (lockkit
 // audit.Verify; VerifyAnchored when anchors holds the anchor kept for the
@@ -63,7 +73,7 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 	}
 	defer st.Close()
 	type signed struct {
-		sig, approver, facade string
+		sig, approver, facade, outcome string
 	}
 	byTicket := map[string]signed{} // instance/ticket → the hub's decision
 	var since int64
@@ -81,7 +91,8 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 			if err != nil {
 				continue // Hub reports it
 			}
-			byTicket[d.Instance+"/"+d.Ticket] = signed{dec.Sig, dec.Approver.ID, dec.Facade}
+			// Keyed on what the hub signed, not on the database's columns.
+			byTicket[dec.Instance+"/"+dec.Ticket] = signed{dec.Sig, dec.Approver.ID, dec.Facade, string(dec.Decision)}
 		}
 	}
 	var out []LockReport
@@ -107,10 +118,29 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 		sc := bufio.NewScanner(bytes.NewReader(b))
 		sc.Buffer(make([]byte, 64<<10), 4<<20)
 		line := 0
+		recorded := map[string]bool{}
 		for sc.Scan() {
 			line++
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(sc.Bytes(), &raw); err != nil {
+				r.bad("line %d: %v", line, err)
+				continue
+			}
 			var rec lockRecord
-			if json.Unmarshal(sc.Bytes(), &rec) != nil || rec.HubSig == "" {
+			if err := json.Unmarshal(sc.Bytes(), &rec); err != nil {
+				for _, f := range hubFields {
+					if _, ok := raw[f]; ok {
+						r.bad("line %d: a hub field that does not read: %v", line, err)
+						break
+					}
+				}
+				continue
+			}
+			// A hub decision: what the consoles write when the hub decided
+			// (approval "hub", approved or denied), or anything carrying
+			// the hub's signature.
+			isDecision := rec.Event == lkaudit.EventApproved || rec.Event == lkaudit.EventDenied
+			if !(rec.HubSig != "" || rec.Approval == "hub" && isDecision) {
 				continue
 			}
 			r.HubDecisions++
@@ -120,13 +150,28 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 			if rec.Approver != nil {
 				approver = rec.Approver.ID
 			}
+			want := lkaudit.EventDenied
+			if d.outcome == string(ticket.Approved) {
+				want = lkaudit.EventApproved
+			}
+			if rec.HubSig == "" {
+				r.Unsigned++
+			}
 			switch {
 			case !ok:
 				r.bad("line %d (%s): a hub decision on %s the hub has not signed", line, rec.Event, key)
-			case d.sig != rec.HubSig:
+			case rec.HubSig != "" && d.sig != rec.HubSig:
 				r.bad("line %d (%s): the hub signature differs from the hub's decision on %s", line, rec.Event, key)
+			case isDecision && rec.Event != want, rec.Decision != "" && rec.Decision != d.outcome:
+				r.bad("line %d (%s, decision %q): the hub's decision on %s is %s", line, rec.Event, rec.Decision, key, d.outcome)
 			case d.approver != approver || d.facade != rec.Facade:
 				r.bad("line %d (%s): approver %s on %s, the hub's decision on %s says %s on %s", line, rec.Event, approver, rec.Facade, key, d.approver, d.facade)
+			}
+			recorded[key] = true
+		}
+		for key := range byTicket {
+			if strings.HasPrefix(key, l.Instance+"/") && !recorded[key] {
+				r.Unrecorded++
 			}
 		}
 		if err := sc.Err(); err != nil {
