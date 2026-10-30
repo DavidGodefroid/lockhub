@@ -22,6 +22,13 @@ digest).
   fails. Not checked: records a hub-mode lock should not write at all
   (a local approval).
 
+- `lock doctor` asks the hub for its queue over the facade socket: it
+  says whether the hub answers, shows the pending caps and rate limit
+  (lockkit's defaults: each lock 20 pending plans, 10 new tickets per
+  5 min, counted in memory; the hub: 50 per lock), that this quota is per
+  lock instance, shared by every agent of the workspace, and each lock's
+  pending tickets on the hub (warned from 80%).
+
 - Audit records are written after the database commit, through a
   transactional outbox: each change stores its record in its own
   transaction, signed with the hub key together with its outbox row id,
