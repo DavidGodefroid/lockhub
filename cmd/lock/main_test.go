@@ -26,6 +26,9 @@ func TestRun(t *testing.T) {
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lock add slack"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "#gen", "--user", "U1x"}, 2, "", "slack.channel"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "C01", "--user", "U01"}, 1, "", "stdin is not one"},
+		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lock add telegram"},
+		{[]string{"add", "telegram", "--chat", "42", "--from", "0"}, 2, "", "telegram.chats"},
+		{[]string{"add", "telegram", "--chat", "42", "--from", "42"}, 1, "", "stdin is not one"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)

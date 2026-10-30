@@ -21,11 +21,44 @@ const File = "chat.json"
 const (
 	SlackAppToken = "slack-app-token"
 	SlackBotToken = "slack-bot-token"
+	TelegramToken = "telegram-bot-token"
 )
 
 // Settings is chat.json.
 type Settings struct {
-	Slack *Slack `json:"slack,omitempty" yaml:"slack,omitempty"`
+	Slack    *Slack    `json:"slack,omitempty" yaml:"slack,omitempty"`
+	Telegram *Telegram `json:"telegram,omitempty" yaml:"telegram,omitempty"`
+}
+
+// Telegram is who may answer on Telegram: each entry is a chat and the
+// user who may answer in it (a private chat with the bot: both the same
+// id; a group: the group's id and the user's).
+type Telegram struct {
+	Chats []TelegramChat `json:"chats" yaml:"chats"`
+}
+
+// TelegramChat is one allowed (chat, sender) pair.
+type TelegramChat struct {
+	Chat int64 `json:"chat" yaml:"chat"`
+	From int64 `json:"from" yaml:"from"`
+}
+
+// Validate checks the allowlist.
+func (t *Telegram) Validate() error {
+	if len(t.Chats) == 0 {
+		return errors.New("telegram.chats: list the chat and sender ids who may answer")
+	}
+	seen := map[TelegramChat]bool{}
+	for _, c := range t.Chats {
+		if c.Chat == 0 || c.From <= 0 {
+			return fmt.Errorf("telegram.chats: want a chat id and a user id (from > 0), got %+v", c)
+		}
+		if seen[c] {
+			return fmt.Errorf("telegram.chats: %+v listed twice", c)
+		}
+		seen[c] = true
+	}
+	return nil
 }
 
 // Slack is who may answer on Slack, and where tickets are posted.
@@ -76,6 +109,11 @@ func Load(path string) (Settings, error) {
 	}
 	if s.Slack != nil {
 		if err := s.Slack.Validate(); err != nil {
+			return Settings{}, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	if s.Telegram != nil {
+		if err := s.Telegram.Validate(); err != nil {
 			return Settings{}, fmt.Errorf("%s: %w", path, err)
 		}
 	}

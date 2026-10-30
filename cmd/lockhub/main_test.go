@@ -178,6 +178,18 @@ func TestChatFacades(t *testing.T) {
 	if fs, err := open(); err != nil || len(fs) != 1 || fs[0].T.Facade() != "slack" {
 		t.Errorf("slack: %v %v", fs, err)
 	}
+	w("routing.json", `{"facades":["tty","slack","telegram"]}`, 0o600)
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "no telegram section") {
+		t.Errorf("telegram enabled without settings: %v", err)
+	}
+	w("chat.json", `{"slack":{"team":"T01","channel":"C02","users":["U03"]},"telegram":{"chats":[{"chat":42,"from":42}]}}`, 0o600)
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lock add telegram") {
+		t.Errorf("missing telegram token: %v", err)
+	}
+	w("telegram-bot-token", "123:abc", 0o600)
+	if fs, err := open(); err != nil || len(fs) != 2 || fs[1].T.Facade() != "telegram" {
+		t.Errorf("both: %v %v", fs, err)
+	}
 	os.Remove(filepath.Join(data, "chat.json"))
 	if _, err := open(); err == nil || !strings.Contains(err.Error(), "chat.json") {
 		t.Errorf("enabled without settings: %v", err)

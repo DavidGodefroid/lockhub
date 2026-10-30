@@ -307,6 +307,11 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if err != nil {
 			return fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 		}
+		// Production tickets are answered where the human can see them:
+		// never on a chat facade, whatever the facade itself checks.
+		if info.Production && !route.CanReveal(v.Facade) {
+			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
+		}
 		if v.Approved && info.Production && info.Retype != "" && v.Retype != info.Retype {
 			return ErrRetype
 		}

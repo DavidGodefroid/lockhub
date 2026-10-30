@@ -48,6 +48,9 @@ type Hub struct {
 	Routing map[string][]string `yaml:"routing,omitempty"`
 	// Slack is who may answer on Slack (required when slack is enabled).
 	Slack *chatconf.Slack `yaml:"slack,omitempty"`
+	// Telegram is who may answer on Telegram (required when telegram is
+	// enabled).
+	Telegram *chatconf.Telegram `yaml:"telegram,omitempty"`
 }
 
 // Lock is one lock instance.
@@ -113,6 +116,16 @@ func (c *Config) validate(needLocks bool) error {
 			return fmt.Errorf("hub.%w", err)
 		}
 	}
+	switch on := slices.Contains(c.Hub.Facades, route.Telegram); {
+	case on && c.Hub.Telegram == nil:
+		return fmt.Errorf("hub.telegram: the telegram facade needs its allowlist (chats): run lock add telegram")
+	case !on && c.Hub.Telegram != nil:
+		return fmt.Errorf("hub.telegram: set, but telegram is not in hub.facades")
+	case on:
+		if err := c.Hub.Telegram.Validate(); err != nil {
+			return fmt.Errorf("hub.%w", err)
+		}
+	}
 	if needLocks && len(c.Locks) == 0 {
 		return fmt.Errorf("locks: none declared")
 	}
@@ -148,7 +161,11 @@ func (c *Config) validate(needLocks bool) error {
 
 // ChatEnabled reports whether a chat facade (which needs a route out to
 // its service) is enabled.
-func (c *Config) ChatEnabled() bool { return slices.Contains(c.Hub.Facades, route.Slack) }
+func (c *Config) ChatEnabled() bool {
+	return slices.ContainsFunc(c.Hub.Facades, isChat)
+}
+
+func isChat(f string) bool { return f == route.Slack || f == route.Telegram }
 
 // Instances are the instance names, sorted.
 func (c *Config) Instances() []string {

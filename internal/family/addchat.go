@@ -28,6 +28,23 @@ func AddSlack(path, state string, s chatconf.Slack, appToken, botToken string) e
 	if !strings.HasPrefix(botToken, "xoxb-") || strings.ContainsAny(botToken, " \t\r\n") {
 		return errors.New("the bot token starts with xoxb- (OAuth & Permissions, scope chat:write)")
 	}
+	return addChat(path, state, route.Slack, s, map[string]string{chatconf.SlackAppToken: appToken, chatconf.SlackBotToken: botToken})
+}
+
+// AddTelegram enables the Telegram facade, like AddSlack.
+func AddTelegram(path, state string, t chatconf.Telegram, token string) error {
+	if err := t.Validate(); err != nil {
+		return err
+	}
+	if id, _, ok := strings.Cut(token, ":"); !ok || id == "" || strings.ContainsAny(token, " /\t\r\n") {
+		return errors.New("the bot token from BotFather looks like 123456:ABC…")
+	}
+	return addChat(path, state, route.Telegram, t, map[string]string{chatconf.TelegramToken: token})
+}
+
+// addChat adds facade to hub.facades, sets hub.<facade> to allow, and
+// stores the secrets.
+func addChat(path, state, facade string, allow any, secrets map[string]string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -45,19 +62,19 @@ func AddSlack(path, state string, s chatconf.Slack, appToken, botToken string) e
 	}
 	hub := child(doc.Content[0], "hub")
 	facades := c.Hub.Facades
-	if !slices.Contains(facades, route.Slack) {
-		facades = append(slices.Clone(facades), route.Slack)
+	if !slices.Contains(facades, facade) {
+		facades = append(slices.Clone(facades), facade)
 	}
 	var fn, sn yaml.Node
 	if err := fn.Encode(facades); err != nil {
 		return err
 	}
 	fn.Style = yaml.FlowStyle
-	if err := sn.Encode(s); err != nil {
+	if err := sn.Encode(allow); err != nil {
 		return err
 	}
 	*seq(hub, "facades") = fn
-	*child(hub, "slack") = sn
+	*child(hub, facade) = sn
 	out, _, err := encodeValid(&doc)
 	if err != nil {
 		return fmt.Errorf("%s: not changed: %w", path, err)
@@ -68,7 +85,7 @@ func AddSlack(path, state string, s chatconf.Slack, appToken, botToken string) e
 			return err
 		}
 	}
-	for name, v := range map[string]string{chatconf.SlackAppToken: appToken, chatconf.SlackBotToken: botToken} {
+	for name, v := range secrets {
 		if err := writeSecret(filepath.Join(hubData, name), v); err != nil {
 			return err
 		}

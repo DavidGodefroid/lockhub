@@ -117,6 +117,13 @@ func (d *Doctor) Do(ctx context.Context) int {
 			ok("slack tokens present, 0600")
 		}
 	}
+	if c != nil && c.Hub.Telegram != nil {
+		if _, err := chatconf.ReadSecret(filepath.Join(hubData, chatconf.TelegramToken)); err != nil {
+			fail("telegram token: %v: run lock add telegram", err)
+		} else {
+			ok("telegram token present, 0600")
+		}
+	}
 	if c != nil {
 		d.routing(c, ok, fail)
 		d.applied(c, warn)

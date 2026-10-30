@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -289,6 +290,16 @@ func TestNoButtonsForProductionOrProdWrite(t *testing.T) {
 	eventually(t, "replies", func() bool { return len(e.f.of("chat.postEphemeral")) == 2 })
 	if e.state(prod) != state.Pending || e.state(pw) != state.Pending {
 		t.Fatal("decided on chat")
+	}
+	// The hub refuses it too, whatever a facade checks.
+	for _, f := range []string{route.Slack, route.Telegram} {
+		_, err := e.h.Decide(context.Background(), store.Ref{Instance: "crm", ID: prod}, hub.Verdict{Approved: true, ApproverID: "x", Facade: f, Retype: "crm"})
+		if !errors.Is(err, hub.ErrNotRouted) {
+			t.Errorf("hub let %s decide a production ticket: %v", f, err)
+		}
+	}
+	if _, err := e.h.Decide(context.Background(), store.Ref{Instance: "crm", ID: prod}, hub.Verdict{Approved: true, ApproverID: "host:uid:1", Facade: route.TTY, Retype: "crm"}); err != nil {
+		t.Errorf("tty: %v", err)
 	}
 }
 

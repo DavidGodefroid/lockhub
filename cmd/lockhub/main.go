@@ -27,6 +27,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
 	"github.com/DavidGodefroid/lockhub/internal/facade/slack"
+	"github.com/DavidGodefroid/lockhub/internal/facade/telegram"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
@@ -157,11 +158,13 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	go sweep(ctx, h, stderr)
-	errc := make(chan error, 2+len(chats))
+	errc := make(chan error, 2)
 	for _, c := range chats {
+		// A chat facade that fails for good (a revoked token) stops alone:
+		// the hub and its other facades keep serving.
 		go func() {
 			if err := c.Run(ctx); ctx.Err() == nil {
-				errc <- err
+				fmt.Fprintf(stderr, "lockhub: %s facade stopped: %v\n", c.T.Facade(), err)
 			}
 		}()
 	}
@@ -198,23 +201,49 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 	if err != nil {
 		return nil, err
 	}
-	on := slices.Contains(h.Routes().Enabled, route.Slack)
-	var out []*chat.Facade
-	switch {
-	case on && s.Slack == nil:
-		return nil, errors.New("slack is enabled but chat.json has no slack section (run lock up)")
-	case !on && s.Slack != nil:
-		return nil, errors.New("chat.json configures slack but routing.json has it not enabled (run lock up)")
-	case on:
-		app, err := chatconf.ReadSecret(filepath.Join(data, chatconf.SlackAppToken))
+	secret := func(name, what, add string) (string, error) {
+		v, err := chatconf.ReadSecret(filepath.Join(data, name))
 		if err != nil {
-			return nil, fmt.Errorf("slack app token: %w (run lock add slack)", err)
+			return "", fmt.Errorf("%s: %w (run lock add %s)", what, err, add)
 		}
-		bot, err := chatconf.ReadSecret(filepath.Join(data, chatconf.SlackBotToken))
+		return v, nil
+	}
+	enabled := func(f string, configured bool) (bool, error) {
+		on := slices.Contains(h.Routes().Enabled, f)
+		switch {
+		case on && !configured:
+			return false, fmt.Errorf("%s is enabled but chat.json has no %s section (run lock up)", f, f)
+		case !on && configured:
+			return false, fmt.Errorf("chat.json configures %s but routing.json has it not enabled (run lock up)", f)
+		}
+		return on, nil
+	}
+	var out []*chat.Facade
+	if on, err := enabled(route.Slack, s.Slack != nil); err != nil {
+		return nil, err
+	} else if on {
+		app, err := secret(chatconf.SlackAppToken, "slack app token", "slack")
 		if err != nil {
-			return nil, fmt.Errorf("slack bot token: %w (run lock add slack)", err)
+			return nil, err
+		}
+		bot, err := secret(chatconf.SlackBotToken, "slack bot token", "slack")
+		if err != nil {
+			return nil, err
 		}
 		t, err := slack.New(slack.Config{Team: s.Slack.Team, Channel: s.Slack.Channel, Users: s.Slack.Users, AppToken: app, BotToken: bot})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &chat.Facade{H: h, T: t, Log: log})
+	}
+	if on, err := enabled(route.Telegram, s.Telegram != nil); err != nil {
+		return nil, err
+	} else if on {
+		tok, err := secret(chatconf.TelegramToken, "telegram bot token", "telegram")
+		if err != nil {
+			return nil, err
+		}
+		t, err := telegram.New(telegram.Config{Chats: s.Telegram.Chats, Token: tok})
 		if err != nil {
 			return nil, err
 		}
