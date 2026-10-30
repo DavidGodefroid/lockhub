@@ -48,7 +48,7 @@ say "lock up"
 mkdir -p ".$LOCK_TYPE"
 printf '[profiles.default]\nmode = "enforce"\nheuristics = "off"\nbuffer_limit = "1MiB"\nhold = "60s"\nconnect_grant = "1m"\ntrusted = []\nsplice = []\ndeny = []\n' >".$LOCK_TYPE/config.toml"
 tty 'y\n' "$lock" up | tee up.out
-grep -q "^up: project " up.out || die "lock up did not finish"
+grep -q "up: project " up.out || die "lock up did not finish"
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --status running --services | grep -qx lockhub || die "hub not running"

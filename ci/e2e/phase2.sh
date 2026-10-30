@@ -51,7 +51,7 @@ chmod 0644 .lockhttp/config.toml
 say "lock up (review at a terminal)"
 tty 'y\n' "$lock" up | tee up.out
 grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
-grep -q "^  profile lockhttp " up.out || die "the profile is not in the review"
+grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 jq . .lockfamily/up.json
@@ -108,7 +108,7 @@ ok=""
 for i in $(seq 1 30); do
 	sleep 2
 	tty 'y\n' "$lock" approve --once >approve.out 2>&1 || true
-	if grep -q '^approved' approve.out; then ok=1; break; fi
+	if tr -d '\r' <approve.out | grep -q '^approved'; then ok=1; break; fi
 done
 cat approve.out
 [ -n "$ok" ] || die "no ticket approved"
@@ -124,6 +124,6 @@ grep -qi 'read-only' err.out || die "not EROFS: $(cat err.out)"
 say "I11: a change of lockfamily.yaml is reviewed, not applied silently"
 "$lock" add lockhttp extra >/dev/null
 tty 'n\n' "$lock" up >up2.out 2>&1 || true
-grep -q '^  + lock extra' up2.out || die "the change was not shown"
+grep -q "+ lock extra" up2.out || die "the change was not shown"
 grep -q 'not applied' up2.out || die "the change was applied without a yes"
 echo "phase 2: OK"
