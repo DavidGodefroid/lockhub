@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -455,5 +456,61 @@ func TestProfileCopyModesAndReview(t *testing.T) {
 	}
 	if strings.ContainsAny(all, "\x1b\u202e") {
 		t.Error("an escape sequence reaches the review")
+	}
+}
+
+// A legacy root lockfamily.yaml: the first lock up adopts it (what was
+// reviewed) into .lockfamily; later lock up and lock add use that one.
+func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	ws := filepath.Join(dir, "projects")
+	for _, t := range Types {
+		os.MkdirAll(filepath.Join(ws, "."+t), 0o755)
+	}
+	old := filepath.Join(ws, FileName)
+	os.WriteFile(old, []byte(yamlConf("")), 0o644)
+	up := func(file, in string) (string, error) {
+		var out strings.Builder
+		f := newFake()
+		f.keys["more"] = pubKey()
+		u := &Up{File: file, State: filepath.Join(dir, "state"), Runtime: filepath.Join(dir, "run"), User: "1000:1000", Run: f, In: bufio.NewReader(strings.NewReader(in)), Out: &out}
+		err := u.Do(context.Background())
+		return out.String(), err
+	}
+	if got := Locate(ws); got != old {
+		t.Fatalf("legacy not found: %s", got)
+	}
+	out, err := up(old, "y\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nf := filepath.Join(ws, Dir, FileName)
+	if b, _ := os.ReadFile(nf); string(b) != yamlConf("") || !strings.Contains(out, "now lives in") {
+		t.Fatalf("not adopted:\n%s\n%s", b, out)
+	}
+	if got := Locate(ws); got != nf {
+		t.Fatalf("after adoption: %s", got)
+	}
+	if err := Add(nf, AddOptions{Type: "lockmq", Name: "more", Image: mqImg}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(nf)
+	if err != nil || len(c.Locks) != 3 {
+		t.Fatalf("lock add after adoption lost locks: %v %v", c, err)
+	}
+	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "+ lock more type lockmq") || strings.Contains(out, "- lock crm-prod type") {
+		t.Errorf("second lock up: %v\n%s", err, out)
+	}
+}
+
+// Every TOML line is reviewed: one too big or not text is refused.
+func TestProfileTOMLMustBeShowable(t *testing.T) {
+	for name, b := range map[string][]byte{"big": append([]byte("a = 1\n#"), make([]byte, maxTOML)...), "binary": {0xff, 0xfe, 'x'}} {
+		d := filepath.Join(t.TempDir(), ".locksql")
+		os.Mkdir(d, 0o755)
+		os.WriteFile(filepath.Join(d, "config.toml"), b, 0o644)
+		if _, err := ReadProfile(d, 1, 1); err == nil {
+			t.Errorf("%s TOML accepted", name)
+		}
 	}
 }

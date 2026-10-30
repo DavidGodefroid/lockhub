@@ -38,6 +38,9 @@ type Profile struct {
 	Lines []string
 }
 
+// maxTOML bounds a TOML file of a profile (all its lines are shown).
+const maxTOML = 64 << 10
+
 // maxEntries bounds a profile directory's files and directories.
 const maxEntries = 256
 
@@ -188,7 +191,12 @@ func (r *profileReader) file(rel string, want os.FileInfo) error {
 	}
 	h := sha256.Sum256(b)
 	r.lines = append(r.lines, fmt.Sprintf("file %s %d bytes sha256:%s", filepath.ToSlash(rel), len(b), hex.EncodeToString(h[:])))
-	if strings.HasSuffix(rel, ".toml") && utf8.Valid(b) && len(b) <= 16<<10 {
+	if strings.HasSuffix(rel, ".toml") {
+		// Every line of a configuration is reviewed: none too big or not
+		// text to show.
+		if !utf8.Valid(b) || len(b) > maxTOML {
+			return fmt.Errorf("%s: a TOML file must be UTF-8 text of at most %d bytes, every line of it is reviewed", name, maxTOML)
+		}
 		for i, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
 			r.lines = append(r.lines, fmt.Sprintf("%s:%d %s", filepath.ToSlash(rel), i+1, printable(l)))
 		}

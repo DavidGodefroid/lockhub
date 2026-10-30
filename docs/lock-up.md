@@ -23,8 +23,11 @@ lea creates `.lockfamily/` (owned by the host user, 0755) before it mounts
 it read-only in its agents' containers: no agent can change
 lockfamily.yaml or up.json. A `lockfamily.yaml` at the workspace's root
 (the layout before this page) is still read, with a warning: agents can
-write there. Move it into `.lockfamily/`; the workspace keeps its project
-and state.
+write there. The first confirmed `lock up` copies exactly what was reviewed
+into `.lockfamily/lockfamily.yaml` and says so; from then on only that file
+counts (remove the root one). Once `.lockfamily/` exists, a root file is
+never adopted (an agent could have planted it). The workspace keeps its
+project and state.
 
 ## up.json (version 1)
 
@@ -113,6 +116,10 @@ again.
 `lock add` pins only releases that run under lock up (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.10.0, lockmq v0.3.0, lockfile v0.4.0,
 lockhttp v0.3.0 or later.
+
+Locks resolve `host.docker.internal` to the host, as their launchers do
+(their profile wizards name a local database or broker so). A TOML file of a
+profile must be UTF-8 of at most 64 KiB: every line of it is in the review.
 
 Not yet: Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
 `-vault` image variant, which lock up does not pass or pin), and lockfile's

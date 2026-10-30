@@ -164,6 +164,11 @@ func Compose(c *Config, p Paths) string {
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)
 		}
+		if !k.Gate {
+			// The locks' profile tools name a database or broker on the
+			// host so, as their launchers resolve it.
+			w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
+		}
 		if k.Project {
 			// The console finds its project from its working directory.
 			w("    working_dir: %s", q(p.Workspace))
