@@ -62,6 +62,7 @@ docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps 
 grep -qx lockhub svc.out || die "hub not running"
 grep -qx lock-first svc.out || die "lock first not running"
 hub_is_local "$p"
+hub_cosigned up.out
 "$lock" doctor || true
 
 say "lock import: two sub-projects, the strictest routing kept, in either order"

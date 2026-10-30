@@ -3,7 +3,7 @@
 # starts the stack; a ticket is approved through the facade socket
 # (lock approve, at a terminal); an agent can reach the hub neither
 # directly nor through the LockHTTP gate (I2); lock up's side of I11: a
-# legacy root lockfamily.yaml moves into .lockfamily, a planted root file
+# legacy root lockfamily.yaml is copied into .lockfamily, a planted root file
 # is never read once .lockfamily exists, a .lockfamily others can write
 # or that is a link is refused. The hub is this commit's build
 # (E2E_HUB_IMAGE, ci/e2e/local-hub.sh), not the release lock add pins.
@@ -15,13 +15,19 @@
 . "$(dirname "$0")/lib.sh"
 lock=$1
 LOCKS=${LOCKS:-"web:lockhttp api:lockhttp"}
-ws=$(mktemp -d)/projects
+# Canonical (lock up prints resolved paths; a TMPDIR may be a link).
+ws=$(realpath "$(mktemp -d)")/projects
 mkdir -p "$ws"
 cd "$ws"
 agents="$E2E_ID-agents"
 gate="$E2E_ID-gate"
 cleanup() {
 	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" >/dev/null 2>&1 || true
+	# A run that died while .lockfamily was moved aside (the link check).
+	if [ ! -f "$ws/.lockfamily/up.json" ] && [ -f "$ws/lf-real/up.json" ]; then
+		rm -f "$ws/.lockfamily" || true
+		mv "$ws/lf-real" "$ws/.lockfamily" || true
+	fi
 	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -79,10 +85,14 @@ cat up.out
 grep -q "up: project " up.out || die "lock up did not finish"
 grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
-say "I11: the legacy root file is read with a warning and moved, exactly as reviewed"
+say "I11: the legacy root file is read with a warning and copied, exactly as reviewed; the human removes it"
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"
-grep -q "lockfamily.yaml now lives in $ws/.lockfamily/lockfamily.yaml" up.out || die "the legacy file was not moved into .lockfamily"
+grep -qF "lockfamily.yaml now lives in $ws/.lockfamily/lockfamily.yaml (lea's agents only read it there); remove $ws/lockfamily.yaml" up.out || die "the legacy file was not copied into .lockfamily"
 cmp reviewed.yaml .lockfamily/lockfamily.yaml || die ".lockfamily/lockfamily.yaml is not what was reviewed"
+cmp reviewed.yaml lockfamily.yaml || die "lock up changed the root lockfamily.yaml (it copies, the human removes)"
+rm lockfamily.yaml
+say "lock up checked the hub's signer identity (on the release lock add pinned)"
+hub_cosigned up.out
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 jq . .lockfamily/up.json
@@ -202,8 +212,13 @@ for i in $(seq 1 30); do
 	if tr -d '\r' <approve.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
 done
 cat approve.out
-# The ticket approved is the probe's, not some other pending request.
-[ -z "$ok" ] || tr -d '\r' <approve.out | grep -q 'example.com' || die "the approved ticket is not the probe's (no example.com on its screen)"
+# The ticket approved is the probe's, not some other pending request: the
+# gate's instance and class, its method and URL, its body.
+if [ -n "$ok" ]; then
+	tr -d '\r' <approve.out >approve.txt
+	grep -qx 'lockhttp · web · write' approve.txt && grep -qx '  POST plain://example.com/' approve.txt && grep -qx '    probe=1' approve.txt ||
+		die "the approved ticket is not the probe's (instance, method and URL, body)"
+fi
 if [ -z "$ok" ]; then
 	cat curl.out
 	docker logs "$gate" 2>&1 | tail -20
@@ -241,6 +256,7 @@ grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lock up did 
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps -a --services | grep -qx lock-extra || die "lock-extra not applied after the yes"
 grep -q planted up3.out "$state/compose.yaml" && die "the planted root lockfamily.yaml was applied"
 hub_is_local "$p"
+hub_cosigned up3.out
 docker run --rm --network none -v "${p}_profile-lockhttp:/p:ro" alpine:3.22 stat -c '%n %u:%g %a' /p/notes /p/notes/n.txt | tee st.out
 grep -q '/p/notes 10021:10020 700' st.out && grep -q '/p/notes/n.txt 10021:10020 600' st.out ||
 	die "the profile copy is not the console's, or lost its owner-only modes"
@@ -248,14 +264,14 @@ say "I11: lock up refuses a .lockfamily others can write, or a link"
 chmod g+w .lockfamily
 rc=0; tty 'y\n' "$lock" up >up4.out 2>&1 || rc=$?
 tr -d '\r' <up4.out | tail -3
-[ "$rc" != 0 ] && grep -q 'writable by others than you' up4.out || die "lock up took a group-writable .lockfamily (exit $rc)"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: mode 0775: writable by others than you" up4.out || die "lock up took a group-writable .lockfamily (exit $rc)"
 grep -q "up: project " up4.out && die "lock up applied a group-writable .lockfamily"
 chmod g-w .lockfamily
 mv .lockfamily lf-real
 ln -s lf-real .lockfamily
 rc=0; tty 'y\n' "$lock" up >up5.out 2>&1 || rc=$?
 tr -d '\r' <up5.out | tail -3
-[ "$rc" != 0 ] && grep -q 'not a directory (a link?)' up5.out || die "lock up took a .lockfamily that is a link (exit $rc)"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: not a directory (a link?)" up5.out || die "lock up took a .lockfamily that is a link (exit $rc)"
 grep -q "up: project " up5.out && die "lock up applied a .lockfamily that is a link"
 rm .lockfamily
 mv lf-real .lockfamily
