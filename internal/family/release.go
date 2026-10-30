@@ -104,7 +104,7 @@ func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error
 
 // MinRelease is each repository's first release that runs under lock up
 // (hub mode, lockkit v0.3.1: --hub-plain-http, hub-key).
-var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.10.0", "lockmq": "v0.3.0", "lockfile": "v0.4.0", "lockhttp": "v0.3.0"}
+var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "lockmq": "v0.3.0", "lockfile": "v0.4.0", "lockhttp": "v0.3.0"}
 
 // Image is the image of repo's release tag, pinned by the digest the
 // registry serves for it, once cosign verified that digest's signature

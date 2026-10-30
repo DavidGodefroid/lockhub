@@ -50,7 +50,7 @@ jobs:
           grep -q '^--- PASS: TestHubPhase1 ' phase1.out
 
   phase2:
-    name: e2e phase 2 (lock up, facade approval, I2, I11)
+    name: e2e phase 2 (lock up with locksql and LockHTTP, facade approvals, I2, I11)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -64,10 +64,20 @@ jobs:
       - run: go build -o "$RUNNER_TEMP/bin/lock" ./cmd/lock
       - name: this commit's hub image (containerd image store, cosign shim)
         run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
+      # Started after the image store switch (a service container would
+      # not survive the Docker restart).
+      - name: Postgres for the locksql lock
+        run: |
+          docker run -d --name "e2e-pg-${{ github.run_id }}" -p 5432:5432 -e POSTGRES_PASSWORD=e2e-only postgres:17 >/dev/null
+          for i in $(seq 1 60); do docker exec "e2e-pg-${{ github.run_id }}" pg_isready -h 127.0.0.1 -U postgres -q && break; sleep 1; done
+          docker exec "e2e-pg-${{ github.run_id }}" pg_isready -h 127.0.0.1 -U postgres
       - name: phase 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          PGHOST: 127.0.0.1
+          PGPORT: "5432"
+          PGPASSWORD: e2e-only
         run: |
           export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

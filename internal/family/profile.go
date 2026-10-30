@@ -99,16 +99,6 @@ type profileReader struct {
 	files    []string
 }
 
-// Has reports a file under dir (prefix) with the suffix.
-func (p *Profile) Has(prefix, suffix string) bool {
-	for _, f := range p.Files {
-		if strings.HasPrefix(f, prefix) && strings.HasSuffix(f, suffix) {
-			return true
-		}
-	}
-	return false
-}
-
 // mode is the copy's mode: owner-only stays owner-only.
 func mode(fi os.FileInfo, open int64) int64 {
 	if fi.Mode().Perm()&0o077 == 0 {
