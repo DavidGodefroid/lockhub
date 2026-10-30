@@ -23,6 +23,12 @@ digest).
   `lock doctor` reports devices paired since the last `lock up`.
 - Requires lockkit v0.4.0 (compatible: tickets and decisions without
   devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+- `GET /v1/hello` also answers `ticket_versions` (the ticket schema
+  versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
+  (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the
+  hello: for display and diagnosis only, never to pick or pin a hub key
+  (a lock trusts only the key it pinned). An N-1 version appears once
+  lockkit verifies two ticket versions.
 
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries

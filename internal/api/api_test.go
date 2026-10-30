@@ -25,7 +25,7 @@ func TestHello(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
 		t.Fatal(err)
 	}
-	if h != (Hello{Name: "lockhub", Version: "1.2.3", API: Version}) {
+	if h.Name != "lockhub" || h.Version != "1.2.3" || h.API != Version || h.TicketVersions != nil || h.HubKeyID != "" {
 		t.Errorf("hello = %+v", h)
 	}
 }
