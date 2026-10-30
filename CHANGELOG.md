@@ -5,6 +5,8 @@ digest).
 
 ## Unreleased
 
+## v0.2.3 (2026-10-30)
+
 Supported locks: as v0.2.2, plus locksql v0.11.1 (lockkit v0.7.1), the
 first locksql whose audit records of hub decisions carry `hub_sig`
 (locksql#118, locksql#133, locksql#137): `lock audit verify --lock` checks
@@ -12,26 +14,40 @@ its approvals, denials and renewals of approved tickets against the hub's
 signed decisions (older locksql records approvals unsigned, and does not
 record denials or renewals, which show as decisions not in the log).
 
+Upgrade notes (behaviour changes):
+
+- Production tickets: approving one now needs its instance name typed on
+  every facade (#64). Upgrade the `lock` CLI with the hub: an older `lock
+  approve` (v0.2.2 or older) is refused on production tickets by this
+  hub, and this `lock approve` is refused by an older hub on a ticket
+  whose `flags.retype` is set. An older lea deck (lea v0.3.1 or older)
+  asks for `flags.retype`, which this hub refuses, so it no longer
+  approves production tickets as it prompts: use this release's `lock
+  approve` or the phone (where it is routed), or a lea release with
+  DavidGodefroid/lea#222 (planned for lea v0.3.2); likewise, a lea with
+  lea#222 needs this hub for tickets whose `flags.retype` is set. A phone
+  page left open needs a reload to show the field.
+- Routing: a hub without `routing.json`, or with one that lists no
+  `facades`, no longer routes anything to Slack or Telegram (#61). Under
+  `lock up` nothing changes (it always writes `facades`); a hand-run hub
+  must list its chat facades.
+
+Changes:
+
 - Every production ticket needs its instance name typed to be approved,
   on every facade that may answer it: `lock approve`, the deck and the
   phone (#64). The hub, `lock approve` and the mobile web app used to ask
   for lockkit's `flags.retype` instead, and only when it was set: lockkit
   sets it to the console's "retype values" answer (such as `r`), never to
   the instance name, so most production tickets were approved with a
-  plain `y`. Chat facades still never answer production. Upgrade note: a
-  deck that sends `flags.retype` (lea v0.3.1 or older) can no longer
-  approve production tickets through this hub; use `lock approve` or the
-  phone, or upgrade lea to a release with DavidGodefroid/lea#222 (planned
-  for lea v0.3.2).
+  plain `y`. Chat facades still never answer production.
 - A hub started without `routing.json` (or with one that lists no
   `facades`) now routes tickets to the local facades only (terminal,
   deck, phone), never to Slack or Telegram (#61, invariant I9). It used
   to route and notify read, read-pii and write tickets to both chat
   facades, though none ran. A chat facade is routed only when
   `routing.json` lists it, as `lock up` writes it; the phone stays
-  implicit (it serves nothing without `--mobile-listen`). Upgrade note: a hub
-  run by hand (not by `lock up`) with a routing.json that omits
-  `facades` no longer offers tickets on chat; list the facades in it.
+  implicit (it serves nothing without `--mobile-listen`).
 - Slack and Telegram: a message close (`chat.update`, `editMessageText`)
   that fails (a rate limit, a network error, a 5xx) is retried with
   backoff (2 s doubling to 5 min, 15 tries, about 40 min), so a decided,
@@ -44,7 +60,10 @@ record denials or renewals, which show as decisions not in the log).
   the hub); on Slack it also tries the close again at once, at most once
   per 2 s, without using up a try. A ticket decided on a chat is no
   longer posted again from a queue snapshot taken before the decision.
-- CI: phase 5 fails on a `lock doctor` failure (#63).
+- CI: phase 5 fails on a `lock doctor` failure (#63); phase 2 drops the
+  database and role it made and checks the screen's literal (#62); tests
+  for I9 (#58); deflaked chat-close and queue-order tests (#55, #57).
+- docs: design notes, the accepted deviations from the hub plan (#59).
 
 ## v0.2.2 (2026-10-30)
 
@@ -356,11 +375,21 @@ command.
 
 - Builds on lockkit v0.3.1 (was a pre-release commit, 1d085bb) (#21).
 
+Correction (v0.2.3): the note above overstates what v0.1.1's `lock up`
+runs. It passes no `--profile`, mounts no profile and gives the consoles
+no terminal: lockfile (v0.4.0 requires `--profile`) and lockhttp (its
+console takes no `--hub`) refuse the generated command, and locksql
+v0.10.0 and lockmq v0.3.0 refuse to run without a terminal (and would
+find no profile in their empty home volume). Use `lock up` from v0.2.0
+on with any lock (see the v0.2.0 table).
+
 ## v0.1.0 (2026-10-30)
 
 First release. Supported locks: images built on lockkit v0.3.0 (hub
 mode). lockkit v0.3.1 and later refuse the generated `http://lockhub:8443`
 hub URL without `--hub-plain-http`: use lockhub v0.1.1 with them.
+(v0.2.3: neither this release's nor v0.1.1's `lock up` runs a released
+lock as generated, see the v0.1.1 correction; use v0.2.0 or later.)
 
 - Telegram facade (#8): same rules as Slack, over long-polled
   `getUpdates` (outbound only). Answers count only from the (chat,
