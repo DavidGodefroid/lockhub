@@ -5,8 +5,20 @@ digest).
 
 ## Unreleased
 
+## v0.2.1 (2026-10-30)
+
+Supported locks: as v0.2.0 (builds on lockkit v0.6.0), plus locksql
+v0.11.0 (lockkit v0.7.1), the first locksql release that takes
+`devices: true` and reveals/renewals.
+
 - A `lock import` or `lock add` refused for a new workspace no longer
-  leaves an empty `.lockfamily/` behind.
+  leaves an empty `.lockfamily/` behind (#48).
+- Hub requests (reveal, renew): an open request still unanswered 2 s
+  after it was given to a lock is offered again to every poll of the
+  instance, so a request taken by an old lock process while the live one
+  was between polls no longer times out at the facade (#49).
+- CI: the e2e phases verify the hub's signer identity with real cosign and
+  check the image the hub runs (#50).
 
 ## v0.2.0 (2026-10-30)
 
