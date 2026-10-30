@@ -235,7 +235,7 @@ func (u *Up) Do(ctx context.Context) error {
 
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
-	sum := Summary(c, hp, lockPubs)
+	sum := append(Summary(c, hp, lockPubs), chatTokens(c, hubData)...)
 	for _, t := range types(c) {
 		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
 		for _, l := range profiles[t].Lines {

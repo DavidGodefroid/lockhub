@@ -35,6 +35,15 @@ digest).
   and of the hub for a new workspace, by digest, once cosign verified it
   was signed by that repository's release workflow for that tag.
   `--image` still pins one by hand.
+- A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
+  is now a change `lock up` reviews and applies: the summary carries
+  each chat secret's identity (a short hash, never the token), so the
+  hub's config label changes and compose recreates the hub, which reads
+  its tokens at start. Before, the hub kept the old token until it
+  restarted. `lock doctor` warns about a token rotated since the last
+  `lock up`. The first `lock up` after upgrading with a chat facade
+  shows the new `hub secret` lines once, asks for a yes, and recreates
+  the hub.
 
 ## v0.1.1 (2026-10-30)
 
