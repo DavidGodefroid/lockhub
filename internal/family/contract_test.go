@@ -2,6 +2,7 @@ package family
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -372,5 +373,29 @@ func TestComposeParses(t *testing.T) {
 	var v map[string]any
 	if err := yaml.Unmarshal([]byte(out), &v); err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// A workspace reached through a link is the workspace lea sees: its
+// real path names the project and the consoles' directories.
+func TestWorkspaceThroughLink(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	real := filepath.Dir(filepath.Dir(w.file))
+	link := filepath.Join(t.TempDir(), "ln")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	via := filepath.Join(link, Dir, FileName)
+	if Canonical(via) != Canonical(w.file) {
+		t.Fatalf("%s != %s", Canonical(via), Canonical(w.file))
+	}
+	f := newFake()
+	u := &Up{File: via, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: f, In: bufio.NewReader(strings.NewReader("y\n")), Out: io.Discard}
+	if err := u.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rw, _ := filepath.EvalSymlinks(real)
+	if !f.ran("compose -p "+Project(rw)+" ") || strings.Contains(f.upCompose, link) {
+		t.Errorf("project or paths not canonical: %v", f.calls)
 	}
 }

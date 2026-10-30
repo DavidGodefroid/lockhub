@@ -127,7 +127,13 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ws, _ := filepath.Abs(Workspace(u.File))
+	// The workspace's canonical path (links resolved), as lea sees it:
+	// the project, the consoles' working directory and the socket names
+	// derive from it.
+	ws, err := filepath.Abs(Workspace(Canonical(u.File)))
+	if err != nil {
+		return err
+	}
 	project := Project(ws)
 	// Each lock's console reads its own profile, from the workspace: a
 	// copy, reviewed below (profile.go).
