@@ -57,7 +57,14 @@ type Hub struct {
 type Lock struct {
 	Type  string `yaml:"type"`
 	Image string `yaml:"image"`
+	// Profile is the name of the profile the console serves, in the
+	// lock's own configuration (<workspace>/.<type>). Default: for
+	// lockfile, whose console needs one, "default"; for the others, their
+	// only profile, or the one typed at the console's terminal.
+	Profile string `yaml:"profile,omitempty"`
 }
+
+var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // Types are the lock types lock up knows, and their image repositories.
 var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
@@ -138,6 +145,9 @@ func (c *Config) validate(needLocks bool) error {
 		}
 		if !slices.Contains(Types, l.Type) {
 			return fmt.Errorf("locks.%s.type: want one of %s", name, strings.Join(Types, ", "))
+		}
+		if l.Profile != "" && !profileName.MatchString(l.Profile) {
+			return fmt.Errorf("locks.%s.profile: a profile name (letters, digits, _ . -)", name)
 		}
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)

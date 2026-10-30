@@ -18,6 +18,8 @@ type AddOptions struct {
 	Image string
 	// HubImage starts a fresh lockfamily.yaml; ignored when one exists.
 	HubImage string
+	// Profile is the lock's profile (optional, see Lock.Profile).
+	Profile string
 }
 
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
@@ -29,6 +31,9 @@ func Add(path string, o AddOptions) error {
 	if errors.Is(err, os.ErrNotExist) {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
+		}
+		if err := ensureDir(path); err != nil {
+			return err
 		}
 		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
@@ -54,6 +59,9 @@ func Add(path string, o AddOptions) error {
 	}
 	kv("type", o.Type, "!!str")
 	kv("image", o.Image, "!!str")
+	if o.Profile != "" {
+		kv("profile", o.Profile, "!!str")
+	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)
 	if err != nil {

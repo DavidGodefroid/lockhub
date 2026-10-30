@@ -127,8 +127,21 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	ws, _ := filepath.Abs(filepath.Dir(u.File))
+	ws, _ := filepath.Abs(Workspace(u.File))
 	project := Project(ws)
+	// Each lock's console reads its own profile in the workspace.
+	seen := map[string]bool{}
+	for _, n := range c.Instances() {
+		t := c.Locks[n].Type
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		d := profileDir(ws, t)
+		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
+			return fmt.Errorf("lock %s: %s is not a directory: make the %s profile first (%s's docs), then lock up", n, d, t, t)
+		}
+	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
 	// Everything lock up writes and runs from lives in host-only
@@ -140,7 +153,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
-	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, User: u.User}
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.
 	composeYAML := []byte(Compose(c, paths))
@@ -186,7 +199,16 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	lockPubs := map[string]string{}
 	for _, n := range c.Instances() {
-		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		var out []byte
+		var err error
+		if Kinds[c.Locks[n].Type].Gate {
+			// lockhttp: the gate's key, in the gate's own volume.
+			if _, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "gatehome-"+n)...); err == nil {
+				out, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "gatekey-"+n)...)
+			}
+		} else {
+			out, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		}
 		if err != nil {
 			return fmt.Errorf("key of %s: %w", n, err)
 		}
@@ -259,6 +281,9 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	paths.Config = fp
 	composeYAML = []byte(Compose(c, paths))
+	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
+		return fmt.Errorf("hub key for the locks: %w", err)
+	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}
@@ -269,7 +294,14 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
 	}
+	if err := writeUpState(ws, NewUpState(c, project, ws, hp)); err != nil {
+		return err
+	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "  lock attach %s\n", n)
+	}
 	return nil
 }
 

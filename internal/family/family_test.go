@@ -60,6 +60,9 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 			return []byte(f.keys["hub"] + "\n"), nil
 		}
 	}
+	if i := strings.Index(line, "--no-deps gatekey-"); i >= 0 {
+		return []byte(f.keys[line[i+len("--no-deps gatekey-"):]] + "\n"), nil
+	}
 	if i := strings.Index(line, "hub-key --instance "); i >= 0 {
 		return []byte(f.keys[line[i+len("hub-key --instance "):]] + "\n"), nil
 	}
@@ -82,8 +85,11 @@ type ws struct {
 
 func newWS(t *testing.T, conf string) ws {
 	dir := t.TempDir()
-	file := filepath.Join(dir, "projects", "lockfamily.yaml")
+	file := filepath.Join(dir, "projects", Dir, FileName)
 	os.MkdirAll(filepath.Dir(file), 0o755)
+	for _, t := range Types {
+		os.Mkdir(filepath.Join(dir, "projects", "."+t), 0o755)
+	}
 	os.WriteFile(file, []byte(conf), 0o644)
 	state, run := filepath.Join(dir, "state"), filepath.Join(dir, "run")
 	return ws{dir, file, func(input string, f *fake) (string, error) {
@@ -197,13 +203,16 @@ func TestComposeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"})
+	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"})
 	for _, want := range []string{
 		"  lockhub:\n    internal: true",
 		`networks: [lockhub, "egress-crm-prod"]`,
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
+		`user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`,
+		"      - hubkey:/run/lockfamily:ro", `source: "/w/.locksql"`,
+		"dev.lockfamily.role: \"socket\"", "dev.lockfamily.instance: \"crm-prod\"",
 		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -213,7 +222,7 @@ func TestComposeIsolation(t *testing.T) {
 	if strings.Contains(out, "docker.sock") || strings.Contains(out, "privileged") {
 		t.Error("compose grants the engine or privileges")
 	}
-	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"}) {
+	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"}) {
 		t.Error("compose output is not deterministic")
 	}
 }

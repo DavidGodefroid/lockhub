@@ -118,6 +118,9 @@ func Import(path string, srcs []string) ([]string, error) {
 		// Chat facades need their own allowlist: lock add slack.
 		fs := slices.DeleteFunc(slices.Clone(h.Facades), isChat)
 		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: fs}}
+		if err := ensureDir(path); err != nil {
+			return nil, err
+		}
 		notes = append(notes, fmt.Sprintf("%s does not exist: hub section from %s", path, first))
 		if len(fs) != len(h.Facades) {
 			notes = append(notes, "chat facades not enabled here: run lock add slack / lock add telegram to give them their allowlist")
