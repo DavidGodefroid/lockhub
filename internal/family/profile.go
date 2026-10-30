@@ -133,6 +133,10 @@ func (r *profileReader) walk(rel string, want os.FileInfo) error {
 		if r.entries++; r.entries > maxEntries {
 			return fmt.Errorf("%s: more than %d entries", r.dir, maxEntries)
 		}
+		// Names reach the human's review: printable ones only.
+		if !plainName(e.Name()) {
+			return fmt.Errorf("%s: a file name with control, invisible or bidirectional characters (%q): lock up copies none", r.dir, e.Name())
+		}
 		crel := filepath.Join(rel, e.Name())
 		cfi, err := r.root.Lstat(crel)
 		if err != nil {
@@ -216,13 +220,32 @@ func ownedNotShared(p string, fi os.FileInfo) error {
 	return nil
 }
 
-// printable is l with control characters shown as \xNN (no escape
-// sequence reaches the human's terminal).
+// hidden are the characters that would change what the human sees:
+// controls, zero-width and bidirectional marks.
+func hidden(c rune) bool {
+	return c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) || (c >= 0x200b && c <= 0x200f) ||
+		(c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c == 0xfeff
+}
+
+func plainName(n string) bool {
+	if !utf8.ValidString(n) {
+		return false
+	}
+	for _, c := range n {
+		if hidden(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// printable is l with hidden characters shown as \x{NN} (no escape
+// sequence, no reordering reaches the human's terminal).
 func printable(l string) string {
 	var b strings.Builder
 	for _, c := range l {
-		if c < 0x20 && c != '\t' || c == 0x7f || (c >= 0x80 && c < 0xa0) {
-			fmt.Fprintf(&b, "\\x%02x", c)
+		if c != '\t' && hidden(c) {
+			fmt.Fprintf(&b, "\\x{%x}", c)
 			continue
 		}
 		b.WriteRune(c)
