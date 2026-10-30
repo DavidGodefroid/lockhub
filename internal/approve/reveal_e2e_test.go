@@ -196,7 +196,7 @@ func (w *world) submit(t *testing.T, risk ticket.Risk, prod bool, ttl time.Durat
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql"}, risk, hash, policyFP, w.clk.now(), ttl)
 	tk.Workspace, tk.Requester = "~/Documents", ticket.Requester{Agent: "dev-1", Session: "s1"}
 	if prod {
-		tk.Flags = ticket.Flags{Production: true, Retype: "crm"}
+		tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	}
 	masked := render.MaskScreen(render.ScreenSource{Header: "crm · write",
 		Body: []render.Line{{{Text: "UPDATE customers SET email = "}, {Text: secret, Value: true, Column: "email", ColumnType: "text"}}}}, render.Masking{})
@@ -402,7 +402,7 @@ func TestRenewProductionRetype(t *testing.T) {
 	id := w.submit(t, ticket.RiskProdWrite, true, time.Hour)
 	w.expire(t, id)
 	out := w.run(t, "r\ny\ncrm\n")
-	if strings.Contains(out, "approved again as") || !strings.Contains(out, `type "crm" to approve`) || !strings.Contains(out, "nothing changed since then") {
+	if strings.Contains(out, "approved again as") || !strings.Contains(out, `type the instance name "crm" to approve`) || !strings.Contains(out, "nothing changed since then") {
 		t.Fatalf("terminal:\n%s", out)
 	}
 	ds, _ := w.st.Decisions(context.Background(), "crm", 0, 10)

@@ -296,8 +296,11 @@ func TestRouting(t *testing.T) {
 	if !it.Answerable || !it.Retype {
 		t.Fatalf("production on mobile: %+v", it)
 	}
-	if err := phone.Answer(it, true, "", "wrong"); status(err) != http.StatusUnprocessableEntity {
-		t.Fatalf("production without the retype: %v", err)
+	// The instance name, though the ticket has no lockkit Retype flag.
+	for _, typed := range []string{"wrong", "r", ""} {
+		if err := phone.Answer(it, true, "", typed); status(err) != http.StatusUnprocessableEntity {
+			t.Fatalf("production with %q typed: %v", typed, err)
+		}
 	}
 	if err := phone.Answer(it, true, "", inst); err != nil {
 		t.Fatal(err)

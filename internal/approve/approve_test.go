@@ -71,7 +71,9 @@ func (e env) push(t *testing.T, risk ticket.Risk, prod bool, body string) string
 	tk.Workspace, tk.Requester = "ws", ticket.Requester{Agent: "dev-1\x1b[31m", Session: "s"}
 	tk.Screen = ticket.Screen{Header: "query on crm", Body: []string{body}, Warnings: []string{"touches 3 rows"}}
 	if prod {
-		tk.Flags = ticket.Flags{Production: true, Retype: "crm"}
+		// lockkit's Retype is the console's "retype values" answer, never
+		// what the human types: lock approve asks for the instance name.
+		tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	}
 	if err := tk.Sign(e.lock); err != nil {
 		t.Fatal(err)
@@ -131,11 +133,12 @@ func TestApproveAndDeny(t *testing.T) {
 func TestProductionRetype(t *testing.T) {
 	e := setup(t)
 	id := e.push(t, ticket.RiskProdWrite, true, "UPDATE customers SET tier = $1")
-	out := e.run(t, "y\ncmr\ny\ncrm\n")
+	out := e.run(t, "y\ncmr\ny\nr\ny\n\ny\ncrm\n")
 	if e.state(t, id) != state.Approved {
 		t.Fatalf("state %s\n%s", e.state(t, id), out)
 	}
-	if !strings.Contains(out, "does not match: not approved") || !strings.Contains(out, "PRODUCTION") {
+	if strings.Count(out, "does not match: not approved") != 3 || !strings.Contains(out, "PRODUCTION") ||
+		!strings.Contains(out, `type the instance name "crm" to approve`) {
 		t.Errorf("output:\n%s", out)
 	}
 }

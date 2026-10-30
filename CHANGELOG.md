@@ -5,6 +5,17 @@ digest).
 
 ## Unreleased
 
+- Every production ticket needs its instance name typed to be approved,
+  on every facade that may answer it: `lock approve`, the deck and the
+  phone (#64). The hub, `lock approve` and the mobile web app used to ask
+  for lockkit's `flags.retype` instead, and only when it was set: lockkit
+  sets it to the console's "retype values" answer (such as `r`), never to
+  the instance name, so most production tickets were approved with a
+  plain `y`. Chat facades still never answer production. Upgrade note: a
+  deck that sends `flags.retype` (lea v0.3.1 or older) can no longer
+  approve production tickets through this hub; use `lock approve` or the
+  phone, or upgrade lea (v0.3.2).
+
 ## v0.2.2 (2026-10-30)
 
 Supported locks: as v0.2.1. `lock add` now pins locksql v0.11.0 or later

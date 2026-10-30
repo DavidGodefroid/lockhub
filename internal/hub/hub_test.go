@@ -206,6 +206,54 @@ func TestRouting(t *testing.T) {
 	}
 }
 
+// Every production approval needs the instance name typed, on every
+// facade that may answer it (hub plan H1, #64): lockkit's Retype flag (the
+// console's "retype values" answer) is not what the human types, and a
+// production ticket without it is no exception. Denying needs nothing;
+// a chat facade never answers production.
+func TestProductionNeedsTheInstanceName(t *testing.T) {
+	for name, flag := range map[string]string{"no retype flag": "", "lockkit retype flag": "r", "flag is the name": "crm-prod"} {
+		t.Run(name, func(t *testing.T) {
+			a := hubtest.NewLock("crm-prod")
+			e := hubtest.New(t, 0, a)
+			prod := func(t *hubtest.Ticket) { t.Production, t.Retype = true, flag }
+			for _, id := range []string{"P", "D", "S", "M"} {
+				if _, _, err := e.Hub.Push(ctx, "crm-prod", a.TicketWith(id, "write", e.Clock.T, time.Hour, prod)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ref := func(id string) store.Ref { return store.Ref{Instance: "crm-prod", ID: id} }
+			for _, typed := range []string{"", "r", "crm", "CRM-PROD", "crm-prod "} {
+				for _, f := range []string{"tty", "deck"} {
+					v := hub.Verdict{Approved: true, ApproverID: "host:david", Facade: f, Retype: typed}
+					if _, err := e.Hub.Decide(ctx, ref("P"), v); !errors.Is(err, hub.ErrRetype) {
+						t.Errorf("%s approved with %q typed: %v", f, typed, err)
+					}
+				}
+			}
+			for _, f := range []string{"slack", "telegram"} {
+				v := hub.Verdict{Approved: true, ApproverID: f + ":U1", Facade: f, Retype: "crm-prod"}
+				if _, err := e.Hub.Decide(ctx, ref("S"), v); !errors.Is(err, hub.ErrNotRouted) {
+					t.Errorf("production on %s: %v", f, err)
+				}
+				v.Approved = false
+				if _, err := e.Hub.Decide(ctx, ref("S"), v); !errors.Is(err, hub.ErrNotRouted) {
+					t.Errorf("production denied on %s: %v", f, err)
+				}
+			}
+			if _, err := e.Hub.Decide(ctx, ref("D"), hub.Verdict{ApproverID: "host:david", Facade: "tty"}); err != nil {
+				t.Errorf("deny: %v", err)
+			}
+			for id, f := range map[string]string{"P": "tty", "M": "deck"} {
+				v := hub.Verdict{Approved: true, ApproverID: "host:david", Facade: f, Retype: "crm-prod"}
+				if _, err := e.Hub.Decide(ctx, ref(id), v); err != nil {
+					t.Errorf("%s with the name typed: %v", f, err)
+				}
+			}
+		})
+	}
+}
+
 func TestIDsArePerInstance(t *testing.T) {
 	a, b := hubtest.NewLock("a"), hubtest.NewLock("b")
 	e := hubtest.New(t, 0, a, b)

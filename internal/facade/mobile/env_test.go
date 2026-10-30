@@ -203,7 +203,7 @@ func (l *lock) submit(t *testing.T, risk ticket.Risk, production bool, sql strin
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql"}, risk, hash, fp, time.Now(), ticket.ClampTTL(risk, 0))
 	tk.Requester = ticket.Requester{Agent: "dev-1 <b>@here</b>", Session: "s"}
 	if production {
-		tk.Flags = ticket.Flags{Production: true, Retype: inst}
+		tk.Flags = ticket.Flags{Production: true} // no lockkit Retype flag: the name is still asked
 	}
 	masked := render.MaskScreen(render.ScreenSource{Header: "crm / shop · write",
 		Body: []render.Line{{{Text: "UPDATE customers SET email = "}, {Text: pii, Value: true, Column: "email", ColumnType: "text"}}}}, render.Masking{})
