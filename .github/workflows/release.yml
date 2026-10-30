@@ -25,6 +25,37 @@ jobs:
       - name: go test
         run: go test ./...
 
+  # The lock CLI as static archives for the Lock Family install.sh
+  # (lockfamily.dev/install.sh): lock_X.Y.Z_<os>_<arch>.tar.gz and
+  # checksums.txt, signed with cosign (keyless, bundle
+  # checksums.txt.sigstore.json) by this workflow run for this tag, the same
+  # identity as the image. The GitHub release is created here.
+  cli:
+    name: cli archives
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # cosign keyless signing (GitHub OIDC)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - name: build, sign, release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          sh scripts/release-cli.sh "$v" dist
+          cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md. Install the lock CLI with https://lockfamily.dev/install.sh (cosign-verified)." \
+            dist/lock_"$v"_*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json
+
   # ghcr.io/davidgodefroid/lockhub:X.Y.Z, for amd64 and arm64, each built on
   # a native runner, then joined in one manifest and signed with cosign
   # (keyless, by digest). `lock up` pins and verifies that digest.
