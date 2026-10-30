@@ -1,0 +1,92 @@
+name: e2e-lock-up
+
+# The hub plan's exit demos, end to end, with real images and Docker:
+# phase 1 (locksql's TestHubPhase1 against this lockhub), phase 2 (lock up
+# stack, a ticket approved through the facade socket, I2, I11) and
+# phase 5 (install.sh, lock add, lock up, lock import).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "0"
+  GOMAXPROCS: "2"
+
+jobs:
+  phase1:
+    name: e2e phase 1 (locksql TestHubPhase1)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: lockhub
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DavidGodefroid/locksql
+          path: locksql
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - name: unprivileged user namespaces (the test hides /etc/locksql with unshare)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - run: docker pull --quiet postgres:17
+      - name: TestHubPhase1
+        working-directory: locksql
+        env:
+          LOCKHUB_E2E: "1"
+          LOCKHUB_SRC: ${{ github.workspace }}/lockhub
+        run: go test -tags integration -count=1 -timeout 20m -run TestHubPhase1 -v ./test/integration
+
+  phase2:
+    name: e2e phase 2 (lock up, facade approval, I2, I11)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - run: go build -o "$RUNNER_TEMP/bin/lock" ./cmd/lock
+      - name: phase 2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lock"
+
+  phase5:
+    name: e2e phase 5 (install.sh, lock add, lock up, lock import)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DavidGodefroid/lockfamily
+          path: lockfamily
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - run: sh scripts/release-cli.sh 0.0.0-e2e "$RUNNER_TEMP/dist"
+      - name: phase 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          sh ci/e2e/phase5.sh lockfamily/install.sh "$RUNNER_TEMP/dist" 0.0.0-e2e
