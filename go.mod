@@ -3,7 +3,7 @@ module github.com/DavidGodefroid/lockhub
 go 1.26.0
 
 require (
-	github.com/DavidGodefroid/lockkit v0.3.1
+	github.com/DavidGodefroid/lockkit v0.3.2-0.20261030152319-c623afdd4dca // TODO: lockkit v0.4.0 (pinned to lockkit#78, hub/reveal-renew)
 	github.com/coder/websocket v1.8.14
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0

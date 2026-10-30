@@ -202,3 +202,43 @@ func TestFacadeRefusesUnknownPeer(t *testing.T) {
 		t.Errorf("unknown peer: %d", resp.StatusCode)
 	}
 }
+
+// A hub request comes in the instance's decisions poll, and only the
+// signed instance it is for can answer it, once.
+func TestRequestsOverTheLockAPI(t *testing.T) {
+	e, _, ca, cb := setup(t)
+	e.Hub.Push(context.Background(), "a", ca.lock.Ticket("T1", "write", e.Clock.T, time.Hour))
+	done := make(chan error, 1)
+	go func() {
+		rk, _ := json.Marshal(hubtest.RevealKey{Ticket: "T1", Facade: "tty"})
+		_, err := e.Hub.Reveal(context.Background(), store.Ref{Instance: "a", ID: "T1"},
+			hub.Asker{Facade: "tty", ApproverID: "host:uid:1"}, rk)
+		done <- err
+	}()
+	code, body := ca.do("GET", "/v1/decisions?since=0&wait=10", nil, nil)
+	var res api.DecisionsResult
+	if err := json.Unmarshal(body, &res); code != 200 || err != nil || len(res.Requests) != 1 {
+		t.Fatalf("poll: %d %s", code, body)
+	}
+	var q hubtest.Request
+	json.Unmarshal(res.Requests[0], &q)
+	if _, body := cb.do("GET", "/v1/decisions?since=0", nil, nil); strings.Contains(string(body), q.ID) {
+		t.Errorf("b sees a's request: %s", body)
+	}
+	path := "/v1/requests/" + q.ID + "/answer"
+	if code, _ := cb.do("POST", path, []byte(`{"reveal":{}}`), nil); code != 404 {
+		t.Errorf("b answered a's request: %d", code)
+	}
+	if code, _ := ca.do("POST", path, []byte(`{"reveal":{}}`), func(r *http.Request) { r.Header.Set("Lock-Sig", "x") }); code != 401 {
+		t.Errorf("unsigned answer: %d", code)
+	}
+	if code, body := ca.do("POST", path, []byte(`{"reveal":{"box":"c"}}`), nil); code != 204 {
+		t.Errorf("answer: %d %s", code, body)
+	}
+	if code, _ := ca.do("POST", path, []byte(`{"reveal":{}}`), nil); code != 404 {
+		t.Errorf("second answer: %d", code)
+	}
+	if err := <-done; err != nil {
+		t.Error(err)
+	}
+}

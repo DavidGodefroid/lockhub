@@ -40,6 +40,15 @@ CREATE TABLE IF NOT EXISTS decisions (
 	FOREIGN KEY (instance, ticket) REFERENCES tickets(instance, id)
 );
 CREATE INDEX IF NOT EXISTS decisions_instance_seq ON decisions(instance, seq);
+-- renewals links an expired ticket to the ticket that asks again for it
+-- (lockkit Ticket.Renews): one renewal per ticket.
+CREATE TABLE IF NOT EXISTS renewals (
+	instance TEXT NOT NULL,
+	renewed  TEXT NOT NULL,
+	renewal  TEXT NOT NULL,
+	at       INTEGER NOT NULL,
+	PRIMARY KEY (instance, renewed)
+);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -220,6 +229,35 @@ func (t *Tx) SetState(r Ref, from, to state.State, now time.Time) error {
 	return nil
 }
 
+// HasDecision reports whether a ticket was decided.
+func (t *Tx) HasDecision(r Ref) (bool, error) {
+	var n int
+	err := t.tx.QueryRow(`SELECT count(*) FROM decisions WHERE instance = ? AND ticket = ?`, r.Instance, r.ID).Scan(&n)
+	return n > 0, err
+}
+
+// LinkRenewal records that ticket renewal of instance asks again for
+// ticket renewed. A ticket keeps its first renewal: linked is false when
+// it had one already.
+func (t *Tx) LinkRenewal(instance, renewed, renewal string, at time.Time) (linked bool, err error) {
+	res, err := t.tx.Exec(`INSERT INTO renewals(instance, renewed, renewal, at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`, instance, renewed, renewal, at.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// RenewalOf is the ticket that renews r, "" when none.
+func (t *Tx) RenewalOf(r Ref) (string, error) {
+	var id string
+	err := t.tx.QueryRow(`SELECT renewal FROM renewals WHERE instance = ? AND renewed = ?`, r.Instance, r.ID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
 // PutDecision stores the signed decision of a ticket and returns its seq.
 func (t *Tx) PutDecision(d Decision) (int64, error) {
 	res, err := t.tx.Exec(`INSERT INTO decisions(ticket, instance, raw, at) VALUES (?, ?, ?, ?)`, d.Ticket, d.Instance, d.Raw, d.At.Unix())
@@ -285,6 +323,29 @@ func (s *Store) AllDecisions(ctx context.Context, since int64, limit int) ([]Dec
 // Tickets lists the tickets in a state, oldest first.
 func (s *Store) Tickets(ctx context.Context, st state.State) ([]Ticket, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, instance, risk, plan_hash, state, raw, created, expires, updated FROM tickets WHERE state = ? ORDER BY created, id`, string(st))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Ticket
+	for rows.Next() {
+		tk, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, tk)
+	}
+	return out, rows.Err()
+}
+
+// Expired lists the tickets that expired at or after since and that no
+// ticket renews yet, most recent first, at most limit: what a facade
+// offers to approve again.
+func (s *Store) Expired(ctx context.Context, since time.Time, limit int) ([]Ticket, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, instance, risk, plan_hash, state, raw, created, expires, updated FROM tickets t
+		WHERE state = ? AND updated >= ?
+		AND NOT EXISTS (SELECT 1 FROM renewals r WHERE r.instance = t.instance AND r.renewed = t.id)
+		ORDER BY updated DESC, id LIMIT ?`, string(state.Expired), since.Unix(), limit)
 	if err != nil {
 		return nil, err
 	}

@@ -13,6 +13,15 @@ decision bound to the exact plan that was approved.
 The hub never runs a request, never sees its results, and never sees values in
 clear.
 
+In `lock approve`, `o` (or Ctrl-O, then Enter) shows a ticket's clear values:
+the terminal sends an ephemeral key signed by its facade key (which every lock
+pins, written by `lock up`), the lock seals the clear screen to it and signs
+the answer, and only the terminal opens it. The hub relays ciphertext, and
+never offers this on Slack, Telegram or mobile. An expired ticket is listed for
+re-approval (`r`): the lock asks again, and when nothing changed in the plan
+since then (and it is not for production) the hub approves it in that one step;
+otherwise the new ticket shows what changed and waits for `y`.
+
 ## Status
 
 Early development. This repository holds:

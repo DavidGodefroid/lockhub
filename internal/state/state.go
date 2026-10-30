@@ -1,12 +1,15 @@
 // Package state is the life cycle of a ticket in the hub.
 //
 //	pending ──approve──► approved ──consume──► consumed
-//	   ├────deny─────► denied
+//	   ├────deny─────► denied     └──expire──► expired
 //	   ├────withdraw─► withdrawn
 //	   └────expire───► expired
 //
 // Every state but pending and approved is final. A ticket gets at most one
-// decision.
+// decision. An approved ticket expires when the lock asks again for it
+// (its approval aged past its risk class's TTL before the run, decision
+// H1, and the lock pushed a renewal); an expired ticket is asked again by
+// a new ticket, never reopened.
 package state
 
 import "fmt"
@@ -36,7 +39,7 @@ const (
 
 var next = map[State]map[Event]State{
 	Pending:  {Approve: Approved, Deny: Denied, Withdraw: Withdrawn, Expire: Expired},
-	Approved: {Consume: Consumed},
+	Approved: {Consume: Consumed, Expire: Expired},
 }
 
 // ErrTransition is a transition the life cycle does not allow.

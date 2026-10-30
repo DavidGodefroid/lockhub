@@ -83,6 +83,14 @@ func (r Rules) Allowed(inst, f, risk string) error {
 // (end-to-end encrypted to it).
 func CanReveal(f string) bool { return slices.Contains(local, f) }
 
+// OnDemand reports whether facade f may ask a lock, through the hub, for
+// a ticket's clear values (Ctrl-O) or for the renewal of an expired
+// ticket: the host's own facades only, whose keys the locks pin (lockkit
+// ticket.CanReveal). A device gets its clear screen sealed at submit time
+// and asks nothing; a chat facade never shows clear values and never
+// renews.
+func OnDemand(f string) bool { return f == TTY || f == Deck }
+
 // Facades lists the facades that may decide risk for inst, in a fixed
 // order (for notifications).
 func (r Rules) Facades(inst, risk string) []string {

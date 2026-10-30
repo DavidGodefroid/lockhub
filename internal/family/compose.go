@@ -14,6 +14,9 @@ type Paths struct {
 	FacadeDir string
 	// HubPub is the hub's public key file, mounted read-only in locks.
 	HubPub string
+	// Facades is the facade keys file (FacadesFile), mounted read-only
+	// in locks at LockFacadesPath; empty: none.
+	Facades string
 	// User is the uid:gid the hub runs as, so that the host user owns
 	// the facade socket and the data ("0:0" under rootless engines, where
 	// root is the host user).
@@ -60,7 +63,11 @@ func Compose(c *Config, p Paths) string {
 		l := c.Locks[name]
 		w("  lock-%s:", name)
 		w("    image: %s", q(l.Image))
-		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-plain-http\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s]", q(name))
+		facades := ""
+		if p.Facades != "" {
+			facades = fmt.Sprintf(", \"--facade-keys-file\", %s", q(LockFacadesPath))
+		}
+		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-plain-http\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s%s]", q(name), facades)
 		hardening(w)
 		w("    volumes:")
 		w("      - %s:/run/%s", q(name+"-run"), l.Type)
@@ -69,6 +76,12 @@ func Compose(c *Config, p Paths) string {
 		w("        source: %s", q(p.HubPub))
 		w("        target: /run/lockfamily/hub.pub")
 		w("        read_only: true")
+		if p.Facades != "" {
+			w("      - type: bind")
+			w("        source: %s", q(p.Facades))
+			w("        target: %s", q(LockFacadesPath))
+			w("        read_only: true")
+		}
 		w("    networks: [lockhub, %s]", q("egress-"+name))
 		w("    depends_on: [lockhub]")
 		w("    restart: unless-stopped")

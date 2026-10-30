@@ -35,6 +35,18 @@ type Info struct {
 	// Production tickets with a Retype need the human to type it.
 	Production bool
 	Retype     string
+	// Renews, when set, makes this ticket the renewal of an expired one.
+	Renews *Renewal
+}
+
+// Renewal is what the hub needs of a ticket's Renews (lockkit
+// ticket.Renewal).
+type Renewal struct {
+	// Of is the expired ticket, of the same instance.
+	Of string
+	// Unchanged: the lock checked the plan-hash inputs and none moved
+	// (lockkit Renewal.Unchanged).
+	Unchanged bool
 }
 
 // Verdict is a human's answer, as a facade reports it.
@@ -63,6 +75,12 @@ type Codec interface {
 	// VerifyRequest checks a lock's request signature (Lock-Sig) over
 	// the request's method, path and query, instance, time, nonce and body.
 	VerifyRequest(lock ed25519.PublicKey, method, pathQuery, instance string, at time.Time, nonce string, body []byte, sig string) bool
+	// NewID makes a hub request id.
+	NewID(now time.Time) string
+	// SignRequest builds and signs a hub request to a lock. A reveal
+	// carries the facade's signed key verbatim; one for another ticket,
+	// lock key or facade than q's is ErrForeignKey.
+	SignRequest(hub ed25519.PrivateKey, q Request) ([]byte, error)
 }
 
 // Errors the API maps to statuses.
@@ -92,7 +110,10 @@ type Config struct {
 	// MaxSkew is how far in the future a ticket's creation time may be
 	// (default 1 min).
 	MaxSkew time.Duration
-	Now     func() time.Time
+	// RequestWait is how long a facade waits for a lock's answer to a
+	// hub request (default RequestWait).
+	RequestWait time.Duration
+	Now         func() time.Time
 }
 
 // Hub is safe for concurrent use.
@@ -100,8 +121,9 @@ type Hub struct {
 	c Config
 
 	mu       sync.Mutex
-	waiters  map[string]chan struct{} // instance → closed on a new decision
-	queueVer uint64                   // bumped on every change of the pending queue
+	waiters  map[string]chan struct{}       // instance → closed on a new decision or request
+	queueVer uint64                         // bumped on every change of the pending queue
+	reqs     map[string]map[string]*openReq // instance → id → open hub request
 }
 
 // New returns a hub.
@@ -115,7 +137,10 @@ func New(c Config) *Hub {
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	return &Hub{c: c, waiters: map[string]chan struct{}{}}
+	if c.RequestWait == 0 {
+		c.RequestWait = RequestWait
+	}
+	return &Hub{c: c, waiters: map[string]chan struct{}{}, reqs: map[string]map[string]*openReq{}}
 }
 
 // LockKey is the key of an instance.
@@ -192,13 +217,54 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 		if err != nil || !created {
 			return err
 		}
-		_, err = h.c.Audit.Append(audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)})
-		return err
+		rec := audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)}
+		if info.Renews != nil {
+			rec.Reason = "renews " + info.Renews.Of
+		}
+		if _, err := h.c.Audit.Append(rec); err != nil {
+			return err
+		}
+		return h.linkRenewal(tx, instance, info, now)
 	})
 	if err == nil && created {
 		h.notify(queueKey)
 	}
 	return info, created, err
+}
+
+// linkRenewal links a new ticket to the expired ticket it renews, and
+// ends that one expired if it was still pending or approved (the lock
+// asked again: the old approval can no longer be used). A renewal of a
+// ticket the hub does not know, or of one renewed already, is kept as an
+// ordinary ticket.
+func (h *Hub) linkRenewal(tx *store.Tx, instance string, info Info, now time.Time) error {
+	if info.Renews == nil || info.Renews.Of == info.ID || !validID(info.Renews.Of) {
+		return nil
+	}
+	ref := store.Ref{Instance: instance, ID: info.Renews.Of}
+	old, err := tx.Ticket(ref)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	linked, err := tx.LinkRenewal(instance, ref.ID, info.ID, now)
+	if err != nil || !linked {
+		return err
+	}
+	if old.State != state.Pending && old.State != state.Approved {
+		return nil
+	}
+	to, err := state.Next(old.State, state.Expire)
+	if err != nil {
+		return err
+	}
+	if err := tx.SetState(ref, old.State, to, now); err != nil {
+		return err
+	}
+	_, err = h.c.Audit.Append(audit.Record{Event: string(state.Expire), Ticket: ref.ID, Instance: instance, Risk: old.Risk,
+		State: string(to), Reason: "renewed by " + info.ID})
+	return err
 }
 
 // change applies ev to a ticket and audits it.
@@ -366,27 +432,41 @@ func (h *Hub) waiter(instance string) <-chan struct{} {
 // Decisions returns instance's decisions after seq since. With wait > 0
 // and none yet, it waits up to wait for one (long poll).
 func (h *Hub) Decisions(ctx context.Context, instance string, since int64, wait time.Duration) ([]store.Decision, error) {
+	ds, _, err := h.Poll(ctx, instance, since, wait)
+	return ds, err
+}
+
+// Poll is Decisions with the hub requests open for instance (signed,
+// verbatim). A request the lock has not been given yet ends the wait at
+// once; one already given comes again with every answer until the lock
+// answers it or it expires.
+func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.Duration) ([]store.Decision, [][]byte, error) {
 	const limit = 100
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	for {
 		ch := h.waiter(instance) // before the query: no lost wake-up
 		ds, err := h.c.Store.Decisions(ctx, instance, since, limit)
-		if err != nil || len(ds) > 0 || wait <= 0 {
-			return ds, err
+		if err != nil {
+			return nil, nil, err
+		}
+		reqs, fresh := h.openRequests(instance)
+		if len(ds) > 0 || fresh || wait <= 0 {
+			return ds, reqs, nil
 		}
 		select {
 		case <-ch:
 		case <-deadline.C:
-			return nil, nil
+			reqs, _ := h.openRequests(instance)
+			return nil, reqs, nil
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 	}
 }
 
 // Sweep expires pending tickets past their TTL and drops old request
-// nonces. Run it periodically.
+// nonces and hub requests. Run it periodically.
 func (h *Hub) Sweep(ctx context.Context) error {
 	now := h.c.Now()
 	ids, err := h.c.Store.DueForExpiry(ctx, now)
@@ -400,6 +480,7 @@ func (h *Hub) Sweep(ctx context.Context) error {
 			return err
 		}
 	}
+	h.purgeRequests(now)
 	return h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow))
 }
 

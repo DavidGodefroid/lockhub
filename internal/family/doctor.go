@@ -194,7 +194,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	noKeys := func(s []string) []string {
 		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") })
 	}
-	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil))); len(ch) > 0 {
+	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {
 		warn("lockfamily.yaml changed since the last lock up (run lock up to review it): %s", strings.Join(ch, "; "))
 	}
 }

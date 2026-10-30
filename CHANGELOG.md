@@ -5,6 +5,40 @@ digest).
 
 ## Unreleased
 
+Needs locks built on lockkit v0.4.0 (pinned for now to the pre-release
+commit of lockkit#78) for reveals and renewals; older locks ignore the new
+`requests` member of the decisions poll.
+
+- Clear values on demand (Ctrl-O) and re-approval of expired tickets
+  (decision H1).
+  - Hub requests: the hub signs a `reveal` or `renew` request
+    (lockkit `ticket.HubRequest`), hands it to the lock in its
+    `GET /v1/decisions` long poll (new `requests` member, waking the poll),
+    and relays the lock's answer (`POST /v1/requests/{id}/answer`, signed
+    like every lock call, accepted once and only from that instance) to the
+    waiting facade. In memory only, 8 open per instance, 30 s wait (504),
+    bounded bodies; a lock's error is a fixed code, never its text.
+  - Facade socket: `POST /v1/tickets/{instance}/{id}/reveal` (tty and deck
+    only, routed to the ticket, the key signed for the caller's facade) and
+    `…/renew`; `GET /v1/queue` gains an `expired` list (expired in the last
+    24 h, not renewed yet). The hub relays the sealed answer without storing
+    or logging it; the audit log records `reveal` and `renew` events (who,
+    which facade, outcome), never content.
+  - Renewals: a ticket that renews another ends it expired (pending, or
+    approved and not run: new transition approved → expired) and links
+    them. A renewal asked from the terminal or the deck, unchanged and not
+    for production, is approved at once ("re-approved: nothing changed since
+    approval"); otherwise it waits with its changes, production still asks
+    for the typed name.
+  - `lock up` creates per-user tty and deck facade keys
+    (`$XDG_STATE_HOME/lockfamily/facades/`, 0600), reviews them
+    (`facade tty key …`), mounts their public halves read-only in every lock
+    at `/run/lockfamily/facades.json` with `--facade-keys-file`, and keeps a
+    host-only copy of the pinned lock keys there for facades to verify a
+    lock's answers.
+  - `lock approve`: `o` or Ctrl-O reveals, clearly marked and escaped; `r`
+    on an expired ticket asks again; a renewal shows what changed.
+
 ## v0.1.1 (2026-10-30)
 
 Supported locks: images built on lockkit v0.3.1 (tested), such as the

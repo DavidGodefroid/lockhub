@@ -14,6 +14,7 @@ func TestNext(t *testing.T) {
 		{"pending", "withdraw"}: Withdrawn,
 		{"pending", "expire"}:   Expired,
 		{"approved", "consume"}: Consumed,
+		{"approved", "expire"}:  Expired,
 	}
 	for _, s := range states {
 		for _, e := range events {

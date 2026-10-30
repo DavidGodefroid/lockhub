@@ -53,6 +53,9 @@ type Up struct {
 	State string
 	// Runtime is $XDG_RUNTIME_DIR (the facade socket's parent).
 	Runtime string
+	// Facades is the host-only directory of the host facades' keys
+	// (FacadeKeysDir); empty: "facades" next to State.
+	Facades string
 	// User is the uid:gid the hub runs as (see Paths.User).
 	User   string
 	Run    Runner
@@ -75,9 +78,16 @@ type Applied struct {
 
 // Summary is the reviewable form of a configuration and its keys: every
 // line that can change what the hub or a lock accepts.
-func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
+// facadePubs are the keys of the host facades the locks pin, by facade
+// (nil: none listed).
+func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs map[string]string) []string {
 	var s []string
 	s = append(s, "hub image "+c.Hub.Image, "hub key "+hubPub, "hub facades "+strings.Join(c.Hub.Facades, ","))
+	for _, f := range HostFacades {
+		if k, ok := facadePubs[f]; ok {
+			s = append(s, fmt.Sprintf("facade %s key %s", f, k))
+		}
+	}
 	if sl := c.Hub.Slack; sl != nil {
 		s = append(s, fmt.Sprintf("hub slack team %s channel %s users %s", sl.Team, sl.Channel, strings.Join(sl.Users, ",")))
 	}
@@ -133,14 +143,19 @@ func (u *Up) Do(ctx context.Context) error {
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
 	// Everything lock up writes and runs from lives in host-only
 	// directories it owns: never in the workspace, which agents can write.
-	for _, d := range []string{u.State, hubData, facadeDir} {
+	facadeKeys := u.Facades
+	if facadeKeys == "" {
+		facadeKeys = filepath.Join(filepath.Dir(u.State), "facades")
+	}
+	for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
 		if err := privateDir(d); err != nil {
 			return err
 		}
 	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
-	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
+	facadesPath := filepath.Join(u.State, FacadesFile)
+	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, Facades: facadesPath, User: u.User}
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.
 	composeYAML := []byte(Compose(c, paths))
@@ -184,6 +199,20 @@ func (u *Up) Do(ctx context.Context) error {
 	if !validPub(hp) {
 		return fmt.Errorf("hub key %s: not a base64 Ed25519 public key", hubPubPath)
 	}
+	// The host facades' keys (created once, host-only): the locks pin
+	// their public halves, reviewed below like every other key. Until
+	// the first apply, the locks' file pins none.
+	facadePubs, err := EnsureFacadeKeys(facadeKeys)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(facadesPath); errors.Is(err, os.ErrNotExist) {
+		if err := writeFacadeSet(facadesPath, nil); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
 	lockPubs := map[string]string{}
 	for _, n := range c.Instances() {
 		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
@@ -199,7 +228,7 @@ func (u *Up) Do(ctx context.Context) error {
 
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
-	sum := Summary(c, hp, lockPubs)
+	sum := Summary(c, hp, lockPubs, facadePubs)
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")
 	var prev Applied
@@ -255,6 +284,14 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	cb, _ := json.MarshalIndent(chatconf.Settings{Slack: c.Hub.Slack, Telegram: c.Hub.Telegram}, "", "  ")
 	if err := os.WriteFile(filepath.Join(hubData, chatconf.File), append(cb, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := writeFacadeSet(facadesPath, facadePubs); err != nil {
+		return err
+	}
+	// The lock keys, for host facades to check what a lock sealed to
+	// them (a revealed clear screen).
+	if err := os.WriteFile(filepath.Join(facadeKeys, LockKeysFile), append(lb, '\n'), 0o600); err != nil {
 		return err
 	}
 	paths.Config = fp
