@@ -4,6 +4,8 @@ go 1.26.0
 
 require (
 	github.com/DavidGodefroid/lockkit v0.4.0
+	github.com/chromedp/cdproto v0.157.8
+	github.com/chromedp/chromedp v0.20.1
 	github.com/coder/websocket v1.8.14
 	github.com/go-webauthn/webauthn v0.18.2
 	golang.org/x/sys v0.49.0
@@ -16,6 +18,7 @@ require (
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
