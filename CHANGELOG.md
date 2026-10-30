@@ -5,6 +5,10 @@ digest).
 
 ## Unreleased
 
+- The generated lock command passes `--hub-plain-http`: lockkit refuses
+  an http:// hub without it (DavidGodefroid/lockkit#72), and the hub is
+  reached by its service name on the internal `lockhub` network.
+
 - Telegram facade (#8): same rules as Slack, over long-polled
   `getUpdates` (outbound only). Answers count only from the (chat,
   sender) pairs of `hub.telegram.chats`; agent text is HTML-escaped and
