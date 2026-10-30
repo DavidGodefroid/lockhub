@@ -24,6 +24,12 @@ type Paths struct {
 	// the facade socket and the data ("0:0" under rootless engines, where
 	// root is the host user).
 	User string
+	// Devices is the pinned devices file (host state dir), mounted
+	// read-only in every lock; "" when no device is paired. DevicesID
+	// names its content: as a label of every lock, a change of the
+	// paired devices recreates the locks, which read the file at start.
+	Devices   string
+	DevicesID string
 	// Config is the fingerprint of the applied configuration (keys,
 	// routing). As a label of the hub service, a change of it makes
 	// compose recreate the hub, which reads its config at start.
@@ -106,7 +112,14 @@ func Compose(c *Config, p Paths) string {
 	w("  lockhub:")
 	w("    image: %s", q(c.Hub.Image))
 	w("    user: %s", q(p.User))
-	w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\"]")
+	if m := c.Hub.Mobile; m != nil {
+		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\", \"--mobile-listen\", \":8444\", \"--mobile-origin\", %s]", q(m.Origin))
+		// Published on the host's loopback only: the human's reverse
+		// proxy or tunnel forwards the origin to it.
+		w("    ports: [%s]", q(fmt.Sprintf("127.0.0.1:%d:8444", m.Port)))
+	} else {
+		w("    command: [\"serve\", \"--listen\", \":8443\", \"--data\", \"/var/lib/lockhub\", \"--facade-socket\", \"/run/lockhub-facade/facade.sock\"]")
+	}
 	hardening(w)
 	w("    volumes:")
 	w("      - type: bind")
@@ -117,11 +130,16 @@ func Compose(c *Config, p Paths) string {
 	w("        target: /run/lockhub-facade")
 	// The hub has no route out, unless a chat facade must reach its
 	// service: then through its own network, never a lock's.
+	// Its own networks: a chat facade's route out, the mobile listener's
+	// published port (an internal network publishes none).
+	nets := []string{"lockhub"}
 	if c.ChatEnabled() {
-		w("    networks: [lockhub, %s]", q("egress-hub"))
-	} else {
-		w("    networks: [lockhub]")
+		nets = append(nets, q("egress-hub"))
 	}
+	if c.Hub.Mobile != nil {
+		nets = append(nets, q("mobile-hub"))
+	}
+	w("    networks: [%s]", strings.Join(nets, ", "))
 	if p.Config != "" {
 		w("    labels:")
 		w("      lockfamily.config: %s", q(p.Config))
@@ -163,6 +181,7 @@ func Compose(c *Config, p Paths) string {
 		}
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)
+			cmd = append(cmd, deviceArgs(c, l, p)...)
 		}
 		if !k.Gate {
 			// The locks' profile tools name a database or broker on the
@@ -179,9 +198,15 @@ func Compose(c *Config, p Paths) string {
 		// logs: none, as the locks' own launchers.
 		w("    logging:")
 		w("      driver: none")
-		if fp := p.Profiles[l.Type]; fp != "" {
+		fp, dev := p.Profiles[l.Type], p.DevicesID != "" && l.Devices && !k.Gate
+		if fp != "" || dev {
 			w("    labels:")
-			w("      lockfamily.profile: %s", q(fp))
+			if fp != "" {
+				w("      lockfamily.profile: %s", q(fp))
+			}
+			if dev {
+				w("      lockfamily.devices: %s", q(p.DevicesID))
+			}
 		}
 		limits(w, k.Mem, k.Pids)
 		w("    volumes:")
@@ -194,6 +219,12 @@ func Compose(c *Config, p Paths) string {
 			w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
 		} else {
 			w("      - %s", q("profile-"+l.Type+":"+home+"/.config/"+l.Type+":ro"))
+		}
+		if p.Devices != "" && l.Devices && !k.Gate {
+			w("      - type: bind")
+			w("        source: %s", q(p.Devices))
+			w("        target: /run/lockfamily-devices/devices.json")
+			w("        read_only: true")
 		}
 		if k.Gate {
 			// The gate asks the hub, from lea's proxy: the console only
@@ -254,6 +285,9 @@ func Compose(c *Config, p Paths) string {
 	if c.ChatEnabled() {
 		w("  %s: {}", q("egress-hub"))
 	}
+	if c.Hub.Mobile != nil {
+		w("  %s: {}", q("mobile-hub"))
+	}
 	for _, name := range c.Instances() {
 		w("  %s: {}", q("egress-"+name))
 	}
@@ -273,6 +307,25 @@ func Compose(c *Config, p Paths) string {
 		}
 	}
 	return b.String()
+}
+
+// deviceArgs are a lock's flags for the paired devices: pinned, and as
+// hub.mobile asks, sealed to and required; only for a lock that takes
+// them (locks.<name>.devices).
+func deviceArgs(c *Config, l Lock, p Paths) []string {
+	if p.Devices == "" || !l.Devices {
+		return nil
+	}
+	out := []string{"--devices-file", "/run/lockfamily-devices/devices.json"}
+	if m := c.Hub.Mobile; m != nil {
+		if m.SealClear {
+			out = append(out, "--seal-clear")
+		}
+		if len(m.RequireDevice) > 0 {
+			out = append(out, "--require-device", strings.Join(m.RequireDevice, ","))
+		}
+	}
+	return out
 }
 
 // types are the lock types c runs, sorted.

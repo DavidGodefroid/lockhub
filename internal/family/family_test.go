@@ -40,6 +40,9 @@ type fake struct {
 	calls     []string
 	keys      map[string]string
 	failing   string
+	// missing collects the bind sources of the device snapshots that did
+	// not exist when a compose file was run (docker refuses those).
+	missing []string
 }
 
 func pubKey() string {
@@ -54,6 +57,13 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		f.stdins = map[string][]byte{}
 	}
 	f.stdins[line] = stdin
+	for _, l := range strings.Split(string(stdin), "\n") {
+		if src, ok := strings.CutPrefix(strings.TrimSpace(l), "source: "); ok && strings.Contains(src, "devices-") {
+			if _, err := os.Stat(strings.Trim(src, `"`)); err != nil {
+				f.missing = append(f.missing, src)
+			}
+		}
+	}
 	if strings.Contains(line, " up -d") {
 		f.upCompose = string(stdin)
 	}

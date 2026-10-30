@@ -25,7 +25,10 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
+	"github.com/DavidGodefroid/lockkit/ticket"
+
 	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
+	"github.com/DavidGodefroid/lockhub/internal/facade/mobile"
 	"github.com/DavidGodefroid/lockhub/internal/facade/slack"
 	"github.com/DavidGodefroid/lockhub/internal/facade/telegram"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
@@ -42,9 +45,11 @@ var version = "dev"
 const usage = `lockhub: the Lock Family approval hub
 
 Usage:
-  lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH]
-                                               serve the lock API (default :8443, /var/lib/lockhub)
-                                               and the facade API on a unix socket (lock approve, lea deck)
+  lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH] [--mobile-listen ADDR --mobile-origin URL]
+                                               serve the lock API (default :8443, /var/lib/lockhub),
+                                               the facade API on a unix socket (lock approve, lea deck)
+                                               and the mobile web app on its own listener, reached through
+                                               the human's TLS reverse proxy or tunnel at URL
   lockhub keygen [--data DIR]                  create the hub's signing key, print its public half
   lockhub version                              print the version
   lockhub help                    show this help
@@ -142,7 +147,13 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	data := fs.String("data", "/var/lib/lockhub", "the hub's data directory")
 	facadeSock := fs.String("facade-socket", "", "unix socket for local facades; only the host's human may reach it (empty: none)")
 	facadeMode := fs.String("facade-socket-mode", "0600", "file mode of the facade socket")
+	mobileListen := fs.String("mobile-listen", "", "address of the mobile facade's listener (with --mobile-origin; empty: none)")
+	mobileOrigin := fs.String("mobile-origin", "", "the https origin phones reach the mobile facade at, through a reverse proxy or tunnel")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if (*mobileListen == "") != (*mobileOrigin == "") {
+		fmt.Fprintln(stderr, "lockhub: --mobile-listen and --mobile-origin go together")
 		return 2
 	}
 	h, closeHub, err := openHub(*data)
@@ -176,8 +187,30 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		}()
 	}
 	go func() { errc <- srv.ListenAndServe() }()
+	var extra []func(*http.ServeMux)
+	if *mobileListen != "" {
+		if r := h.Routes(); len(r.Enabled) > 0 && !slices.Contains(r.Enabled, route.Mobile) {
+			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lock up)")
+			return 1
+		}
+		m, err := mobile.New(mobile.Config{Hub: h, Origin: *mobileOrigin, HubKeyID: ticket.KeyID(h.PublicKey()), Log: stderr})
+		if err != nil {
+			fmt.Fprintln(stderr, "lockhub:", err)
+			return 1
+		}
+		// WriteTimeout above the queue's long poll (mobile.MaxWait).
+		msrv := &http.Server{Addr: *mobileListen, Handler: m.Handler(), ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: mobile.MaxWait + 30*time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
+		go func() { errc <- msrv.ListenAndServe() }()
+		defer msrv.Close()
+		extra = append(extra, m.FacadeRoutes)
+		fmt.Fprintf(stderr, "lockhub %s: mobile facade on %s for %s\n", version, *mobileListen, *mobileOrigin)
+	} else if r := h.Routes(); slices.Contains(r.Enabled, route.Mobile) {
+		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lock up)")
+		return 1
+	}
 	if *facadeSock != "" {
-		fsrv, err := listenFacade(h, *facadeSock, *facadeMode, errc)
+		fsrv, err := listenFacade(h, *facadeSock, *facadeMode, errc, extra...)
 		if err != nil {
 			fmt.Fprintln(stderr, "lockhub: facade socket:", err)
 			return 1
@@ -289,7 +322,7 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 // listenFacade serves the facade API on a unix socket created with mode
 // (0600 by default: the hub's own account only; lock up maps that account
 // to the host user).
-func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Server, error) {
+func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...func(*http.ServeMux)) (*http.Server, error) {
 	m, err := strconv.ParseUint(mode, 8, 32)
 	if err != nil || m&0o007 != 0 {
 		return nil, fmt.Errorf("mode %q: an octal mode without access for others", mode)
@@ -320,7 +353,7 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error) (*http.Serve
 		ln.Close()
 		return nil, err
 	}
-	srv := &http.Server{Handler: api.FacadeHandler(h), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+	srv := &http.Server{Handler: api.FacadeHandler(h, extra...), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
 		IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10, ConnContext: peer.ConnContext}
 	go func() { errc <- srv.Serve(ln) }()
 	return srv, nil
