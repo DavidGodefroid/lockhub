@@ -146,8 +146,10 @@ func (a Asker) check() error {
 func (h *Hub) openRequests(instance string, start uint64) (out [][]byte, fresh bool, reoffer time.Duration) {
 	defer func() {
 		if fresh {
-			// The other pollers too (a re-offer is no new request: no
-			// one else wakes them).
+			// The other pollers too (a re-offer is no new request: ask
+			// does not notify). Their own re-offer timers target the
+			// same time; this is the safety net for a poller whose timer
+			// was armed late.
 			h.notify(instance)
 		}
 	}()

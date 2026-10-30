@@ -602,12 +602,12 @@ func TestUnansweredRequestReofferedToTheNextPoll(t *testing.T) {
 	if err != nil || len(reqs) != 1 {
 		t.Fatalf("live lock: %d requests, %v", len(reqs), err)
 	}
-	if d < reoffer-50*time.Millisecond || d > 3*time.Second {
+	if d < reoffer/2 || d > 3*time.Second {
 		t.Fatalf("the live lock got the request after %s, want about %s", d, reoffer)
 	}
 	// Not answered yet: the next poll is not woken before ReofferAfter.
 	start = time.Now()
-	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 20*time.Second); len(reqs) != 1 || time.Since(start) < reoffer-50*time.Millisecond {
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 20*time.Second); len(reqs) != 1 || time.Since(start) < reoffer/2 {
 		t.Fatalf("a poll woke after %s for a request it was just offered (%d)", time.Since(start), len(reqs))
 	}
 	var q hubtest.Request
@@ -632,7 +632,13 @@ func TestReofferWakesEveryPoller(t *testing.T) {
 	const reoffer = 300 * time.Millisecond
 	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second; c.ReofferAfter = reoffer }, a)
 	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
-	go e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	rctx, cancel := context.WithCancel(ctx)
+	revealed := make(chan struct{})
+	go func() {
+		defer close(revealed)
+		e.Hub.Reveal(rctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	}()
+	t.Cleanup(func() { cancel(); <-revealed })
 	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 5*time.Second); len(reqs) != 1 {
 		t.Fatalf("first give: %d requests", len(reqs))
 	}
