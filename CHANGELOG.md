@@ -30,6 +30,12 @@ lockkit older than v0.5.0 ignores the `requests` member of the decisions
 poll: a reveal or renewal asked of it times out. lockssh has no release yet
 and is not a lock up type.
 
+Upgrade notes: `lock up --rotate hub` needs a hub image of this release
+or later (`lockhub rotate-key`); once a hub key is rotated, an older hub
+or `lock audit verify` refuses the log (`key_rotated` record), as an older
+`lock audit verify` refuses one with `outbox` fields: upgrade the `lock`
+CLI with the hub.
+
 ### Changes
 
 - First release of the `lock` CLI with lock up's `.lockfamily/` layout,
