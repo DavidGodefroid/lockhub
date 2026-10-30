@@ -5,11 +5,8 @@ digest).
 
 ## Unreleased
 
-- CI: e2e phases 2 and 5 check the image the hub container actually runs,
-  and lock up's hub signer identity with the real cosign on the release
-  lock add pinned (the local build stands in for it only at docker run).
-- lock up's refusal of a `.lockfamily` others can write prints the mode in
-  octal (`mode 0775`), not as `-rwxrwxr-x`.
+- A `lock import` or `lock add` refused for a new workspace no longer
+  leaves an empty `.lockfamily/` behind.
 
 ## v0.2.0 (2026-10-30)
 
