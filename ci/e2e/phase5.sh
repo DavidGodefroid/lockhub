@@ -63,7 +63,7 @@ grep -qx lockhub svc.out || die "hub not running"
 grep -qx lock-first svc.out || die "lock first not running"
 hub_is_local "$p"
 hub_cosigned up.out
-"$lock" doctor || true
+"$lock" doctor
 
 say "lock import: two sub-projects, the strictest routing kept, in either order"
 hub=$(sed -n 's/^  image: *//p' .lockfamily/lockfamily.yaml | head -1)
