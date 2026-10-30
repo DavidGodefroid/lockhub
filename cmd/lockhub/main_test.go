@@ -240,3 +240,35 @@ func TestStartFlushesOutbox(t *testing.T) {
 		t.Fatalf("started past a forged outbox record: %v", err)
 	}
 }
+
+func TestServeMobilePushCreatesVAPIDKey(t *testing.T) {
+	var errb bytes.Buffer
+	if code := serve(context.Background(), []string{"--mobile-push"}, &errb); code != 2 || !strings.Contains(errb.String(), "--mobile-push needs") {
+		t.Errorf("--mobile-push alone = %d: %s", code, errb.String())
+	}
+	data := t.TempDir()
+	var out bytes.Buffer
+	if code := run(context.Background(), []string{"keygen", "--data", data}, &out, &errb); code != 0 {
+		t.Fatalf("keygen = %d: %s", code, errb.String())
+	}
+	l := hubtest.NewLock("crm-prod")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm-prod":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	args := []string{"--listen", "127.0.0.1:0", "--data", data, "--mobile-listen", "127.0.0.1:0", "--mobile-origin", "https://hub.example.net", "--mobile-push"}
+	for range 2 { // created once, then the same key
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan int)
+		errb.Reset()
+		go func() { done <- serve(ctx, args, &errb) }()
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+		if code := <-done; code != 0 || !strings.Contains(errb.String(), "web push: true") {
+			t.Fatalf("serve = %d, stderr %q", code, errb.String())
+		}
+		fi, err := os.Stat(filepath.Join(data, keys.VAPIDFile))
+		if err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("vapid key: %v %v", fi, err)
+		}
+	}
+}

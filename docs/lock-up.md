@@ -12,6 +12,8 @@ between the two.
 | `<workspace>/.lockfamily/up.json` | `lock up`, after a confirmed apply | lea |
 | `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lock up`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lock up` | `lock` only (hub data, applied fingerprint, compose copy) |
+| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lock up pinned) | `lock up` (one directory per user, shared by workspaces) | `lock approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
+| `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lock up` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lock approve`, lea's deck |
 
 `lock up` refuses a `.lockfamily/` that is a link, not the user's, or
@@ -39,10 +41,11 @@ project and state.
   "hub_network": "lockfamily-1a2b3c4d_lockhub",
   "hub_url": "http://lockhub:8443",
   "hub_key": "<base64 Ed25519 public key>",
+  "facade_keys": {"v": 1, "facades": [{"facade": "tty", "key": "<base64>"}, {"facade": "deck", "key": "<base64>"}]},
   "locks": {
     "crm": {"type": "locksql", "socket_volume": "lockfamily-1a2b3c4d_crm-run", "client_gid": "10000"},
     "web": {"type": "lockhttp", "socket_volume": "lockfamily-1a2b3c4d_web-run",
-            "gate_home_volume": "lockfamily-1a2b3c4d_web-gate", "client_gid": "10020"}
+            "gate_home_volume": "lockfamily-1a2b3c4d_web-gate", "client_gid": "10020", "reveal": true}
   }
 }
 ```
@@ -65,8 +68,15 @@ For a lockhttp instance, lea's gate (beside lea's proxy) mounts the socket
 volume on `/run/lockhttp` and the volume of role `gate-home` as its
 `--home`, writes `hub_key` to its own read-only input, joins **only the
 proxy** to `hub_network`, and runs `lockhttp gate --hub <hub_url>
---hub-plain-http --hub-key-file … --instance <name> --home … --hub-net
-<the network's subnet>`. The gate refuses the hub's addresses as targets,
+--hub-plain-http --hub-key-file … --instance <name> --home … --hub-net <the
+network's subnet>`. When the lock has `"reveal": true` (lockfamily.yaml
+`reveal: true`; lockhttp v0.5.0 or later), the gate also writes
+`facade_keys` (the host facades' public keys, the set every console with
+`reveal: true` pins at `/run/lockfamily-facades/facades.json`) to a
+read-only input of its own and passes `--facade-keys-file …` (or
+`LOCKHTTP_FACADE_KEYS_FILE`): a reveal (Ctrl-O) is sealed only to an
+ephemeral key one of those facade keys signed. Without it the gate pins no
+facade and refuses reveals; renewals work either way. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
 

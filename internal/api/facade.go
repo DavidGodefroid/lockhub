@@ -32,6 +32,8 @@ func FacadeHandler(h *hub.Hub, extra ...func(*http.ServeMux)) http.Handler {
 	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/decide", f.decide)
 	mux.HandleFunc("GET /v1/decided", f.decided)
 	mux.HandleFunc("GET /v1/tickets/{instance}/{id}", f.ticket)
+	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/reveal", f.reveal)
+	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/renew", f.renew)
 	return mux
 }
 
@@ -51,9 +53,15 @@ type QueueItem struct {
 
 // QueueResult answers GET /v1/queue. Version changes with every change
 // of the queue: send it back as since to wait for the next one.
+//
+// Expired lists the tickets that expired in the last 24 hours and that no
+// ticket renews yet, most recent first: a facade offers them for
+// re-approval (POST …/renew). Facades of an expired item are the ones
+// that may renew it.
 type QueueResult struct {
 	Tickets []QueueItem `json:"tickets"`
 	Version uint64      `json:"version"`
+	Expired []QueueItem `json:"expired"`
 }
 
 func waitParam(r *http.Request) (time.Duration, error) {
@@ -88,15 +96,31 @@ func (f *facades) queue(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	res := QueueResult{Tickets: []QueueItem{}, Version: ver}
-	for _, t := range tks {
-		it := QueueItem{ID: t.ID, Instance: t.Instance, Risk: t.Risk, Created: t.Created,
-			Facades: f.h.Routes().Facades(t.Instance, t.Risk), Ticket: t.Raw}
+	exp, err := f.h.Expired(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	res := QueueResult{Tickets: []QueueItem{}, Version: ver, Expired: []QueueItem{}}
+	item := func(t store.Ticket, facades []string) QueueItem {
+		it := QueueItem{ID: t.ID, Instance: t.Instance, Risk: t.Risk, Created: t.Created, Facades: facades, Ticket: t.Raw}
 		if !t.Expires.IsZero() {
 			e := t.Expires
 			it.Expires = &e
 		}
-		res.Tickets = append(res.Tickets, it)
+		return it
+	}
+	for _, t := range tks {
+		res.Tickets = append(res.Tickets, item(t, f.h.Routes().Facades(t.Instance, t.Risk)))
+	}
+	for _, t := range exp {
+		fs := []string{}
+		for _, x := range f.h.Routes().Facades(t.Instance, t.Risk) {
+			if route.OnDemand(x) {
+				fs = append(fs, x)
+			}
+		}
+		res.Expired = append(res.Expired, item(t, fs))
 	}
 	writeJSON(w, http.StatusOK, res)
 }
@@ -152,6 +176,91 @@ func (f *facades) decide(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusOK, DecideResult{Decision: raw})
 	}
+}
+
+// RevealRequest is POST /v1/tickets/{instance}/{id}/reveal: Key is the
+// facade's ephemeral key, signed by its pinned facade key (lockkit
+// ticket.RevealKey), whose facade must be Facade.
+type RevealRequest struct {
+	Facade  string          `json:"facade"`
+	Display string          `json:"display,omitempty"`
+	Key     json.RawMessage `json:"key"`
+}
+
+// RevealResult answers it with the lock's signed answer, verbatim
+// (lockkit ticket.RevealAnswer): the clear screen sealed to Key, which
+// only the facade opens (ticket.OpenReveal).
+type RevealResult struct {
+	Answer json.RawMessage `json:"answer"`
+}
+
+// RenewRequest is POST /v1/tickets/{instance}/{id}/renew, on an expired
+// ticket.
+type RenewRequest struct {
+	Facade  string `json:"facade"`
+	Display string `json:"display,omitempty"`
+}
+
+// RenewResult answers it with the renewal's ticket. AutoApproved: the
+// hub approved it at once, as nothing changed since the approval (not for
+// production); otherwise it waits in the queue with its changes.
+type RenewResult struct {
+	Ticket       string `json:"ticket"`
+	AutoApproved bool   `json:"auto_approved"`
+}
+
+// asker reads a facade request body and its human.
+func asker(w http.ResponseWriter, r *http.Request, v any, facade, display func() string) (hub.Asker, bool) {
+	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "body is not a request of this route")
+		return hub.Asker{}, false
+	}
+	if f := facade(); f != route.TTY && f != route.Deck {
+		writeErr(w, http.StatusBadRequest, "bad_request", "facade must be tty or deck on this socket")
+		return hub.Asker{}, false
+	}
+	p := peer.From(r.Context())
+	if !p.Known {
+		writeErr(w, http.StatusForbidden, "unknown_peer", "the facade socket cannot identify this connection's user")
+		return hub.Asker{}, false
+	}
+	return hub.Asker{Facade: facade(), ApproverID: fmt.Sprintf("host:uid:%d", p.UID), ApproverDisplay: display()}, true
+}
+
+func (f *facades) reveal(w http.ResponseWriter, r *http.Request) {
+	var req RevealRequest
+	a, ok := asker(w, r, &req, func() string { return req.Facade }, func() string { return req.Display })
+	if !ok {
+		return
+	}
+	ref := store.Ref{Instance: r.PathValue("instance"), ID: r.PathValue("id")}
+	ans, err := f.h.Reveal(r.Context(), ref, a, req.Key)
+	if err != nil {
+		if r.Context().Err() == nil {
+			fail(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, RevealResult{Answer: ans})
+}
+
+func (f *facades) renew(w http.ResponseWriter, r *http.Request) {
+	var req RenewRequest
+	a, ok := asker(w, r, &req, func() string { return req.Facade }, func() string { return req.Display })
+	if !ok {
+		return
+	}
+	ref := store.Ref{Instance: r.PathValue("instance"), ID: r.PathValue("id")}
+	res, err := f.h.Renew(r.Context(), ref, a)
+	if err != nil {
+		if r.Context().Err() == nil {
+			fail(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, RenewResult{Ticket: res.Ticket, AutoApproved: res.AutoApproved})
 }
 
 // TicketState answers GET /v1/tickets/{instance}/{id}: the ticket's state

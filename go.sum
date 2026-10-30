@@ -1,5 +1,5 @@
-github.com/DavidGodefroid/lockkit v0.4.0 h1:nnhxgtLB39AT5pFaRbwRlVz2Fmf7effvH/ZFvDl/uu0=
-github.com/DavidGodefroid/lockkit v0.4.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
+github.com/DavidGodefroid/lockkit v0.6.0 h1:CyBijT1qfD+7WIIc7rNzbpeaezYh5VcG4JL8zxbMogg=
+github.com/DavidGodefroid/lockkit v0.6.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
 github.com/chromedp/cdproto v0.157.8 h1:Tkq0AjsUlC3Z4sJfHBzV/uAAxnTF/AZyuSTjfV/1gvk=
 github.com/chromedp/cdproto v0.157.8/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
 github.com/chromedp/chromedp v0.20.1 h1:983T9wmyM09JtROWlxhLQwljKOQovqt8CVE89W3U0NA=

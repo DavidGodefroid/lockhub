@@ -3,7 +3,7 @@ module github.com/DavidGodefroid/lockhub
 go 1.26.0
 
 require (
-	github.com/DavidGodefroid/lockkit v0.4.0
+	github.com/DavidGodefroid/lockkit v0.6.0
 	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.20.1
 	github.com/coder/websocket v1.8.14

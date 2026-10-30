@@ -19,6 +19,7 @@ package mobile
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -87,8 +88,11 @@ type Config struct {
 	// HubKeyID is the KeyID of the hub's signing key (part of what a
 	// device signs).
 	HubKeyID string
-	Now      func() time.Time
-	Log      io.Writer
+	// VAPID turns on Web Push (nil: off; the web app long-polls while
+	// open): the hub's P-256 VAPID key (RFC 8292).
+	VAPID *ecdsa.PrivateKey
+	Now   func() time.Time
+	Log   io.Writer
 }
 
 // Service is the mobile facade. Safe for concurrent use.
@@ -104,6 +108,7 @@ type Service struct {
 	challenges map[string]challenge
 	sessions   map[[32]byte]session
 	drafts     map[string]*draft
+	push       *pusher // nil: no Web Push
 }
 
 type pairingState string
@@ -184,9 +189,21 @@ func New(c Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mobile: %w", err)
 	}
-	return &Service{c: c, rpID: rpID, wa: wa, pairings: map[string]*pairing{}, challenges: map[string]challenge{},
-		sessions: map[[32]byte]session{}, drafts: map[string]*draft{}}, nil
+	s := &Service{c: c, rpID: rpID, wa: wa, pairings: map[string]*pairing{}, challenges: map[string]challenge{},
+		sessions: map[[32]byte]session{}, drafts: map[string]*draft{}}
+	if c.VAPID != nil {
+		// The VAPID subject is the hub's own origin (RFC 8292: an https URI
+		// the push service operator can reach the sender at).
+		if s.push, err = newPusher(c.VAPID, c.Origin); err != nil {
+			return nil, err
+		}
+		c.Hub.OnPending(s.onPending)
+	}
+	return s, nil
 }
+
+// Push reports whether Web Push is on.
+func (s *Service) Push() bool { return s.push != nil }
 
 // RPID is the relying party id (the origin's host).
 func (s *Service) RPID() string { return s.rpID }
@@ -306,6 +323,11 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET /m/v1/queue", s.authed(s.queue))
 	mux.HandleFunc("POST /m/v1/tickets/{instance}/{id}/prepare", s.post(s.authed(s.prepare)))
 	mux.HandleFunc("POST /m/v1/tickets/{instance}/{id}/decide", s.post(s.authed(s.decide)))
+	if s.push != nil {
+		mux.HandleFunc("GET /m/v1/push", s.authed(s.pushInfo))
+		mux.HandleFunc("POST /m/v1/push/subscribe", s.post(s.authed(s.pushSubscribe)))
+		mux.HandleFunc("POST /m/v1/push/unsubscribe", s.post(s.authed(s.pushUnsubscribe)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w.Header())
 		mux.ServeHTTP(w, r)

@@ -169,11 +169,55 @@ func TestMobileRoutingAndReview(t *testing.T) {
 	if err := r.Allowed("events", "tty", "read"); err != nil {
 		t.Fatalf("events lost the terminal: %v", err)
 	}
-	sum := strings.Join(Summary(c, "", nil), "\n")
+	sum := strings.Join(Summary(c, "", nil, nil), "\n")
 	for _, want := range []string{"lock crm-prod accepts only device-signed approvals of prod-write,policy-loosen",
 		"lock crm-prod seals its clear screens to them", "lock events pins no device: not answered on mobile"} {
 		if !strings.Contains(sum, want) {
 			t.Errorf("review lacks %q", want)
 		}
+	}
+}
+
+func TestMobilePushComposeAndReview(t *testing.T) {
+	// Without push: no route out, no flag (nothing changes).
+	w := newWS(t, mobileYAML())
+	a := devicetest.New("hub.example.net", "https://hub.example.net", "phone")
+	state := filepath.Join(w.dir, "state")
+	if err := PinDevice(state, a.Device()); err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	out, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	cy, _ := os.ReadFile(filepath.Join(state, "compose.yaml"))
+	if strings.Contains(string(cy), "egress-hub") || strings.Contains(string(cy), "--mobile-push") || strings.Contains(out, "push") {
+		t.Fatalf("push without hub.mobile.push:\n%s\n%s", out, cy)
+	}
+	// With push: the flag, the hub's route out, and both in the review.
+	os.WriteFile(w.file, []byte(strings.Replace(mobileYAML(), "    seal_clear: true\n", "    seal_clear: true\n    push: true\n", 1)), 0o644)
+	out, err = w.up("y\n", &fake{keys: f.keys})
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "+ hub mobile push on: the hub gets a route out (egress-hub)") || !strings.Contains(out, "*.push.apple.com") {
+		t.Errorf("push not reviewed:\n%s", out)
+	}
+	cy, _ = os.ReadFile(filepath.Join(state, "compose.yaml"))
+	for _, want := range []string{
+		`"--mobile-origin", "https://hub.example.net", "--mobile-push"]`,
+		`networks: [lockhub, "egress-hub", "mobile-hub"]`,
+		"  \"egress-hub\": {}\n",
+	} {
+		if !strings.Contains(string(cy), want) {
+			t.Errorf("compose lacks %q:\n%s", want, cy)
+		}
+	}
+	// push is a mobile setting: without the mobile facade it is refused.
+	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	os.WriteFile(p, []byte(yamlConf("  mobile:\n    origin: https://hub.example.net\n    push: true\n")), 0o644)
+	if _, err := Load(p); err == nil {
+		t.Error("push without the mobile facade: accepted")
 	}
 }

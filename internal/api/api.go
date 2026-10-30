@@ -80,6 +80,7 @@ func LockHandler(h *hub.Hub, version string) http.Handler {
 	mux.HandleFunc("POST /v1/tickets/{id}/withdraw", a.auth(a.withdraw))
 	mux.HandleFunc("POST /v1/tickets/{id}/consumed", a.auth(a.consumed))
 	mux.HandleFunc("GET /v1/decisions", a.auth(a.decisions))
+	mux.HandleFunc("POST /v1/requests/{id}/answer", a.auth(a.answer))
 	return mux
 }
 
@@ -193,9 +194,14 @@ type DecisionItem struct {
 
 // DecisionsResult answers GET /v1/decisions. Cursor is the seq to send as
 // since next time.
+//
+// Requests are the hub requests open for the polling instance (reveal,
+// renew): each a lockkit ticket.HubRequest signed by the hub, verbatim.
+// The lock answers each with POST /v1/requests/{id}/answer.
 type DecisionsResult struct {
-	Decisions []DecisionItem `json:"decisions"`
-	Cursor    int64          `json:"cursor"`
+	Decisions []DecisionItem    `json:"decisions"`
+	Cursor    int64             `json:"cursor"`
+	Requests  []json.RawMessage `json:"requests,omitempty"`
 }
 
 func (a *locks) decisions(w http.ResponseWriter, r *http.Request, inst string, _ []byte) {
@@ -213,7 +219,7 @@ func (a *locks) decisions(w http.ResponseWriter, r *http.Request, inst string, _
 		return
 	}
 	d := min(time.Duration(wait)*time.Second, MaxWait)
-	ds, err := a.h.Decisions(r.Context(), inst, since, d)
+	ds, reqs, err := a.h.Poll(r.Context(), inst, since, d)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -226,11 +232,26 @@ func (a *locks) decisions(w http.ResponseWriter, r *http.Request, inst string, _
 		res.Decisions = append(res.Decisions, DecisionItem{Seq: x.Seq, Ticket: x.Ticket, Decision: x.Raw})
 		res.Cursor = x.Seq
 	}
+	for _, q := range reqs {
+		res.Requests = append(res.Requests, q)
+	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// answer is a lock's answer to one of its hub requests: {"reveal": …},
+// {"ticket": "…"} or {"error": "<code>"}. Only the instance the request
+// is for can answer it, once.
+func (a *locks) answer(w http.ResponseWriter, r *http.Request, inst string, body []byte) {
+	if err := a.h.AnswerRequest(inst, r.PathValue("id"), body); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func fail(w http.ResponseWriter, err error) {
 	var te state.ErrTransition
+	var le *hub.LockError
 	switch {
 	case errors.Is(err, hub.ErrBadTicket), errors.Is(err, hub.ErrBadRequest):
 		writeErr(w, http.StatusBadRequest, "bad_ticket", err.Error())
@@ -244,6 +265,23 @@ func fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusServiceUnavailable, "audit_down", "the hub's audit log is not writable: retry later")
 	case errors.Is(err, hub.ErrExpired):
 		writeErr(w, http.StatusGone, "expired", err.Error())
+	case errors.Is(err, hub.ErrBadAnswer):
+		writeErr(w, http.StatusBadRequest, "bad_answer", err.Error())
+	case errors.Is(err, hub.ErrNotRouted):
+		writeErr(w, http.StatusForbidden, "not_routed", err.Error())
+	case errors.Is(err, hub.ErrForeignKey):
+		writeErr(w, http.StatusForbidden, "foreign_key", err.Error())
+	case errors.Is(err, hub.ErrBusy):
+		writeErr(w, http.StatusTooManyRequests, "busy", err.Error())
+	case errors.Is(err, hub.ErrTimeout):
+		writeErr(w, http.StatusGatewayTimeout, "timeout", err.Error())
+	case errors.Is(err, hub.ErrState):
+		writeErr(w, http.StatusConflict, "state", err.Error())
+	case errors.Is(err, hub.ErrNoRequest):
+		writeErr(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.As(err, &le):
+		// The lock's fixed code, never its text.
+		writeErr(w, http.StatusBadGateway, "lock_refused", le.Code)
 	case errors.Is(err, store.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrStale), errors.As(err, &te):

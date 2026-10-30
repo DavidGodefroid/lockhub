@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
 const httpImg = "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -51,6 +53,15 @@ func TestUpWritesLeaContract(t *testing.T) {
 	}
 	if l := s.Locks["web"]; l.Socket != p+"_web-run" || l.GateHome != p+"_web-gate" {
 		t.Errorf("web: %+v", l)
+	}
+	// The facade keys, for lea's lockhttp gate (--facade-keys-file): the
+	// same set the consoles pin.
+	fb, _ := json.Marshal(s.FacadeKeys)
+	pinned, err := ticket.ParseFacades(fb)
+	consoleSet, _ := os.ReadFile(filepath.Join(w.dir, "state", FacadesFile))
+	fromConsole, _ := ticket.ParseFacades(consoleSet)
+	if err != nil || len(pinned) != 2 || len(fromConsole) != 2 || !pinned[0].Key.Equal(fromConsole[0].Key) || !pinned[1].Key.Equal(fromConsole[1].Key) {
+		t.Errorf("up.json facade_keys %s: %v", fb, err)
 	}
 	for _, want := range []string{
 		"  \"crm-prod-run\":\n    labels:\n      dev.lockfamily.role: \"socket\"\n      dev.lockfamily.instance: \"crm-prod\"\n      dev.lockfamily.type: \"locksql\"",

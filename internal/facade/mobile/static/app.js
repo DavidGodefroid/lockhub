@@ -189,7 +189,9 @@ async function login() {
       // Not (yet) confirmed at the host: kept until it is, or until a new
       // pairing replaces it.
       if (!(await getKey("device"))) throw new Error(e.kind === "assertion" ? "This phone is not confirmed on the host yet: answer y there, or pair again." : e.message);
-      note = "A newer pairing of this phone is not confirmed on the host yet.";
+      // Only the hub's refusal says the host did not confirm it; another
+      // failure (the authenticator's, the network's) says nothing of that.
+      note = e.kind === "assertion" ? "A newer pairing of this phone is not confirmed on the host yet." : "The newer pairing of this phone did not sign in: " + e.message;
     }
   }
   if (!r) {
@@ -201,6 +203,7 @@ async function login() {
   status(note);
   show("queue");
   poll();
+  setupPush().catch(() => {});
 }
 
 // ---- sealed clear screen (lockkit ticket.SealAlgGCM) -------------------
@@ -313,6 +316,54 @@ async function answer(it, t, approve, li) {
   }
 }
 
+// ---- notifications (Web Push, when the hub has it on) ---------------------
+//
+// The hub's pushes carry no payload: the service worker shows a generic
+// notification and this app reads the queue from the hub as usual.
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function sameKey(sub, key) {
+  const k = sub.options && sub.options.applicationServerKey;
+  return !!k && b64u(k) === key;
+}
+
+async function setupPush() {
+  const btn = $("push-btn");
+  if (!pushSupported()) return;
+  let info;
+  try { info = await api("GET", "/m/v1/push"); } catch (e) { btn.hidden = true; return; } // off on this hub
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  const on = !!sub && Notification.permission === "granted" && sameKey(sub, info.key);
+  // A subscription this browser still has goes to the hub again (it may
+  // have dropped it): the same endpoint is recorded once.
+  if (on) await api("POST", "/m/v1/push/subscribe", { endpoint: sub.endpoint }).catch(() => {});
+  btn.textContent = on ? "Disable notifications" : "Enable notifications";
+  btn.onclick = () => togglePush(info.key, on).then(setupPush).catch((x) => status(x.message));
+  btn.hidden = false;
+}
+
+async function togglePush(key, on) {
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (on) {
+    if (sub) {
+      await api("POST", "/m/v1/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {});
+      await sub.unsubscribe();
+    }
+    status("Notifications off.");
+    return;
+  }
+  if ((await Notification.requestPermission()) !== "granted") throw new Error("Notifications are not allowed for this app.");
+  if (sub && !sameKey(sub, key)) { await sub.unsubscribe(); sub = null; }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: unb64u(key) });
+  await api("POST", "/m/v1/push/subscribe", { endpoint: sub.endpoint });
+  status("Notifications on: this phone is woken when a ticket waits (no ticket content goes through the push service).");
+}
+
 // ---- start ----------------------------------------------------------------
 
 async function start() {
@@ -328,7 +379,7 @@ async function route() {
   if (location.hash === "#pair" || !((await getKey("device")) || (await getKey("pending")))) { show("pair"); return; }
   show("login");
   // A session may still be valid: try the queue first.
-  api("GET", "/m/v1/queue?since=0").then(() => { show("queue"); poll(); }).catch(() => {});
+  api("GET", "/m/v1/queue?since=0").then(() => { show("queue"); poll(); setupPush().catch(() => {}); }).catch(() => {});
 }
 
 window.lockhub = { canonical, b64u, unb64u, hex, sha256, openClear, checkStatement };
