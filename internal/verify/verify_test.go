@@ -130,20 +130,27 @@ func TestOutboxedDecision(t *testing.T) {
 	if err != nil || !r.OK() || r.Decisions != 2 || r.Records != 3 || r.Outboxed != 1 {
 		t.Fatalf("report %+v, %v", r, err)
 	}
-	// An outboxed record must still match its decision.
-	st, _ := store.Open(filepath.Join(dir, "hub.db"))
-	out, _ := st.AuditOutbox(context.Background())
-	if len(out) != 1 {
-		t.Fatalf("outbox %v", out)
+	// An outboxed record the hub did not sign does not vouch for anything.
+	st, err := store.Open(filepath.Join(dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	out, err := st.AuditOutbox(context.Background())
+	if err != nil || len(out) != 1 {
+		t.Fatalf("outbox %v %v", out, err)
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	forged := []byte(strings.Replace(string(out[0].Record), `"approver":"host:uid:1"`, `"approver":"host:uid:2"`, 1))
 	if err := st.Tx(context.Background(), func(tx *store.Tx) error {
-		return tx.QueueAudit([]byte(strings.Replace(string(out[0].Record), `"approver":"host:uid:1"`, `"approver":"host:uid:2"`, 1)))
+		return tx.QueueAudit(forged, audit.SignOutbox(other, forged))
 	}); err != nil {
 		t.Fatal(err)
 	}
-	st.DropAudit(context.Background(), out[0].ID)
+	if err := st.DropAudit(context.Background(), out[0].ID); err != nil {
+		t.Fatal(err)
+	}
 	st.Close()
-	if r, _ := Hub(context.Background(), dir, pub); r.OK() {
+	if r, _ := Hub(context.Background(), dir, pub); r.OK() || !strings.Contains(strings.Join(r.Problems, ";"), "not signed by the hub key") {
 		t.Errorf("forged outbox record accepted: %+v", r)
 	}
 }

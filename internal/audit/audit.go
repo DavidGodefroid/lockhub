@@ -55,6 +55,23 @@ const SignContext = "lockhub/audit/v1\x00"
 
 func signedMsg(hash string) []byte { return []byte(SignContext + hash) }
 
+// OutboxContext separates the hub key's signatures of outboxed records
+// (records committed, not yet in the log) from its other signatures.
+const OutboxContext = "lockhub/audit-outbox/v1\x00"
+
+// SignOutbox signs an outboxed record (its JSON) with the hub key, so
+// that whoever can write the database cannot have the hub chain and sign
+// a record it never made.
+func SignOutbox(key ed25519.PrivateKey, record []byte) string {
+	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte(OutboxContext), record...)))
+}
+
+// VerifyOutbox checks SignOutbox's signature.
+func VerifyOutbox(key ed25519.PublicKey, record []byte, sig string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(sig)
+	return err == nil && ed25519.Verify(key, append([]byte(OutboxContext), record...), b)
+}
+
 // hashOf hashes r without its Hash and Sig fields. Field order is fixed by the
 // struct, so the JSON is stable.
 func hashOf(r Record) string {
@@ -67,12 +84,25 @@ func hashOf(r Record) string {
 // Log appends to one file. Safe for concurrent use.
 type Log struct {
 	mu   sync.Mutex
-	f    *os.File
-	seq  int64
-	prev string
-	now  func() time.Time
-	key  ed25519.PrivateKey
-	last Record
+	f    file
+	size int64 // bytes of whole records in f
+	// broken is set when a failed append could not be undone: the file
+	// may end with bytes the chain does not account for, so nothing more
+	// is appended until the log is reopened (and verified).
+	broken error
+	seq    int64
+	prev   string
+	now    func() time.Time
+	key    ed25519.PrivateKey
+	last   Record
+}
+
+// file is what Log needs of its *os.File (a seam for tests).
+type file interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Truncate(int64) error
+	Close() error
 }
 
 // SetKey makes Append sign every record with key (the hub key).
@@ -108,7 +138,12 @@ func open(path string, key ed25519.PublicKey) (*Log, error) {
 		f.Close()
 		return nil, fmt.Errorf("audit %s: %w", path, err)
 	}
-	l := &Log{f: f, seq: n, prev: Genesis, now: time.Now}
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	l := &Log{f: f, size: size, seq: n, prev: Genesis, now: time.Now}
 	if n > 0 {
 		l.prev, l.last = last.Hash, last
 	}
@@ -137,18 +172,34 @@ func (l *Log) Append(r Record) (Record, error) {
 	if len(b) >= MaxLine {
 		return Record{}, fmt.Errorf("audit record of %d bytes over the %d-byte limit", len(b), MaxLine)
 	}
-	if _, err := l.f.Write(append(b, '\n')); err != nil {
+	if l.broken != nil {
+		return Record{}, l.broken
+	}
+	line := append(b, '\n')
+	_, err = l.f.Write(line)
+	if err == nil {
+		err = l.f.Sync()
+	}
+	if err != nil {
+		// A torn line, or a whole one not known to be durable: cut the
+		// file back to its last whole record, so that a retry appends
+		// this record once, chained. If that fails too, refuse to go on.
+		if terr := l.f.Truncate(l.size); terr != nil {
+			l.broken = fmt.Errorf("audit log needs a restart: an append failed (%v) and could not be undone (%v)", err, terr)
+		} else if serr := l.f.Sync(); serr != nil {
+			l.broken = fmt.Errorf("audit log needs a restart: an append failed (%v) and its undo is not durable (%v)", err, serr)
+		}
 		return Record{}, err
 	}
-	if err := l.f.Sync(); err != nil {
-		return Record{}, err
-	}
+	l.size += int64(len(line))
 	l.seq, l.prev, l.last = r.Seq, r.Hash, r
 	return r, nil
 }
 
 // IsLast reports whether the log's last record has r's content (every
-// field but Seq, Prev, Hash and Sig): r was appended already.
+// field but Seq, Prev, Hash and Sig): r was appended already. Two
+// consecutive records of the hub never share their content: a ticket's
+// state machine never repeats an event.
 func (l *Log) IsLast(r Record) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()

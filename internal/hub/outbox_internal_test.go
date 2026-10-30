@@ -2,6 +2,8 @@ package hub
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,7 +27,8 @@ func TestRolledBackChangeNotAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer al.Close()
-	h := New(Config{Store: st, Audit: al})
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	h := New(Config{Store: st, Audit: al, Key: key})
 	ctx := context.Background()
 	boom := errors.New("commit refused")
 	err = st.Tx(ctx, func(tx *store.Tx) error {

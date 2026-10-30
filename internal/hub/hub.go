@@ -176,6 +176,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 			return Info{}, false, ErrExpired
 		}
 	}
+	if err := h.auditReady(ctx); err != nil {
+		return Info{}, false, err
+	}
 	err = h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		if _, err := tx.Ticket(store.Ref{Instance: instance, ID: info.ID}); errors.Is(err, store.ErrNotFound) {
 			n, err := tx.CountPending(instance)
@@ -204,6 +207,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 
 // change applies ev to a ticket and audits it.
 func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec audit.Record) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		tk, err := tx.Ticket(ref)
 		if err != nil {
@@ -281,6 +287,9 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	}
 	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID {
 		return nil, fmt.Errorf("%w: field too long", ErrBadRequest)
+	}
+	if err := h.auditReady(ctx); err != nil {
+		return nil, err
 	}
 	var raw []byte
 	var instance string
@@ -389,23 +398,30 @@ func (h *Hub) Decisions(ctx context.Context, instance string, since int64, wait 
 // Sweep expires pending tickets past their TTL and drops old request
 // nonces. Run it periodically.
 func (h *Hub) Sweep(ctx context.Context) error {
-	// Records of committed changes a failed flush left in the outbox.
-	if err := h.FlushAudit(ctx); err != nil {
-		return err
-	}
+	// Records of committed changes a failed flush left in the outbox; while
+	// they cannot be logged, expiries are refused like any change (Decide
+	// refuses an expired ticket by itself), and nonces are still purged.
+	ferr := h.FlushAudit(ctx)
 	now := h.c.Now()
-	ids, err := h.c.Store.DueForExpiry(ctx, now)
-	if err != nil {
-		return err
-	}
-	for _, ref := range ids {
-		err := h.change(ctx, ref, state.Expire, audit.Record{})
-		var te state.ErrTransition
-		if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
-			return err
+	var errs []error
+	if ferr == nil {
+		ids, err := h.c.Store.DueForExpiry(ctx, now)
+		if err != nil {
+			errs = append(errs, err)
 		}
+		for _, ref := range ids {
+			err := h.change(ctx, ref, state.Expire, audit.Record{})
+			var te state.ErrTransition
+			if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
+				errs = append(errs, err)
+				break
+			}
+		}
+	} else {
+		errs = append(errs, ferr)
 	}
-	return h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow))
+	errs = append(errs, h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow)))
+	return errors.Join(errs...)
 }
 
 // Field limits: what a lock or a facade sends is bounded before it

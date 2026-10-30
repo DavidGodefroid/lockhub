@@ -2,14 +2,21 @@ package hub_test
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
+	"github.com/DavidGodefroid/lockhub/internal/state"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
 
@@ -119,5 +126,102 @@ func TestSweepFlushesOutbox(t *testing.T) {
 	}
 	if err := e.Hub.Sweep(ctx); err == nil {
 		t.Error("sweep silent about an unwritable audit log")
+	}
+}
+
+// With the log down, the change whose flush failed is the last one: the
+// next is refused until its record is logged (fail closed).
+func TestAuditDownRefusesChanges(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "write", e.Clock.T, time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	e.Log.Close()
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T2", "write", e.Clock.T, time.Hour)); err != nil {
+		t.Fatalf("committed push reported as failed: %v", err)
+	}
+	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: "T1"}, approve("T1")); !errors.Is(err, hub.ErrAuditDown) {
+		t.Fatalf("decision with the log down: %v", err)
+	}
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T3", "write", e.Clock.T, time.Hour)); !errors.Is(err, hub.ErrAuditDown) {
+		t.Fatalf("push with the log down: %v", err)
+	}
+	if err := e.Hub.Withdraw(ctx, "crm-prod", "T1", ""); !errors.Is(err, hub.ErrAuditDown) {
+		t.Fatalf("withdraw with the log down: %v", err)
+	}
+	if tk, err := e.Store.Tickets(ctx, state.Pending); err != nil || len(tk) != 2 {
+		t.Fatalf("pending %d, %v: want T1 and T2", len(tk), err)
+	}
+}
+
+// A record in the outbox the hub did not sign is never chained: the
+// flush, and every change, stops.
+func TestForgedOutboxRecordRefused(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	rec := []byte(`{"seq":0,"at":"2027-01-01T00:00:00Z","event":"consume","ticket":"T9","instance":"crm-prod","state":"consumed","prev":"","hash":""}`)
+	if err := e.Store.Tx(ctx, func(tx *store.Tx) error { return tx.QueueAudit(rec, audit.SignOutbox(other, rec)) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Hub.FlushAudit(ctx); err == nil {
+		t.Fatal("forged record flushed")
+	}
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "write", e.Clock.T, time.Hour)); !errors.Is(err, hub.ErrAuditDown) {
+		t.Fatalf("push past a forged record: %v", err)
+	}
+	if b, _ := os.ReadFile(e.Audit); len(b) != 0 {
+		t.Errorf("log written:\n%s", b)
+	}
+}
+
+// Concurrent changes: every committed one logged once, chain intact.
+func TestConcurrentChangesLoggedOnce(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 100, a)
+	var wg sync.WaitGroup
+	const n = 20
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id := "T" + strconv.Itoa(i)
+			if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket(id, "read", e.Clock.T, time.Hour)); err != nil {
+				t.Error(err)
+				return
+			}
+			if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: id}, approve(id)); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := records(t, e.Audit); got != 2*n {
+		t.Fatalf("%d records, want %d", got, 2*n)
+	}
+	if out, _ := e.Store.AuditOutbox(ctx); len(out) != 0 {
+		t.Errorf("outbox not drained: %d", len(out))
+	}
+}
+
+// Sweep with the log down still purges nonces and says why it stopped.
+func TestSweepPurgesNoncesWithLogDown(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	if err := e.Store.Tx(ctx, func(tx *store.Tx) error { return tx.UseNonce("crm-prod", "n-0123456789abcdef", e.Clock.T) }); err != nil {
+		t.Fatal(err)
+	}
+	e.Log.Close()
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "write", e.Clock.T, time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	e.Clock.T = e.Clock.T.Add(time.Hour)
+	if err := e.Hub.Sweep(ctx); !strings.Contains(fmt.Sprint(err), "audit log") {
+		t.Fatalf("sweep: %v", err)
+	}
+	err := e.Store.Tx(ctx, func(tx *store.Tx) error { return tx.UseNonce("crm-prod", "n-0123456789abcdef", e.Clock.T) })
+	if err != nil {
+		t.Errorf("nonce not purged: %v", err)
 	}
 }

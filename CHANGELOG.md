@@ -6,13 +6,17 @@ digest).
 ## Unreleased
 
 - Audit records are written after the database commit, through a
-  transactional outbox: each change stores its record in its own
-  transaction, and the record is appended to `tickets.jsonl` once the
-  transaction commits (then, after a crash, at the next start, before
-  serving). A rolled-back change never has an audit record, and a
-  committed one always gets one, exactly once. `lock audit verify`
-  accepts a decision whose record is still in the outbox and says how
-  many records await the log.
+  transactional outbox: each change stores its record, signed with the
+  hub key, in its own transaction, and the record is appended to
+  `tickets.jsonl` once the transaction commits (after a crash, at the
+  next start, before serving). A rolled-back change never has an audit
+  record, and a committed one always gets one, exactly once. While the
+  log cannot be written, the hub refuses every further change (fail
+  closed); an outbox record the hub did not sign stops it the same way.
+  A failed append is cut back from the log, so a retry chains it once.
+  `lock audit verify` reads the database as of one instant, then the log,
+  so it can run against a live hub; it accepts a decision whose record is
+  still in the outbox and says how many records await the log.
 
 ## v0.1.1 (2026-10-30)
 

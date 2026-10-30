@@ -39,8 +39,20 @@ func (r *Report) bad(format string, a ...any) {
 }
 
 // Hub verifies the hub data directory dir against the hub's public key.
+// It may run against a running hub: the database is read as of one
+// instant first, then the log, which by then holds every record
+// committed before that instant (or the outbox does).
 func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, error) {
 	var r Report
+	st, err := store.OpenReadOnly(filepath.Join(dir, "hub.db"))
+	if err != nil {
+		return r, err
+	}
+	defer st.Close()
+	outbox, decisions, err := st.AuditSnapshot(ctx)
+	if err != nil {
+		return r, err
+	}
 	// Read the log once: what is verified is what is then compared.
 	logBytes, err := os.ReadFile(filepath.Join(dir, "tickets.jsonl"))
 	if err != nil {
@@ -54,6 +66,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	}
 	// Decisions the audit log vouches for.
 	inLog := map[string]audit.Record{} // instance/ticket → its decision record
+	logged := map[audit.Record]bool{}  // every record's content
 	sc := bufio.NewScanner(bytes.NewReader(logBytes))
 	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
 	for sc.Scan() {
@@ -62,70 +75,93 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 		if rec.Decision != "" {
 			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
+		logged[content(rec)] = true
 	}
-	st, err := store.OpenReadOnly(filepath.Join(dir, "hub.db"))
-	if err != nil {
-		return r, err
-	}
-	defer st.Close()
 	// Committed changes whose records are still in the outbox (the hub
-	// stopped between its commit and the log): they vouch for their
-	// decisions too, and are reported, not refused.
-	out, err := st.AuditOutbox(ctx)
-	if err != nil {
-		return r, err
-	}
-	for _, o := range out {
+	// stopped between its commit and the log, or the log is down): signed
+	// by the hub key, they vouch for their decisions too, and are
+	// reported, not refused.
+	for _, o := range outbox {
 		var rec audit.Record
+		if !audit.VerifyOutbox(hubKey, o.Record, o.Sig) {
+			r.bad("audit outbox record %d: not signed by the hub key", o.ID)
+			continue
+		}
 		if err := json.Unmarshal(o.Record, &rec); err != nil {
 			r.bad("audit outbox record %d: %v", o.ID, err)
 			continue
+		}
+		if logged[content(rec)] {
+			continue // logged already; the hub drops it at its next flush
 		}
 		r.Outboxed++
 		if rec.Decision != "" {
 			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
 	}
-	var since int64
-	for {
-		ds, err := st.AllDecisions(ctx, since, 500)
-		if err != nil {
-			return r, err
+	for _, d := range decisions {
+		r.check(hubKey, d, inLog)
+	}
+	// What the log records beyond the snapshot was committed after it.
+	if len(inLog) > 0 {
+		var since int64
+		if len(decisions) > 0 {
+			since = decisions[len(decisions)-1].Seq
 		}
-		if len(ds) == 0 {
-			break
-		}
-		for _, d := range ds {
-			since = d.Seq
-			r.Decisions++
-			key := d.Instance + "/" + d.Ticket
-			dec, err := ticket.VerifyDecision(hubKey, d.Raw)
-			switch {
-			case err != nil:
-				r.bad("decision %s: signature: %v", key, err)
-				continue
-			case dec.Ticket != d.Ticket || dec.Instance != d.Instance:
-				r.bad("decision %s: names %s/%s", key, dec.Instance, dec.Ticket)
+		for {
+			ds, err := st.AllDecisions(ctx, since, 500)
+			if err != nil {
+				return r, err
 			}
-			sum := sha256.Sum256(d.Raw)
-			h := "sha256:" + hex.EncodeToString(sum[:])
-			want := "denied"
-			if dec.Decision == ticket.Approved {
-				want = "approved"
+			if len(ds) == 0 {
+				break
 			}
-			switch rec, ok := inLog[key]; {
-			case !ok:
-				r.bad("decision %s: not in the audit log (log cut or edited)", key)
-			case rec.Decision != h:
-				r.bad("decision %s: differs from the one the audit log recorded", key)
-			case rec.State != want || rec.Approver != dec.Approver.ID || rec.Facade != dec.Facade:
-				r.bad("decision %s: the audit record (%s by %s on %s) does not match the signed decision", key, rec.State, rec.Approver, rec.Facade)
+			for _, d := range ds {
+				since = d.Seq
+				if _, ok := inLog[d.Instance+"/"+d.Ticket]; ok {
+					r.check(hubKey, d, inLog)
+				}
 			}
-			delete(inLog, key)
 		}
 	}
 	for key := range inLog {
 		r.bad("audit log records a decision on %s that the database does not have", key)
 	}
 	return r, nil
+}
+
+// content is a record without its place in the chain.
+func content(r audit.Record) audit.Record {
+	r.Seq, r.Prev, r.Hash, r.Sig = 0, "", "", ""
+	return r
+}
+
+// check verifies one stored decision against the record vouching for it,
+// which it takes out of inLog.
+func (r *Report) check(hubKey ed25519.PublicKey, d store.Decision, inLog map[string]audit.Record) {
+	r.Decisions++
+	key := d.Instance + "/" + d.Ticket
+	dec, err := ticket.VerifyDecision(hubKey, d.Raw)
+	switch {
+	case err != nil:
+		r.bad("decision %s: signature: %v", key, err)
+		return
+	case dec.Ticket != d.Ticket || dec.Instance != d.Instance:
+		r.bad("decision %s: names %s/%s", key, dec.Instance, dec.Ticket)
+	}
+	sum := sha256.Sum256(d.Raw)
+	h := "sha256:" + hex.EncodeToString(sum[:])
+	want := "denied"
+	if dec.Decision == ticket.Approved {
+		want = "approved"
+	}
+	switch rec, ok := inLog[key]; {
+	case !ok:
+		r.bad("decision %s: not in the audit log (log cut or edited)", key)
+	case rec.Decision != h:
+		r.bad("decision %s: differs from the one the audit log recorded", key)
+	case rec.State != want || rec.Approver != dec.Approver.ID || rec.Facade != dec.Facade:
+		r.bad("decision %s: the audit record (%s by %s on %s) does not match the signed decision", key, rec.State, rec.Approver, rec.Facade)
+	}
+	delete(inLog, key)
 }
