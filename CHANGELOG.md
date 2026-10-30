@@ -5,6 +5,34 @@ digest).
 
 ## Unreleased
 
+## v0.2.0 (2026-10-30)
+
+### Supported locks
+
+Builds on lockkit v0.6.0. `lock add` pins only releases that run under
+`lock up` (hub mode, lockkit v0.3.1 or later); the optional features need
+newer locks:
+
+| Lock | Runs under lock up | `devices: true` (lockkit ≥ v0.4.0) | `reveal: true`, renewals (lockkit ≥ v0.5.0) |
+|---|---|---|---|
+| locksql | v0.10.0 (lockkit v0.3.1) | no release yet | no release yet |
+| lockmq | v0.3.0 (lockkit v0.3.1) | v0.4.0 (lockkit v0.6.0) | v0.4.0 |
+| lockfile | v0.4.0 (lockkit v0.3.1) | v0.5.0 (lockkit v0.6.0) | v0.5.0 |
+| lockhttp (pre-release) | v0.3.0 (lockkit v0.3.1) | v0.4.0 (lockkit v0.4.0), in lea's gate | v0.5.0 (lockkit v0.6.0) |
+
+lock up passes `--devices-file` and `--facade-keys-file` to the lock
+consoles only: the lockhttp console serves the policy, its gate (run by
+lea) asks the hub. lockssh has no release yet. A lock older than a
+feature it is asked for refuses the flag and does not start; leave
+`devices`/`reveal` off for it.
+
+### Changes
+
+- First release of the `lock` CLI with lock up's `.lockfamily/` layout,
+  console accounts and `up.json` for lea (#23, below): lockfamily's
+  install.sh installs the latest release, which was v0.1.1 without them.
+- The paired devices' snapshot lock up mounts in the locks is 0644
+  whatever the umask (#39): under umask 077 the consoles could not read it.
 - CI: workflow e2e-lock-up runs the hub plan's phase 1 (locksql's
   TestHubPhase1 against this tree), phase 2 (lock up, lock attach, a
   ticket approved through the facade socket, I2 directly and through a
