@@ -79,6 +79,29 @@ locks:
 	}
 }
 
+// An instance declared in two sub-projects keeps only the allowed_uids
+// both list.
+func TestImportNarrowsAllowedUIDs(t *testing.T) {
+	root := t.TempDir()
+	base := write(t, filepath.Join(root, "lockfamily.yaml"), "version: 1\nhub:\n  image: "+hubImg+"\n")
+	a := write(t, filepath.Join(root, "a", "lockfamily.yaml"), "version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  events:\n    type: lockmq\n    image: "+mqImg+"\n    allowed_uids: [1000, 1001]\n")
+	b := write(t, filepath.Join(root, "b", "lockfamily.yaml"), "version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  events:\n    type: lockmq\n    image: "+mqImg+"\n    allowed_uids: [1001, 1002]\n")
+	notes, err := Import(base, []string{a, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Locks["events"].AllowedUIDsFlag(); got != "1001" {
+		t.Errorf("allowed_uids = %q, want 1001", got)
+	}
+	if all := strings.Join(notes, "\n"); !strings.Contains(all, "allowed_uids narrowed to those every declaration lists: [1001]") {
+		t.Errorf("notes:\n%s", all)
+	}
+}
+
 func TestImportNarrowsNewLockToItsFacades(t *testing.T) {
 	root := t.TempDir()
 	base := write(t, filepath.Join(root, "lockfamily.yaml"), yamlConf(""))

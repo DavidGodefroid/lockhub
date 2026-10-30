@@ -51,6 +51,16 @@ func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []s
 			if cur.Image != l.Image {
 				notes = append(notes, fmt.Sprintf("%s: lock %s pins another image (%s): kept %s", src, name, l.Image, cur.Image))
 			}
+			if !slices.Equal(cur.AllowedUIDs, l.AllowedUIDs) {
+				var keep []int
+				for _, u := range cur.AllowedUIDs {
+					if slices.Contains(l.AllowedUIDs, u) {
+						keep = append(keep, u)
+					}
+				}
+				cur.AllowedUIDs = keep
+				notes = append(notes, fmt.Sprintf("%s: lock %s allowed_uids narrowed to those every declaration lists: [%s]", src, name, cur.AllowedUIDsFlag()))
+			}
 			before := out.facadesOf(name)
 			after := intersect(before, o.facadesOf(name))
 			if !slices.Equal(before, after) {

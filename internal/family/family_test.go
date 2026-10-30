@@ -220,12 +220,20 @@ func TestUnsignedImageStops(t *testing.T) {
 
 func TestConfigRefusals(t *testing.T) {
 	for name, conf := range map[string]string{
-		"literal secret": strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    password: hunter2", 1),
-		"profile field":  strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    production: true", 1),
-		"tag not digest": strings.Replace(yamlConf(""), sqlImg, "ghcr.io/davidgodefroid/locksql:0.9.0", 1),
-		"wrong repo":     strings.Replace(yamlConf(""), sqlImg, strings.Replace(sqlImg, "locksql", "lockmq", 1), 1),
-		"bad routing":    yamlConf("  routing:\n    crm-prod: [slack]\n"),
-		"unknown lock":   yamlConf("  routing:\n    nope: [tty]\n"),
+		"literal secret":            strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    password: hunter2", 1),
+		"profile field":             strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    production: true", 1),
+		"tag not digest":            strings.Replace(yamlConf(""), sqlImg, "ghcr.io/davidgodefroid/locksql:0.9.0", 1),
+		"wrong repo":                strings.Replace(yamlConf(""), sqlImg, strings.Replace(sqlImg, "locksql", "lockmq", 1), 1),
+		"bad routing":               yamlConf("  routing:\n    crm-prod: [slack]\n"),
+		"unknown lock":              yamlConf("  routing:\n    nope: [tty]\n"),
+		"allowed_uids on locksql":   strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    allowed_uids: [1000]", 1),
+		"allowed_uids root":         strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [0]", 1),
+		"allowed_uids negative":     strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [-1]", 1),
+		"allowed_uids too big":      strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [4294967295]", 1),
+		"allowed_uids console's":    strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [10011]", 1),
+		"allowed_uids twice":        strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1000, 1000]", 1),
+		"allowed_uids not a number": strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [me]", 1),
+		"allowed_uids scalar":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: 1000", 1),
 	} {
 		p := filepath.Join(t.TempDir(), "lockfamily.yaml")
 		os.WriteFile(p, []byte(conf), 0o644)
@@ -263,6 +271,42 @@ func TestComposeIsolation(t *testing.T) {
 	}
 	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"}) {
 		t.Error("compose output is not deterministic")
+	}
+}
+
+// allowed_uids goes to the lock's console as --allowed-uids, is reviewed,
+// and to no other lock.
+func TestAllowedUIDs(t *testing.T) {
+	conf := strings.Replace(yamlConf(""), "    image: "+mqImg+"\n", "    image: "+mqImg+"\n    allowed_uids: [1000, 4242]\n", 1) +
+		"  docs:\n    type: lockfile\n    image: " + fileImg + "\n    allowed_uids: [1001]\n"
+	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	os.WriteFile(p, []byte(conf), 0o644)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"})
+	if n := strings.Count(out, `"--allowed-uids"`); n != 2 ||
+		!strings.Contains(out, `command: ["console", "--allowed-uids", "1000,4242", "--hub"`) ||
+		!strings.Contains(out, `command: ["console", "--profile", "default", "--allowed-uids", "1001", "--hub"`) {
+		t.Errorf("compose: %d --allowed-uids:\n%s", n, out)
+	}
+	w := newWS(t, conf)
+	f := newFake()
+	f.keys["docs"] = pubKey()
+	got, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, got)
+	}
+	if !strings.Contains(got, "lock events serves uids 1000,4242 besides its clients group (allowed_uids)") ||
+		!strings.Contains(got, "lock docs serves uids 1001 besides its clients group") || strings.Contains(got, "lock crm-prod serves uids") {
+		t.Errorf("review of allowed_uids:\n%s", got)
+	}
+	// A change of the list is a reviewed change.
+	os.WriteFile(w.file, []byte(strings.Replace(conf, "[1000, 4242]", "[1000]", 1)), 0o644)
+	got, _ = w.up("", &fake{keys: f.keys})
+	if !strings.Contains(got, "lock events serves uids 1000 besides") || strings.Contains(got, "unchanged") {
+		t.Errorf("a changed allowed_uids is not reviewed:\n%s", got)
 	}
 }
 

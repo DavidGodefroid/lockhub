@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -125,6 +126,47 @@ type Lock struct {
 	// the terminal or the deck can reveal its clear screen. Without it the
 	// lock refuses reveals; renewals need no facade key.
 	Reveal bool `yaml:"reveal,omitempty"`
+	// AllowedUIDs may reach the lock's console besides the members of its
+	// clients group (`console --allowed-uids`, lockmq v0.4.1 and lockfile
+	// v0.5.1 or later): the uid lea's agents run as (the host user's),
+	// which names no account in the lock's image. lockmq and lockfile
+	// only: locksql's console takes no such flag yet, and a lockhttp lock
+	// is reached by lea's gate, an account of its image.
+	AllowedUIDs []int `yaml:"allowed_uids,omitempty,flow"`
+}
+
+// AllowedUIDTypes are the lock types whose console takes --allowed-uids.
+var AllowedUIDTypes = []string{"lockmq", "lockfile"}
+
+// validAllowedUIDs checks a lock's allowed_uids: uids (not root, not the
+// console's own, not -1), each once, for a type that takes them.
+func validAllowedUIDs(name string, l Lock) error {
+	if len(l.AllowedUIDs) == 0 {
+		return nil
+	}
+	if !slices.Contains(AllowedUIDTypes, l.Type) {
+		return fmt.Errorf("locks.%s.allowed_uids: a %s console takes none (only %s)", name, l.Type, strings.Join(AllowedUIDTypes, ", "))
+	}
+	for i, u := range l.AllowedUIDs {
+		switch {
+		case u <= 0 || u >= 1<<32-1:
+			return fmt.Errorf("locks.%s.allowed_uids: %d is root or not a uid", name, u)
+		case strconv.Itoa(u) == Kinds[l.Type].UID:
+			return fmt.Errorf("locks.%s.allowed_uids: %d is the console's own uid", name, u)
+		case slices.Contains(l.AllowedUIDs[:i], u):
+			return fmt.Errorf("locks.%s.allowed_uids: %d is listed twice", name, u)
+		}
+	}
+	return nil
+}
+
+// AllowedUIDsFlag is the console's --allowed-uids value for l ("" when none).
+func (l Lock) AllowedUIDsFlag() string {
+	s := make([]string, len(l.AllowedUIDs))
+	for i, u := range l.AllowedUIDs {
+		s[i] = strconv.Itoa(u)
+	}
+	return strings.Join(s, ",")
 }
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -235,6 +277,9 @@ func (c *Config) validate(needLocks bool) error {
 		}
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
+		}
+		if err := validAllowedUIDs(name, l); err != nil {
+			return err
 		}
 		if l.Devices && c.Hub.Mobile == nil {
 			return fmt.Errorf("locks.%s.devices: set, but the mobile facade is not configured (hub.mobile)", name)
