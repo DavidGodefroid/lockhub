@@ -16,7 +16,9 @@ clear.
 Chat facades (Slack, Telegram) show masked screens only and answer only non-
 production reads and writes; production tickets and policy loosening are
 answered in the terminal, the deck or a paired phone, unlocks in the terminal
-or the deck (`hub.Decide`, `internal/route`). A
+or the deck (`hub.Decide`, `internal/route`). Approving a production ticket
+needs its instance name typed, in the terminal, the deck and on the phone
+alike (the hub checks it). A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
 In `lock approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:

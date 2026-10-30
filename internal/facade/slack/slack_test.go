@@ -204,7 +204,7 @@ func (e env) push(t *testing.T, risk ticket.Risk, prod bool) string {
 	tk.PII.Touched = []string{"email"}
 	tk.PII.ClearSealed = &ticket.Sealed{Alg: ticket.SealAlg, EPK: b64(make([]byte, 32)), Nonce: b64(make([]byte, 24)), CT: sealedCT}
 	if prod {
-		tk.Flags = ticket.Flags{Production: true, Retype: "crm"}
+		tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	}
 	if err := tk.Sign(e.lock); err != nil {
 		t.Fatal(err)

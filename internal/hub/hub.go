@@ -32,7 +32,10 @@ type Info struct {
 	Created  time.Time
 	// TTL is how long the ticket may wait for a decision; 0: no limit.
 	TTL time.Duration
-	// Production tickets with a Retype need the human to type it.
+	// Production tickets need the human to type the instance name to
+	// approve them, on every facade that may answer them. Retype is
+	// lockkit's flag (the console's answer that asks to retype values),
+	// kept for Flags; it is not what the human types.
 	Production bool
 	Retype     string
 	// Raw is the ticket as the lock signed it (set by Decide for the
@@ -66,7 +69,8 @@ type Verdict struct {
 	ApproverID      string
 	ApproverDisplay string
 	Facade          string
-	// Retype is what the human typed, for production tickets.
+	// Retype is what the human typed to approve a production ticket:
+	// its instance name.
 	Retype string
 	// A decision taken on a device (facade mobile) comes with the nonce
 	// and time the device signed, its assertion and its record (the
@@ -112,7 +116,7 @@ var (
 	ErrExpired     = errors.New("ticket expired")
 	ErrNotRouted   = errors.New("this facade may not decide this ticket")
 	ErrBadRequest  = errors.New("bad request")
-	ErrRetype      = errors.New("approving this production ticket needs its name typed exactly")
+	ErrRetype      = errors.New("approving this production ticket needs its instance name typed exactly")
 	ErrDevice      = errors.New("device refused")
 )
 
@@ -471,7 +475,9 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if info.Production && !route.CanReveal(v.Facade) {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
-		if v.Approved && info.Production && info.Retype != "" && v.Retype != info.Retype {
+		// Every production approval needs the instance name typed (#64),
+		// whatever the ticket's lockkit Retype flag says.
+		if v.Approved && info.Production && (info.Instance == "" || v.Retype != info.Instance) {
 			return ErrRetype
 		}
 		raw, err = h.c.Codec.SignDecision(h.c.Key, info, v, at)

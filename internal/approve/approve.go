@@ -378,12 +378,14 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 			continue
 		case "y", "yes":
 			req.Approved = true
-			if t.Flags.Production && t.Flags.Retype != "" {
-				typed, err := s.line(fmt.Sprintf("production: type %q to approve: ", sanitize.Terminal(t.Flags.Retype, false)))
+			if t.Flags.Production {
+				// Every production ticket: the instance name, typed.
+				name := it.Instance
+				typed, err := s.line(fmt.Sprintf("production: type the instance name %q to approve: ", sanitize.Terminal(name, false)))
 				if err != nil {
 					return err
 				}
-				if typed != t.Flags.Retype {
+				if name == "" || typed != name {
 					fmt.Fprintln(s.Out, "does not match: not approved")
 					continue
 				}
