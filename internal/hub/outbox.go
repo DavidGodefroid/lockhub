@@ -24,6 +24,11 @@ func (h *Hub) audit(tx *store.Tx, rec audit.Record) error {
 	if err != nil {
 		return err
 	}
+	// The log refuses a line of MaxLine: refuse the change now, while it
+	// can still roll back (room left for seq, prev, hash, sig and outbox).
+	if len(b) > audit.MaxLine-1024 {
+		return fmt.Errorf("%w: audit record of %d bytes", ErrBadRequest, len(b))
+	}
 	return tx.QueueAudit(b, func(id int64) string { return audit.SignOutbox(h.c.Key, id, b) })
 }
 
@@ -76,6 +81,12 @@ func (h *Hub) FlushAudit(ctx context.Context) error {
 		switch last := h.c.Audit.LastOutbox(); {
 		case o.ID < last:
 			return fmt.Errorf("audit outbox record %d replayed: the log is at outbox record %d", o.ID, last)
+		case o.ID == last:
+			// Logged before a crash left the row: the same record, or a
+			// row of another database (a restored backup).
+			if !h.c.Audit.IsLastOutbox(rec) {
+				return fmt.Errorf("audit outbox record %d differs from the record logged for it", o.ID)
+			}
 		case o.ID > last:
 			rec.Outbox = o.ID
 			if _, err := h.c.Audit.Append(rec); err != nil {

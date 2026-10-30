@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DavidGodefroid/lockhub/internal/audit"
@@ -48,5 +49,25 @@ func TestRolledBackChangeNotAudited(t *testing.T) {
 	}
 	if out, _ := st.AuditOutbox(ctx); len(out) != 0 {
 		t.Errorf("outbox %v", out)
+	}
+}
+
+// A record the log would refuse is refused while the change can roll back.
+func TestOversizedAuditRecordRefused(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(filepath.Join(dir, "hub.db"))
+	defer st.Close()
+	al, _ := audit.Open(filepath.Join(dir, "tickets.jsonl"))
+	defer al.Close()
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	h := New(Config{Store: st, Audit: al, Key: key})
+	err := st.Tx(context.Background(), func(tx *store.Tx) error {
+		return h.audit(tx, audit.Record{Event: "deny", Ticket: "T1", Instance: "a", Reason: strings.Repeat("x", audit.MaxLine)})
+	})
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("%v", err)
+	}
+	if out, _ := st.AuditOutbox(context.Background()); len(out) != 0 {
+		t.Errorf("outbox %d", len(out))
 	}
 }

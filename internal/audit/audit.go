@@ -249,6 +249,17 @@ func (l *Log) Append(r Record) (Record, error) {
 	return r, nil
 }
 
+// IsLastOutbox reports whether the log's last record has r's content:
+// every field but Seq, Prev, Hash, Sig and Outbox.
+func (l *Log) IsLastOutbox(r Record) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	a := l.last
+	a.Seq, a.Prev, a.Hash, a.Sig, a.Outbox = 0, "", "", "", 0
+	r.Seq, r.Prev, r.Hash, r.Sig, r.Outbox = 0, "", "", "", 0
+	return l.seq > 0 && a == r
+}
+
 // LastOutbox is the outbox id of the log's last record (0: none).
 func (l *Log) LastOutbox() int64 {
 	l.mu.Lock()
