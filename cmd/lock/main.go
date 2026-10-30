@@ -146,6 +146,9 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "OK: %d audit records chained, %d decisions signed and recorded\n", r.Records, r.Decisions)
+	if r.Outboxed > 0 {
+		fmt.Fprintf(stdout, "%d audit record(s) of committed changes not yet in the log: the hub appends them at its next start or change\n", r.Outboxed)
+	}
 	return 0
 }
 

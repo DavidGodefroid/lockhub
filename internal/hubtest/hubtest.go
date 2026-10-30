@@ -53,6 +53,8 @@ type Codec struct{}
 
 const reqContext = "lockhub-request-v1\x00"
 
+func (Codec) TicketVersions() []int { return []int{1} }
+
 func (Codec) KeyID(k ed25519.PublicKey) string { return "ed25519:" + hex.EncodeToString(k[:16]) }
 
 func requestMessage(method, pq, instance string, at time.Time, nonce string, body []byte) []byte {
@@ -134,6 +136,11 @@ type Env struct {
 	Audit string
 	Clock *Clock
 	Pub   ed25519.PublicKey
+	// Dir is the data directory (hub.db, tickets.jsonl); Log and Key
+	// are the open audit log and the hub key.
+	Dir string
+	Log *audit.Log
+	Key ed25519.PrivateKey
 }
 
 // New builds a hub for locks, MaxPending max (0: default).
@@ -159,5 +166,5 @@ func New(t testing.TB, max int, locks ...Lock) Env {
 	}
 	clk := &Clock{T: time.Unix(1_800_000_000, 0)}
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: Codec{}, Key: priv, Locks: m, MaxPending: max, Now: clk.Now})
-	return Env{Hub: h, Store: st, Audit: ap, Clock: clk, Pub: pub}
+	return Env{Hub: h, Store: st, Audit: ap, Clock: clk, Pub: pub, Dir: dir, Log: al, Key: priv}
 }
