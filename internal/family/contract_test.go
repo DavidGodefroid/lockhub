@@ -467,6 +467,7 @@ func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
 	for _, t := range Types {
 		os.MkdirAll(filepath.Join(ws, "."+t), 0o755)
 	}
+	piiSet(ws)
 	old := filepath.Join(ws, FileName)
 	os.WriteFile(old, []byte(yamlConf("")), 0o644)
 	up := func(file, in string) (string, error) {
