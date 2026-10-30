@@ -10,7 +10,20 @@ v0.5.0 or later; older locks ignore the new `requests` member of the
 decisions poll. A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
-
+- Mobile facade: optional Web Push (`hub.mobile.push: true` →
+  `lockhub serve --mobile-push`; off by default). When a ticket the phone
+  may answer becomes pending, the hub sends a payload-less push (no ticket
+  content at the push service; `TTL`, `Urgency: high`, `Topic`, at most
+  one round per 30 s) with VAPID (RFC 8292, ES256; P-256 key `vapid.key`
+  created once in the hub's data directory) to every subscription of an
+  active device. Endpoints are restricted to the known push services
+  (FCM, Mozilla, Apple, WNS: https, default port, public addresses, no
+  redirects); subscriptions are tied to the device session
+  (`/m/v1/push`, `/m/v1/push/subscribe|unsubscribe`, Origin and custom
+  header), dropped on revoke and on 404/410. The web app gets an "Enable
+  notifications" button; the service worker shows a generic
+  notification. `lock up` reviews push and gives the hub its `egress-hub`
+  network for it.
 - lock up runs consoles lea's agents can reach, and tells lea how
   (docs/lock-up.md):
   - lockfamily.yaml lives in `.lockfamily/` (lea mounts it read-only in

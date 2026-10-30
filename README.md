@@ -113,8 +113,39 @@ malicious code could ask you to verify yourself for another pending ticket of
 the same lock than the one it shows, and could read the clear values sealed to
 the phone while they are on screen. Locks still refuse anything not signed by
 the phone over a ticket they signed themselves. A synced passkey also lives in
-your platform account. Notifications: none yet; keep the app open (it
-long-polls).
+your platform account.
+
+**Notifications.** Off by default: the app long-polls the queue while it is
+open. With `hub.mobile.push: true`, the hub wakes the paired phones with Web
+Push when a ticket they may answer (the same routing as the queue) becomes
+pending: tap "Enable notifications" in the app, allow notifications, and the
+browser's push subscription is recorded for that device (at most 4 per device;
+dropped by `lock mobile revoke`, or when the push service answers 404/410).
+Pushes carry no payload: the service worker shows "A Lock approval is pending"
+and the app reads the ticket from the hub as usual. The hub signs each push
+with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
+data directory, 0600) and POSTs only to the known push services
+(`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`,
+`wns2-*.notify.windows.com`, https on the default port, public addresses only
+(no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
+redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
+offline phone, `TTL` 30 min). The hub logs only the push service's host, never
+an endpoint. `lock up` reviews the change and gives the hub its `egress-hub`
+network for it. That network gives the hub general outbound access, as with
+the chat facades: the restriction to the push services above is enforced by
+the hub's code, not by the network. Signing out of the app keeps the device's
+push subscription (it belongs to the device, not to the session): tap "Disable
+notifications" before signing out to stop them on that phone, or revoke the
+device. What remains exposed: the push service (Google, Mozilla, Apple,
+Microsoft) learns when a ticket waits and which subscription is woken, though
+nothing of the ticket.
+
+```yaml
+hub:
+  mobile:
+    origin: https://hub.example.ts.net
+    push: true
+```
 
 ## Build
 

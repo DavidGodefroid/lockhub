@@ -103,6 +103,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 	}
 	if m := c.Hub.Mobile; m != nil {
 		s = append(s, fmt.Sprintf("hub mobile origin %s on 127.0.0.1:%d", m.Origin, m.Port))
+		if m.Push {
+			s = append(s, "hub mobile push on: the hub gets a route out (egress-hub) and POSTs payload-less pushes to "+PushServices)
+		}
 	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
@@ -130,6 +133,10 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 	}
 	return s
 }
+
+// PushServices are the push services the hub reaches with mobile push
+// (the mobile facade refuses any other endpoint).
+const PushServices = "fcm.googleapis.com, updates.push.services.mozilla.com, *.push.apple.com, wns2-*.notify.windows.com"
 
 func fingerprint(lines []string) string {
 	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))

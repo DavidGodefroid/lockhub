@@ -1,10 +1,11 @@
 // lockhub service worker: makes the web app installable. It caches
 // nothing (every answer comes fresh from the hub) and shows a generic
-// notification on a push, which carries no data.
+// notification on a push, which carries no data (the hub sends none: the
+// push service learns nothing of the ticket).
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("push", (e) => {
-  e.waitUntil(self.registration.showNotification("lockhub", { body: "A Lock ticket waits for you.", tag: "lockhub", renotify: true }));
+  e.waitUntil(self.registration.showNotification("lockhub", { body: "A Lock approval is pending.", tag: "lockhub", renotify: true }));
 });
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();
