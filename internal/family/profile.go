@@ -237,7 +237,7 @@ func ownedNotShared(p string, fi os.FileInfo) error {
 		return fmt.Errorf("%s: owned by uid %d, not by you", p, st.Uid)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
-		return fmt.Errorf("%s: mode %v: writable by others than you", p, fi.Mode().Perm())
+		return fmt.Errorf("%s: mode %04o: writable by others than you", p, fi.Mode().Perm())
 	}
 	return nil
 }

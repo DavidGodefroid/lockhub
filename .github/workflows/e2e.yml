@@ -63,14 +63,7 @@ jobs:
           cosign-release: v2.6.1
       - run: go build -o "$RUNNER_TEMP/bin/lock" ./cmd/lock
       - name: this commit's hub image (containerd image store, cosign shim)
-        run: |
-          f=/etc/docker/daemon.json
-          { sudo cat "$f" 2>/dev/null || echo '{}'; } | jq '. + {features: ((.features // {}) + {"containerd-snapshotter": true})}' >"$RUNNER_TEMP/daemon.json"
-          sudo cp "$RUNNER_TEMP/daemon.json" "$f" && sudo systemctl restart docker
-          docker info -f '{{json .DriverStatus}}'
-          ref=$(sh ci/e2e/local-hub.sh "$RUNNER_TEMP/shim")
-          echo "E2E_HUB_IMAGE=$ref" >>"$GITHUB_ENV"
-          echo "$RUNNER_TEMP/shim" >>"$GITHUB_PATH"
+        run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
       # Started after the image store switch (a service container would
       # not survive the Docker restart).
       - name: Postgres for the locksql lock
@@ -108,14 +101,7 @@ jobs:
           cosign-release: v2.6.1
       - run: sh scripts/release-cli.sh 0.0.0-e2e "$RUNNER_TEMP/dist"
       - name: this commit's hub image (containerd image store, cosign shim)
-        run: |
-          f=/etc/docker/daemon.json
-          { sudo cat "$f" 2>/dev/null || echo '{}'; } | jq '. + {features: ((.features // {}) + {"containerd-snapshotter": true})}' >"$RUNNER_TEMP/daemon.json"
-          sudo cp "$RUNNER_TEMP/daemon.json" "$f" && sudo systemctl restart docker
-          docker info -f '{{json .DriverStatus}}'
-          ref=$(sh ci/e2e/local-hub.sh "$RUNNER_TEMP/shim")
-          echo "E2E_HUB_IMAGE=$ref" >>"$GITHUB_ENV"
-          echo "$RUNNER_TEMP/shim" >>"$GITHUB_PATH"
+        run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
       - name: phase 5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

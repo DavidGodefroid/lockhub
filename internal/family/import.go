@@ -113,17 +113,15 @@ func Import(path string, srcs []string) ([]string, error) {
 	var doc yaml.Node
 	var base *Config
 	b, err := os.ReadFile(path)
+	fresh := errors.Is(err, os.ErrNotExist)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
+	case fresh:
 		first := srcs[0]
 		h := others[first].Hub
 		// Chat facades need their own allowlist (lock add slack), the
 		// mobile facade its origin (hub.mobile): not carried over.
 		fs := slices.DeleteFunc(slices.Clone(h.Facades), func(f string) bool { return isChat(f) || f == route.Mobile })
 		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: fs}}
-		if err := ensureDir(path); err != nil {
-			return nil, err
-		}
 		notes = append(notes, fmt.Sprintf("%s does not exist: hub section from %s", path, first))
 		if len(fs) != len(h.Facades) {
 			notes = append(notes, "chat and mobile facades not enabled here: run lock add slack / lock add telegram, or set hub.mobile, to enable them")
@@ -163,6 +161,12 @@ func Import(path string, srcs []string) ([]string, error) {
 	out, _, err := encodeValid(&doc)
 	if err != nil {
 		return notes, fmt.Errorf("%s: not changed: %w", path, err)
+	}
+	// Only now: a refused import leaves no empty .lockfamily behind.
+	if fresh {
+		if err := ensureDir(path); err != nil {
+			return notes, err
+		}
 	}
 	return notes, writeFile(path, out)
 }

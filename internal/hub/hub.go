@@ -137,7 +137,11 @@ type Config struct {
 	// RequestWait is how long a facade waits for a lock's answer to a
 	// hub request (default RequestWait).
 	RequestWait time.Duration
-	Now         func() time.Time
+	// ReofferAfter is how long a request given to a lock may stay
+	// unanswered before every poller of its instance is offered it again
+	// (default ReofferAfter).
+	ReofferAfter time.Duration
+	Now          func() time.Time
 }
 
 // Hub is safe for concurrent use.
@@ -150,7 +154,7 @@ type Hub struct {
 	waiters   map[string]chan struct{}       // instance → closed on a new decision or request
 	queueVer  uint64                         // bumped on every change of the pending queue
 	reqs      map[string]map[string]*openReq // instance → id → open hub request
-	giveSeq   uint64                         // bumped on every first give of a hub request to a lock
+	giveSeq   uint64                         // bumped on every give (or re-offer) of a hub request to a lock
 	onPending []func(Pending)
 }
 
@@ -182,6 +186,9 @@ func New(c Config) *Hub {
 	}
 	if c.RequestWait == 0 {
 		c.RequestWait = RequestWait
+	}
+	if c.ReofferAfter == 0 {
+		c.ReofferAfter = ReofferAfter
 	}
 	return &Hub{c: c, waiters: map[string]chan struct{}{}, reqs: map[string]map[string]*openReq{}}
 }
@@ -528,7 +535,9 @@ func (h *Hub) Decisions(ctx context.Context, instance string, since int64, wait 
 // Poll is Decisions with the hub requests open for instance (signed,
 // verbatim). A request the lock has not been given yet ends the wait at
 // once; one already given comes again with every answer until the lock
-// answers it or it expires.
+// answers it or it expires, and ends the wait again once it has gone
+// unanswered for ReofferAfter (it may have gone to a process that will
+// not answer it: an old lock still polling).
 func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.Duration) ([]store.Decision, [][]byte, error) {
 	const limit = 100
 	deadline := time.NewTimer(wait)
@@ -542,17 +551,27 @@ func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.
 		if err != nil {
 			return nil, nil, err
 		}
-		reqs, fresh := h.openRequests(instance, start)
+		reqs, fresh, reoffer := h.openRequests(instance, start)
 		if len(ds) > 0 || fresh || wait <= 0 {
 			return ds, reqs, nil
 		}
+		var again <-chan time.Time
+		var t *time.Timer
+		if reoffer > 0 {
+			t = time.NewTimer(reoffer)
+			again = t.C
+		}
 		select {
 		case <-ch:
+		case <-again:
 		case <-deadline.C:
-			reqs, _ := h.openRequests(instance, start)
+			reqs, _, _ := h.openRequests(instance, start)
 			return nil, reqs, nil
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
+		}
+		if t != nil {
+			t.Stop()
 		}
 	}
 }

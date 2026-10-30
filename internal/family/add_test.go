@@ -103,3 +103,13 @@ func upFor(t *testing.T, file string) func(string, *fake) (string, error) {
 		return out.String(), u.Do(context.Background())
 	}
 }
+
+func TestAddRefusedIntoFreshWorkspaceLeavesNoDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), Dir, FileName)
+	if err := Add(path, AddOptions{Name: "Bad Name", Type: "locksql", Image: sqlImg, HubImage: hubImg}); err == nil {
+		t.Fatal("bad name accepted")
+	}
+	if _, err := os.Lstat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Errorf("%s left behind by a refused lock add: %v", filepath.Dir(path), err)
+	}
+}

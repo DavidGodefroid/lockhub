@@ -28,12 +28,10 @@ type AddOptions struct {
 // started (run lock up, which reviews the change).
 func Add(path string, o AddOptions) error {
 	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
+	fresh := errors.Is(err, os.ErrNotExist)
+	if fresh {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
-		}
-		if err := ensureDir(path); err != nil {
-			return err
 		}
 		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
@@ -69,6 +67,12 @@ func Add(path string, o AddOptions) error {
 	}
 	if !slices.Contains(c.Instances(), o.Name) {
 		return fmt.Errorf("lock %q not added", o.Name)
+	}
+	// Only now: a refused lock add leaves no empty .lockfamily behind.
+	if fresh {
+		if err := ensureDir(path); err != nil {
+			return err
+		}
 	}
 	return writeFile(path, out)
 }
