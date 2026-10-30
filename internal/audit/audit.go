@@ -43,8 +43,12 @@ type Record struct {
 	Reason   string `json:"reason,omitempty"`
 	// Decision is the hash of the signed decision, when there is one.
 	Decision string `json:"decision,omitempty"`
-	Prev     string `json:"prev"`
-	Hash     string `json:"hash"`
+	// Device is the approval device of a mobile decision or of a device
+	// event (pair, revoke), Fingerprint its record's fingerprint.
+	Device      string `json:"device,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Prev        string `json:"prev"`
+	Hash        string `json:"hash"`
 	// Sig is the hub key's signature over Hash (SignContext).
 	Sig string `json:"sig,omitempty"`
 }

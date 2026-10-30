@@ -19,8 +19,14 @@ import (
 // lea deck). It is served only on the host facade socket, never on the
 // hub network: whoever can open that socket is the human of this host.
 // The approver is recorded from the socket peer's uid.
-func FacadeHandler(h *hub.Hub) http.Handler {
+//
+// extra adds routes of facades running in the hub (the mobile facade's
+// pairing and device routes).
+func FacadeHandler(h *hub.Hub, extra ...func(*http.ServeMux)) http.Handler {
 	mux := http.NewServeMux()
+	for _, x := range extra {
+		x(mux)
+	}
 	f := &facades{h: h}
 	mux.HandleFunc("GET /v1/queue", f.queue)
 	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/decide", f.decide)

@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS decisions (
 	FOREIGN KEY (instance, ticket) REFERENCES tickets(instance, id)
 );
 CREATE INDEX IF NOT EXISTS decisions_instance_seq ON decisions(instance, seq);
+CREATE TABLE IF NOT EXISTS devices (
+	id         TEXT PRIMARY KEY,
+	record     BLOB NOT NULL,    -- the lockkit device record, as confirmed
+	state      TEXT NOT NULL,    -- active, revoked
+	sign_count INTEGER NOT NULL,
+	created    INTEGER NOT NULL,
+	updated    INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -322,4 +330,89 @@ func (s *Store) DueForExpiry(ctx context.Context, now time.Time) ([]Ref, error) 
 func (s *Store) PurgeNonces(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nonces WHERE at < ?`, before.Unix())
 	return err
+}
+
+// Device is an approval device the human confirmed (mobile facade).
+type Device struct {
+	ID        string
+	Record    []byte
+	State     string // DeviceActive or DeviceRevoked
+	SignCount uint32
+	Created   time.Time
+	Updated   time.Time
+}
+
+// Device states.
+const (
+	DeviceActive  = "active"
+	DeviceRevoked = "revoked"
+)
+
+// ErrDeviceExists is a device id already stored.
+var ErrDeviceExists = errors.New("device already registered")
+
+// PutDevice stores a new active device.
+func (t *Tx) PutDevice(d Device) error {
+	var n int
+	if err := t.tx.QueryRow(`SELECT count(*) FROM devices WHERE id = ?`, d.ID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrDeviceExists
+	}
+	_, err := t.tx.Exec(`INSERT INTO devices (id, record, state, sign_count, created, updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Record, DeviceActive, int64(d.SignCount), d.Created.Unix(), d.Created.Unix())
+	return err
+}
+
+// Device returns device id.
+func (t *Tx) Device(id string) (Device, error) {
+	var d Device
+	var sc, created, updated int64
+	err := t.tx.QueryRow(`SELECT id, record, state, sign_count, created, updated FROM devices WHERE id = ?`, id).
+		Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+	return d, err
+}
+
+// SetDeviceState changes a device's state.
+func (t *Tx) SetDeviceState(id, st string, now time.Time) error {
+	res, err := t.tx.Exec(`UPDATE devices SET state = ?, updated = ? WHERE id = ?`, st, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSignCount records the authenticator counter of a device's last
+// assertion.
+func (t *Tx) SetSignCount(id string, n uint32, now time.Time) error {
+	_, err := t.tx.Exec(`UPDATE devices SET sign_count = ?, updated = ? WHERE id = ?`, int64(n), now.Unix(), id)
+	return err
+}
+
+// Devices lists every device, oldest first.
+func (s *Store) Devices(ctx context.Context) ([]Device, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, record, state, sign_count, created, updated FROM devices ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Device
+	for rows.Next() {
+		var d Device
+		var sc, created, updated int64
+		if err := rows.Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated); err != nil {
+			return nil, err
+		}
+		d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
