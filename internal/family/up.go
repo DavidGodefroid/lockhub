@@ -534,8 +534,9 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintln(u.Out, "warning: lock keys:", w)
 	}
 	if snapPath != "" {
-		// 0644: the locks read it through a read-only bind mount.
-		if err := os.WriteFile(snapPath, snapContent, 0o644); err != nil {
+		// 0644 whatever the umask: the locks' console accounts read it
+		// through a read-only bind mount.
+		if err := writeAtomic(snapPath, snapContent, 0o644); err != nil {
 			return err
 		}
 		paths.Devices = snapPath
