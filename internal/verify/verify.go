@@ -58,6 +58,11 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	if err != nil {
 		return r, err
 	}
+	// A last line without its newline is an append in progress (the hub
+	// writes a record and its newline at once): not read yet.
+	if i := bytes.LastIndexByte(logBytes, '\n'); i < len(logBytes)-1 {
+		logBytes = logBytes[:i+1]
+	}
 	n, err := audit.VerifySigned(bytes.NewReader(logBytes), hubKey)
 	r.Records = n
 	if err != nil {
@@ -67,7 +72,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	// Decisions the audit log vouches for.
 	inLog := map[string]audit.Record{} // instance/ticket → its decision record
 	var lastOutbox int64               // outbox ids only grow along the log
-	var last audit.Record
+	logged := map[int64]audit.Record{} // outbox id → its logged record
 	sc := bufio.NewScanner(bytes.NewReader(logBytes))
 	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
 	for sc.Scan() {
@@ -81,8 +86,8 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 				r.bad("audit record %d: outbox record %d logged after outbox record %d (replayed)", rec.Seq, rec.Outbox, lastOutbox)
 			}
 			lastOutbox = rec.Outbox
+			logged[rec.Outbox] = rec
 		}
-		last = rec
 	}
 	// Committed changes whose records are still in the outbox (the hub
 	// stopped between its commit and the log, or the log is down): signed
@@ -98,15 +103,13 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			r.bad("audit outbox record %d: %v", o.ID, err)
 			continue
 		}
-		switch {
-		case o.ID < lastOutbox:
-			r.bad("audit outbox record %d: replayed (the log is at outbox record %d)", o.ID, lastOutbox)
-			continue
-		case o.ID == lastOutbox:
-			// Logged already; the hub drops it at its next flush.
+		if o.ID <= lastOutbox {
+			// Logged since the snapshot, or before a crash that left the
+			// row: the hub drops it at its next flush. A row the log does
+			// not have under its id is a replay.
 			rec.Outbox = o.ID
-			if content(rec) != content(last) {
-				r.bad("audit outbox record %d differs from the record logged for it", o.ID)
+			if l, ok := logged[o.ID]; !ok || content(rec) != content(l) {
+				r.bad("audit outbox record %d: not the record logged for it (replayed; the log is at outbox record %d)", o.ID, lastOutbox)
 			}
 			continue
 		}

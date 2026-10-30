@@ -117,3 +117,14 @@ func TestTornTailCutAtOpen(t *testing.T) {
 		t.Error("a broken whole line accepted")
 	}
 }
+
+// A whole record without its newline is an edit, not a torn append.
+func TestWholeRecordWithoutNewlineRefused(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tickets.jsonl")
+	write(t, p, 2)
+	b, _ := os.ReadFile(p)
+	os.WriteFile(p, b[:len(b)-1], 0o600)
+	if _, err := Open(p); !errors.Is(err, ErrBroken) {
+		t.Fatalf("open: %v", err)
+	}
+}

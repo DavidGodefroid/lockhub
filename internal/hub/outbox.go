@@ -33,7 +33,8 @@ func (h *Hub) audit(tx *store.Tx, rec audit.Record) error {
 // durable and signed, in the outbox); no change starting after commits
 // until it is up again.
 func (h *Hub) auditReady(ctx context.Context) error {
-	if err := h.FlushAudit(ctx); err != nil {
+	// Not the request's context: a client leaving is not the log down.
+	if err := h.FlushAudit(context.WithoutCancel(ctx)); err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditDown, err)
 	}
 	return nil

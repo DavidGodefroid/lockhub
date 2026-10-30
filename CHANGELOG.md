@@ -25,6 +25,12 @@ digest).
   record is still in the outbox, says how many records await the log, and
   reports replayed or foreign outbox rows. An older `lock audit verify`
   refuses a log with `outbox` fields: use this release's.
+  A `hub.db` restored from a backup older than `tickets.jsonl` makes
+  every new outbox row look like a replay, and the hub refuses to start:
+  restore both together (or set `audit_outbox`'s row in `sqlite_sequence`
+  past the log's last `outbox` id). Not detected: an outbox row deleted
+  from the database by someone who can write it, before its flush, for a
+  record other than a decision (decisions are cross-checked).
 
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries

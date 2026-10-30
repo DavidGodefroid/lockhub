@@ -166,10 +166,11 @@ func open(path string, key ed25519.PublicKey) (*Log, error) {
 	return l, nil
 }
 
-// cutTornTail removes a last line without its newline: an append the
-// process did not finish (power loss before its sync), which Append
-// always ends with a newline in the same write. Its change is still in
-// the hub's outbox, and is logged again from there.
+// cutTornTail removes a last line without its newline that is no whole
+// record: an append the process did not finish (power loss before its
+// sync), which Append always ends with a newline in the same write. Its
+// change is still in the hub's outbox (rows are dropped only after the
+// sync), and is logged again from there.
 func cutTornTail(f *os.File) error {
 	size, err := f.Seek(0, io.SeekEnd)
 	if err != nil || size == 0 {
@@ -189,6 +190,12 @@ func cutTornTail(f *os.File) error {
 		cut = size - n + int64(i) + 1
 	} else if size > n {
 		return fmt.Errorf("%w: last record over %d bytes", ErrBroken, MaxLine)
+	}
+	// A whole record without its newline is no torn append (the newline
+	// goes in the same write): someone edited the log. Refuse.
+	var rec Record
+	if json.Unmarshal(buf[cut-(size-n):], &rec) == nil {
+		return fmt.Errorf("%w: the last record lacks its newline", ErrBroken)
 	}
 	if err := f.Truncate(cut); err != nil {
 		return err
