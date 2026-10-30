@@ -12,7 +12,7 @@ between the two.
 | `<workspace>/.lockfamily/up.json` | `lock up`, after a confirmed apply | lea |
 | `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lock up`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lock up` | `lock` only (hub data, applied fingerprint, compose copy) |
-| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lock up pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys is left out, with a warning) | `lock up` (one directory per user, shared by workspaces) | `lock approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
+| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lock up pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lock up` (one directory per user, shared by workspaces) | `lock approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lock up` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lock approve`, lea's deck |
 

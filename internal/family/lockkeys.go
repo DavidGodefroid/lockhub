@@ -1,6 +1,8 @@
 package family
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,23 +16,43 @@ import (
 )
 
 // lockKeysFile is the format of LockKeysFile and of each file of
-// LockKeysDir: {"locks": {"<instance>": {"public_key": "<base64>"}}}.
+// LockKeysDir: {"locks": {"<instance>": {"public_key": "<base64>"}}}. A
+// file of LockKeysDir also names its workspace (only pinLockKeys reads
+// those, leniently).
 type lockKeysFile struct {
-	Locks map[string]lockKey `json:"locks"`
+	Workspace string             `json:"workspace,omitempty"`
+	Locks     map[string]lockKey `json:"locks"`
 }
 
 type lockKey struct {
 	PublicKey string `json:"public_key"`
 }
 
-// pinLockKeys records the lock keys pubs of workspace project (by
-// instance) in dir's LockKeysDir, then writes LockKeysFile as the union
-// of every workspace's, so that host facades (lock approve, lea's deck)
-// check the answers of every workspace's locks. An instance that two
-// workspaces pin with different keys, or a key two instances share, is
-// left out of the union (fail closed: no clear values for it) and
-// returned. One lock up at a time rewrites the union (a lock on dir).
-func pinLockKeys(dir, project string, pubs map[string]string) ([]string, error) {
+// pinned is one instance as one workspace's file pins it.
+type pinned struct {
+	inst, key, file, ws string
+}
+
+func (p pinned) where() string {
+	ws := p.ws
+	if ws == "" {
+		ws = "an unknown workspace"
+	}
+	return ws + " (" + filepath.Join(LockKeysDir, p.file) + ")"
+}
+
+// pinLockKeys records the lock keys pubs of workspace ws (compose project
+// project, by instance) in dir's LockKeysDir, then writes LockKeysFile as
+// the union of every workspace's, so that host facades (lock approve,
+// lea's deck) check the answers of every workspace's locks. It returns
+// warnings for what it left out of the union (fail closed: no clear
+// values for those instances): an instance two workspaces pin with
+// different keys, a key two instances share (keys.LoadLocks would refuse
+// the whole file), another workspace's file or key that does not parse.
+// A file of a workspace that no longer exists is never removed here (its
+// path may only be unmounted): the warning names it. One lock up at a
+// time rewrites the union (a lock on dir).
+func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, error) {
 	unlock, err := lockDir(dir)
 	if err != nil {
 		return nil, err
@@ -40,13 +62,14 @@ func pinLockKeys(dir, project string, pubs map[string]string) ([]string, error) 
 	if err := privateDir(d); err != nil {
 		return nil, err
 	}
-	own := filepath.Join(d, project+".json")
+	ownName := project + ".json"
+	own := filepath.Join(d, ownName)
 	if len(pubs) == 0 {
 		if err := os.Remove(own); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 	} else {
-		f := lockKeysFile{Locks: map[string]lockKey{}}
+		f := lockKeysFile{Workspace: ws, Locks: map[string]lockKey{}}
 		for n, k := range pubs {
 			f.Locks[n] = lockKey{PublicKey: k}
 		}
@@ -59,46 +82,65 @@ func pinLockKeys(dir, project string, pubs map[string]string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	byName := map[string]string{} // instance → key
-	byKey := map[string]string{}  // key → instance
-	bad := map[string]bool{}
+	var warns []string
+	var all []pinned
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		b, err := os.ReadFile(filepath.Join(d, e.Name()))
-		if err != nil {
-			return nil, err
-		}
 		var f lockKeysFile
-		if err := json.Unmarshal(b, &f); err != nil {
-			return nil, fmt.Errorf("%s: %w", filepath.Join(d, e.Name()), err)
+		b, err := os.ReadFile(filepath.Join(d, e.Name()))
+		if err == nil {
+			err = json.Unmarshal(b, &f)
+		}
+		if err != nil {
+			warns = append(warns, fmt.Sprintf("%s: unreadable, left out (%v): delete it if its workspace is gone, or lock up there", filepath.Join(LockKeysDir, e.Name()), err))
+			continue
 		}
 		for n, l := range f.Locks {
-			if !keys.ValidInstance(n) {
-				return nil, fmt.Errorf("%s: bad instance name %q", filepath.Join(d, e.Name()), n)
+			k, err := base64.StdEncoding.DecodeString(l.PublicKey)
+			if !keys.ValidInstance(n) || err != nil || len(k) != ed25519.PublicKeySize {
+				warns = append(warns, fmt.Sprintf("%s: instance %q has no valid name or key, left out", filepath.Join(LockKeysDir, e.Name()), n))
+				continue
 			}
-			if k, ok := byName[n]; ok && k != l.PublicKey {
+			// The canonical spelling: two spellings of one key are one key.
+			all = append(all, pinned{inst: n, key: keys.Public(ed25519.PublicKey(k)), file: e.Name(), ws: f.Workspace})
+		}
+	}
+	byName := map[string][]pinned{}
+	byKey := map[string][]pinned{}
+	for _, p := range all {
+		byName[p.inst] = append(byName[p.inst], p)
+		byKey[p.key] = append(byKey[p.key], p)
+	}
+	bad := map[string]bool{}
+	for n, ps := range byName {
+		for _, p := range ps[1:] {
+			if p.key != ps[0].key {
 				bad[n] = true
+				warns = append(warns, fmt.Sprintf("lock instance %s has another key in %s than in %s: clear values of its tickets cannot be shown; rename it in one workspace, or delete the file of a workspace that no longer exists", n, ps[0].where(), p.where()))
+				break
 			}
-			if m, ok := byKey[l.PublicKey]; ok && m != n {
-				bad[n], bad[m] = true, true
+		}
+	}
+	for _, ps := range byKey {
+		for _, p := range ps[1:] {
+			if p.inst != ps[0].inst {
+				bad[p.inst], bad[ps[0].inst] = true, true
+				warns = append(warns, fmt.Sprintf("lock instances %s (%s) and %s (%s) share a key: clear values of their tickets cannot be shown; give each its own lock home, or delete the file of a workspace that no longer exists", ps[0].inst, ps[0].where(), p.inst, p.where()))
+				break
 			}
-			byName[n], byKey[l.PublicKey] = l.PublicKey, n
 		}
 	}
 	union := lockKeysFile{Locks: map[string]lockKey{}}
-	var conflicts []string
-	for n, k := range byName {
-		if bad[n] {
-			conflicts = append(conflicts, n)
-			continue
+	for n, ps := range byName {
+		if !bad[n] {
+			union.Locks[n] = lockKey{PublicKey: ps[0].key}
 		}
-		union.Locks[n] = lockKey{PublicKey: k}
 	}
-	slices.Sort(conflicts)
+	slices.Sort(warns)
 	b, _ := json.MarshalIndent(union, "", "  ")
-	return conflicts, writeAtomic(filepath.Join(dir, LockKeysFile), append(b, '\n'), 0o600)
+	return warns, writeAtomic(filepath.Join(dir, LockKeysFile), append(b, '\n'), 0o600)
 }
 
 // lockDir takes an exclusive lock on dir (a lock file in it) until the

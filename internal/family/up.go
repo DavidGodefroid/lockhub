@@ -394,12 +394,12 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	// The lock keys, for host facades to check what a lock sealed to
 	// them (a revealed clear screen).
-	conflicts, err := pinLockKeys(facadeKeys, project, lockPubs)
+	warns, err := pinLockKeys(facadeKeys, project, ws, lockPubs)
 	if err != nil {
 		return err
 	}
-	for _, n := range conflicts {
-		fmt.Fprintf(u.Out, "warning: lock instance %s has another key in another workspace: clear values of its tickets cannot be shown (give it another name in one of them)\n", n)
+	for _, w := range warns {
+		fmt.Fprintln(u.Out, "warning: lock keys:", w)
 	}
 	if snapPath != "" {
 		// 0644: the locks read it through a read-only bind mount.

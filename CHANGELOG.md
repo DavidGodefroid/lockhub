@@ -16,11 +16,16 @@ could not check them now) are shown as such, and never allow one click.
 
 - `lock up` no longer overwrites the per-user `facades/locks.json` with the
   current workspace's lock keys: each workspace's keys go to
-  `facades/locks.d/<project>.json` and `locks.json` is their union (one hub
-  per user, many workspaces), rewritten under a lock. An instance name two
-  workspaces pin with different keys (or one key on two instances) is left
-  out and `lock up` warns: clear values of its tickets cannot be shown.
-  After the upgrade, run `lock up` once in each workspace.
+  `facades/locks.d/<project>.json` (with the workspace's path) and
+  `locks.json` is their union (one hub per user, many workspaces),
+  rewritten under a lock. An instance name two workspaces pin with
+  different keys, one key on two instances, or another workspace's file or
+  key that does not parse is left out, and `lock up` warns, naming the
+  workspaces and files: clear values of those tickets cannot be shown
+  until one is renamed, or the file of a workspace that no longer exists
+  (moved or deleted) is deleted. After the upgrade, run `lock up` once in
+  each workspace; a `lock` binary of an earlier release still overwrites
+  `locks.json` without the lock.
 - Mobile facade: optional Web Push (`hub.mobile.push: true` →
   `lockhub serve --mobile-push`; off by default). When a ticket the phone
   may answer becomes pending, the hub sends a payload-less push (no ticket
