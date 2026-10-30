@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +21,14 @@ import (
 )
 
 // build makes a hub data dir with n decided tickets.
-func build(t *testing.T, n int) (string, ed25519.PublicKey) {
+func build(t *testing.T, n int) (string, ed25519.PublicKey) { return buildCrash(t, n, false) }
+
+// lastHubKey is the hub key of the last build.
+var lastHubKey ed25519.PrivateKey
+
+// buildCrash is build; with crash, the hub stops after the last
+// decision's commit, before its audit record reaches the log.
+func buildCrash(t *testing.T, n int, crash bool) (string, ed25519.PublicKey) {
 	dir := t.TempDir()
 	lpub, lpriv, _ := ed25519.GenerateKey(rand.Reader)
 	hpub, hpriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -36,12 +45,16 @@ func build(t *testing.T, n int) (string, ed25519.PublicKey) {
 		if _, _, err := h.Push(context.Background(), "crm", raw); err != nil {
 			t.Fatal(err)
 		}
+		if crash && i == n-1 {
+			al.Close()
+		}
 		if _, err := h.Decide(context.Background(), store.Ref{Instance: "crm", ID: tk.ID}, hub.Verdict{Approved: i%2 == 0, ApproverID: "host:uid:1", Facade: "tty"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	al.Close()
 	st.Close()
+	lastHubKey = hpriv
 	return dir, hpub
 }
 
@@ -114,5 +127,84 @@ func TestMissingDatabaseNotCreated(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "hub.db")); err == nil {
 		t.Error("verify created a database")
+	}
+}
+
+func TestOutboxedDecision(t *testing.T) {
+	dir, pub := buildCrash(t, 2, true)
+	r, err := Hub(context.Background(), dir, pub)
+	if err != nil || !r.OK() || r.Decisions != 2 || r.Records != 3 || r.Outboxed != 1 {
+		t.Fatalf("report %+v, %v", r, err)
+	}
+	// An outboxed record the hub did not sign does not vouch for anything.
+	st, err := store.Open(filepath.Join(dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := st.AuditOutbox(context.Background())
+	if err != nil || len(out) != 1 {
+		t.Fatalf("outbox %v %v", out, err)
+	}
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	forged := []byte(strings.Replace(string(out[0].Record), `"approver":"host:uid:1"`, `"approver":"host:uid:2"`, 1))
+	if err := st.Tx(context.Background(), func(tx *store.Tx) error {
+		return tx.QueueAudit(forged, func(id int64) string { return audit.SignOutbox(other, id, forged) })
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DropAudit(context.Background(), out[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if r, _ := Hub(context.Background(), dir, pub); r.OK() || !strings.Contains(strings.Join(r.Problems, ";"), "not signed by the hub key") {
+		t.Errorf("forged outbox record accepted: %+v", r)
+	}
+}
+
+// verify reads the database before the log: a row the hub logged and
+// dropped meanwhile is in the snapshot below the log's last outbox id.
+// Logged with that id and content, it is no replay.
+func TestOutboxRowLoggedSinceSnapshot(t *testing.T) {
+	dir, pub := build(t, 2)
+	b, _ := os.ReadFile(filepath.Join(dir, "tickets.jsonl"))
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var rec audit.Record
+	if err := json.Unmarshal([]byte(lines[1]), &rec); err != nil || rec.Outbox == 0 {
+		t.Fatalf("%+v %v", rec, err)
+	}
+	id := rec.Outbox
+	rec.Seq, rec.Prev, rec.Hash, rec.Sig, rec.Outbox = 0, "", "", "", 0
+	raw, _ := json.Marshal(rec)
+	db, err := sql.Open("sqlite", filepath.Join(dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(id int64, raw []byte) {
+		t.Helper()
+		db.Exec(`DELETE FROM audit_outbox`)
+		if _, err := db.Exec(`INSERT INTO audit_outbox(id, record, sig) VALUES (?, ?, ?)`, id, raw, audit.SignOutbox(lastHubKey, id, raw)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(id, raw)
+	if r, err := Hub(context.Background(), dir, pub); err != nil || !r.OK() || r.Outboxed != 0 {
+		t.Fatalf("logged row: %+v %v", r, err)
+	}
+	// Under the id of another logged record: a replay.
+	put(id+1, raw)
+	if r, _ := Hub(context.Background(), dir, pub); r.OK() || !strings.Contains(strings.Join(r.Problems, ";"), "replayed") {
+		t.Errorf("replay accepted: %+v", r)
+	}
+	db.Close()
+}
+
+// A last line being appended is not read yet.
+func TestUnterminatedTailIgnored(t *testing.T) {
+	dir, pub := build(t, 1)
+	f, _ := os.OpenFile(filepath.Join(dir, "tickets.jsonl"), os.O_WRONLY|os.O_APPEND, 0)
+	f.WriteString(`{"seq":3,"at`)
+	f.Close()
+	if r, err := Hub(context.Background(), dir, pub); err != nil || !r.OK() || r.Records != 2 {
+		t.Fatalf("%+v %v", r, err)
 	}
 }

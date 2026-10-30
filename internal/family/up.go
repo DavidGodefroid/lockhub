@@ -168,14 +168,17 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(devices) > 0 {
-		paths.Devices = snapPath
-	} else if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
-		// Fail closed: without a device, the locks would take the hub's
-		// approvals of these risk classes again.
-		return fmt.Errorf("hub.mobile.require_device needs a paired device: lock up without it, lock mobile pair, then set it again")
-	} else if m != nil && m.SealClear {
-		fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lock mobile pair, then lock up)")
+	// The snapshot exists only once the human said yes: the compose files
+	// before (keygen, hub-key) mount no devices.
+	if len(devices) == 0 {
+		snapPath = ""
+		if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
+			// Fail closed: without a device, the locks would take the hub's
+			// approvals of these risk classes again.
+			return fmt.Errorf("hub.mobile.require_device needs a paired device: lock up without it, lock mobile pair, then set it again")
+		} else if m != nil && m.SealClear {
+			fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lock mobile pair, then lock up)")
+		}
 	}
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.
@@ -294,11 +297,12 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(hubData, chatconf.File), append(cb, '\n'), 0o600); err != nil {
 		return err
 	}
-	if paths.Devices != "" {
+	if snapPath != "" {
 		// 0644: the locks read it through a read-only bind mount.
 		if err := os.WriteFile(snapPath, snapContent, 0o644); err != nil {
 			return err
 		}
+		paths.Devices = snapPath
 	}
 	paths.Config = fp
 	composeYAML = []byte(Compose(c, paths))
@@ -307,6 +311,14 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if err := os.WriteFile(composePath, composeYAML, 0o600); err != nil {
 		return err
+	}
+	// Snapshots the locks no longer mount.
+	if old, _ := filepath.Glob(filepath.Join(u.State, "devices-*.json")); len(old) > 0 {
+		for _, f := range old {
+			if f != snapPath {
+				os.Remove(f)
+			}
+		}
 	}
 	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {

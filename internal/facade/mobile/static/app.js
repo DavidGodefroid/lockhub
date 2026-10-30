@@ -186,9 +186,10 @@ async function login() {
       await putKey("device", pending);
       await kv("readwrite", (s) => s.delete("pending"));
     } catch (e) {
-      // Not confirmed at the host (or revoked): forget it.
-      if (e.kind === "assertion") await kv("readwrite", (s) => s.delete("pending"));
-      if (!(await getKey("device"))) throw new Error(e.kind === "assertion" ? "The pairing was not confirmed on the host: pair again." : e.message);
+      // Not (yet) confirmed at the host: kept until it is, or until a new
+      // pairing replaces it.
+      if (!(await getKey("device"))) throw new Error(e.kind === "assertion" ? "This phone is not confirmed on the host yet: answer y there, or pair again." : e.message);
+      note = "A newer pairing of this phone is not confirmed on the host yet.";
     }
   }
   if (!r) {

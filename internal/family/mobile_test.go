@@ -120,6 +120,9 @@ func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
 	if err != nil || !strings.Contains(out, "  device phone webauthn:") {
 		t.Fatalf("with a device: %v\n%s", err, out)
 	}
+	if len(f.missing) > 0 {
+		t.Fatalf("compose mounted snapshots that did not exist yet: %v", f.missing)
+	}
 	state := filepath.Join(w.dir, "state")
 	if o, err := AppliedMobileOrigin(state); err != nil || o != "https://hub.example.net" {
 		t.Fatalf("applied origin %q %v", o, err)
@@ -132,6 +135,18 @@ func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(state, "compose.yaml"))
 	if !strings.Contains(string(b), "source: \""+snaps[0]+"\"") || strings.Contains(string(b), DevicesFile(state)+"\"") {
 		t.Fatalf("compose does not mount the snapshot:\n%s", b)
+	}
+	// A second phone: a new snapshot, the old one removed after the up.
+	b2 := devicetest.New("hub.example.net", "https://hub.example.net", "tablet")
+	if err := PinDevice(state, b2.Device()); err != nil {
+		t.Fatal(err)
+	}
+	f = newFake()
+	if _, err := w.up("y\n", f); err != nil || len(f.missing) > 0 {
+		t.Fatalf("after a device change: %v, missing %v", err, f.missing)
+	}
+	if now, _ := filepath.Glob(filepath.Join(state, "devices-*.json")); len(now) != 1 || now[0] == snaps[0] {
+		t.Fatalf("snapshots after the change: %v (was %v)", now, snaps)
 	}
 }
 

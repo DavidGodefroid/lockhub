@@ -115,6 +115,8 @@ type Config struct {
 type Hub struct {
 	c Config
 
+	auditMu sync.Mutex // one outbox flush at a time
+
 	mu       sync.Mutex
 	waiters  map[string]chan struct{} // instance → closed on a new decision
 	queueVer uint64                   // bumped on every change of the pending queue
@@ -169,11 +171,10 @@ func hashBytes(b []byte) string {
 	return "sha256:" + hex.EncodeToString(s[:])
 }
 
-// Every state change appends its audit record inside the store
-// transaction, before the commit: if the audit write fails, the change is
-// rolled back (fail closed). A commit that fails after a successful
-// append leaves a record of an attempted change; lock audit verify
-// reports it as a record the database does not have.
+// Every state change writes its audit record in the store transaction
+// (the outbox, outbox.go), and the record goes to the audit log after the
+// commit: an uncommitted change never has an audit record, and a
+// committed one always gets one, at the latest when the hub next starts.
 
 // Push accepts a ticket from instance. Sending the same ticket again is
 // not an error (created is false).
@@ -203,6 +204,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 			return Info{}, false, ErrExpired
 		}
 	}
+	if err := h.auditReady(ctx); err != nil {
+		return Info{}, false, err
+	}
 	err = h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		if _, err := tx.Ticket(store.Ref{Instance: instance, ID: info.ID}); errors.Is(err, store.ErrNotFound) {
 			n, err := tx.CountPending(instance)
@@ -220,10 +224,10 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 		if err != nil || !created {
 			return err
 		}
-		_, err = h.c.Audit.Append(audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)})
-		return err
+		return h.audit(tx, audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)})
 	})
 	if err == nil && created {
+		h.flushAudit(ctx)
 		h.notify(queueKey)
 	}
 	return info, created, err
@@ -231,6 +235,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 
 // change applies ev to a ticket and audits it.
 func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec audit.Record) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		tk, err := tx.Ticket(ref)
 		if err != nil {
@@ -244,10 +251,10 @@ func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec aud
 			return err
 		}
 		rec.Event, rec.Ticket, rec.Instance, rec.Risk, rec.State = string(ev), ref.ID, ref.Instance, tk.Risk, string(to)
-		_, err = h.c.Audit.Append(rec)
-		return err
+		return h.audit(tx, rec)
 	})
 	if err == nil {
+		h.flushAudit(ctx)
 		h.notify(queueKey)
 	}
 	return err
@@ -313,6 +320,9 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if onDevice != (len(v.Device) > 0) || onDevice != (len(v.DeviceRecord) > 0) || onDevice != (v.Nonce != "") || onDevice != !v.At.IsZero() {
 		return nil, fmt.Errorf("%w: a mobile decision, and only one, carries the device's assertion", ErrBadRequest)
 	}
+	if err := h.auditReady(ctx); err != nil {
+		return nil, err
+	}
 	var raw []byte
 	var instance string
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
@@ -377,15 +387,15 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 			return err
 		}
 		instance = tk.Instance
-		_, err = h.c.Audit.Append(audit.Record{
+		return h.audit(tx, audit.Record{
 			Event: string(ev), Ticket: ref.ID, Instance: tk.Instance, Risk: tk.Risk, State: string(to),
 			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw), Device: v.DeviceID,
 		})
-		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	h.flushAudit(ctx)
 	h.notify(instance)
 	h.notify(queueKey)
 	return raw, nil
@@ -439,19 +449,30 @@ func (h *Hub) Decisions(ctx context.Context, instance string, since int64, wait 
 // Sweep expires pending tickets past their TTL and drops old request
 // nonces. Run it periodically.
 func (h *Hub) Sweep(ctx context.Context) error {
+	// Records of committed changes a failed flush left in the outbox; while
+	// they cannot be logged, expiries are refused like any change (Decide
+	// refuses an expired ticket by itself), and nonces are still purged.
+	ferr := h.FlushAudit(ctx)
 	now := h.c.Now()
-	ids, err := h.c.Store.DueForExpiry(ctx, now)
-	if err != nil {
-		return err
-	}
-	for _, ref := range ids {
-		err := h.change(ctx, ref, state.Expire, audit.Record{})
-		var te state.ErrTransition
-		if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
-			return err
+	var errs []error
+	if ferr == nil {
+		ids, err := h.c.Store.DueForExpiry(ctx, now)
+		if err != nil {
+			errs = append(errs, err)
 		}
+		for _, ref := range ids {
+			err := h.change(ctx, ref, state.Expire, audit.Record{})
+			var te state.ErrTransition
+			if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
+				errs = append(errs, err)
+				break
+			}
+		}
+	} else {
+		errs = append(errs, ferr)
 	}
-	return h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow))
+	errs = append(errs, h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow)))
+	return errors.Join(errs...)
 }
 
 // Field limits: what a lock or a facade sends is bounded before it
@@ -487,18 +508,27 @@ func (h *Hub) AddDevice(ctx context.Context, id string, record []byte, fingerpri
 	if len(id) > MaxID || len(fingerprint) > MaxID || len(approver) > MaxID || len(record) > 16<<10 {
 		return fmt.Errorf("%w: field too long", ErrBadRequest)
 	}
-	return h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		if err := tx.PutDevice(store.Device{ID: id, Record: record, SignCount: signCount, Created: h.c.Now()}); err != nil {
 			return err
 		}
-		_, err := h.c.Audit.Append(audit.Record{Event: "device-pair", State: store.DeviceActive, Device: id, Fingerprint: fingerprint, Approver: approver})
-		return err
+		return h.audit(tx, audit.Record{Event: "device-pair", State: store.DeviceActive, Device: id, Fingerprint: fingerprint, Approver: approver})
 	})
+	if err == nil {
+		h.flushAudit(ctx)
+	}
+	return err
 }
 
 // RevokeDevice stops a device: its decisions are refused from now on.
 func (h *Hub) RevokeDevice(ctx context.Context, id, approver string) error {
-	return h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		d, err := tx.Device(id)
 		if err != nil {
 			return err
@@ -509,9 +539,12 @@ func (h *Hub) RevokeDevice(ctx context.Context, id, approver string) error {
 		if err := tx.SetDeviceState(id, store.DeviceRevoked, h.c.Now()); err != nil {
 			return err
 		}
-		_, err = h.c.Audit.Append(audit.Record{Event: "device-revoke", State: store.DeviceRevoked, Device: id, Approver: approver})
-		return err
+		return h.audit(tx, audit.Record{Event: "device-revoke", State: store.DeviceRevoked, Device: id, Approver: approver})
 	})
+	if err == nil {
+		h.flushAudit(ctx)
+	}
+	return err
 }
 
 // Device returns a device.
