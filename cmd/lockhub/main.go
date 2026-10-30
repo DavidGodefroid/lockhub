@@ -390,7 +390,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	go func() { errc <- srv.ListenAndServe() }()
 	var extra []func(*http.ServeMux)
 	if *mobileListen != "" {
-		if r := h.Routes(); len(r.Enabled) > 0 && !slices.Contains(r.Enabled, route.Mobile) {
+		if !h.Routes().On(route.Mobile) {
 			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lock up)")
 			return 1
 		}
@@ -504,7 +504,9 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 	return out, nil
 }
 
-// loadRoutes reads routing.json (written by lock up); missing: defaults.
+// loadRoutes reads routing.json (written by lock up); missing: the zero
+// Rules, which route to the local facades only, never to a chat facade
+// (route.Rules.On).
 func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

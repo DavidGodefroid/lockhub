@@ -235,7 +235,7 @@ func buttons(c tgCall) []string {
 }
 
 func TestApproveFromAllowedPairOnly(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Telegram}})
 	id := e.push(t, ticket.RiskRead, false)
 	eventually(t, "posted to both chats", func() bool { return len(e.f.of("sendMessage")) == 2 })
 	sm := e.f.of("sendMessage")[0]
@@ -279,7 +279,7 @@ func TestApproveFromAllowedPairOnly(t *testing.T) {
 }
 
 func TestNoButtonsForProductionOrProdWrite(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Telegram}})
 	e.push(t, ticket.RiskRead, true)
 	e.push(t, ticket.RiskUnlock, false)
 	eventually(t, "posted", func() bool { return len(e.f.of("sendMessage")) == 4 })
@@ -287,6 +287,17 @@ func TestNoButtonsForProductionOrProdWrite(t *testing.T) {
 		if len(buttons(c)) != 0 || !strings.Contains(c.raw, "answer it in the terminal or the deck") {
 			t.Errorf("chat answerable: %s", c.raw)
 		}
+	}
+}
+
+// No routing (a hub without routing.json, #61): telegram is not enabled,
+// and shows nothing.
+func TestNoRoutingNotShown(t *testing.T) {
+	e := setup(t, route.Rules{})
+	e.push(t, ticket.RiskRead, false)
+	time.Sleep(200 * time.Millisecond)
+	if n := len(e.f.of("sendMessage")); n != 0 {
+		t.Fatalf("%d messages with no routing", n)
 	}
 }
 
@@ -300,7 +311,7 @@ func TestRoutedAwayNotShown(t *testing.T) {
 }
 
 func TestPayloadsHoldNoClearValuesAndNoLiveMarkup(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Telegram}})
 	e.push(t, ticket.RiskReadPII, false)
 	eventually(t, "posted", func() bool { return len(e.f.of("sendMessage")) == 2 })
 	all := e.f.all()
