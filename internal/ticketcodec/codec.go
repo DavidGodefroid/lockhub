@@ -19,6 +19,10 @@ var _ hub.Codec = Codec{}
 // KeyID names a lock key as tickets do.
 func (Codec) KeyID(k ed25519.PublicKey) string { return ticket.KeyID(k) }
 
+// TicketVersions is the one schema version lockkit's ticket package
+// verifies (it refuses any other).
+func (Codec) TicketVersions() []int { return []int{ticket.Version} }
+
 // VerifyRequest checks a Lock-Sig header value.
 func (Codec) VerifyRequest(k ed25519.PublicKey, method, pathQuery, instance string, at time.Time, nonce string, body []byte, sig string) bool {
 	msg := ticket.RequestMessage(method, pathQuery, instance, at, nonce, body)
