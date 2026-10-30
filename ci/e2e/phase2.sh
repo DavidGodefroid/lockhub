@@ -288,7 +288,7 @@ if [ -n "$sql" ]; then
 	# As lea runs an agent: its own account in the clients group, the
 	# socket volume, the workspace at its path; no network at all.
 	asagent() { docker run --rm --network none --user agent -v "${p}_db-run:/run/locksql" -v "$ws:$ws:ro" -w "$ws" "$sqlimg" "$@"; }
-	asagent plan --profile e2e --db app --json "SELECT id, email, label FROM people ORDER BY id" >plan.json 2>plan.err || { cat plan.json plan.err; die "locksql plan failed"; }
+	asagent plan --profile e2e --db app --json "SELECT id, email, label FROM people ORDER BY id LIMIT 10" >plan.json 2>plan.err || { cat plan.json plan.err; die "locksql plan failed"; }
 	plan=$(jq -r .plan_id plan.json)
 	[ -n "$plan" ] && [ "$plan" != null ] || { cat plan.json; die "no plan id"; }
 	asagent run --profile e2e --json "$plan" >run1.json 2>run1.err || true
