@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -23,9 +24,13 @@ import (
 
 	"golang.org/x/term"
 
+	lkaudit "github.com/DavidGodefroid/lockkit/audit"
+
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/family"
+	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/mobilecli"
 	"github.com/DavidGodefroid/lockhub/internal/verify"
 )
 
@@ -52,6 +57,10 @@ Usage:
                                           detach with Ctrl-P Ctrl-Q
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
+  lock mobile pair --name NAME [--file lockfamily.yaml] [--socket PATH]
+                                          pair a phone with the mobile facade (confirmed at this terminal)
+  lock mobile list|revoke NAME|ID [--file lockfamily.yaml] [--socket PATH]
+                                          list or revoke paired phones; lock up then (un)pins them at the locks
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lock version                            print the version
@@ -80,6 +89,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 0
 	case "approve":
 		return approveCmd(args[1:], stdin, stdout, stderr)
+	case "mobile":
+		return mobileCmd(args[1:], stdin, stdout, stderr)
 	case "up":
 		return upCmd(args[1:], stdin, stdout, stderr)
 	case "add":
@@ -116,7 +127,14 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	data := fs.String("data", "", "the hub's data directory")
 	keyFile := fs.String("hub-key-file", "", "the hub's public key (base64), as lock up pinned it")
+	var lockLogs lockLogFlag
+	fs.Var(&lockLogs, "lock", "INSTANCE=PATH: also verify that lock's audit log (its audit.log, or the directory holding it); repeatable")
+	anchorsFile := fs.String("anchors", "", "file keeping each lock log's anchor between runs (host only, 0600): a log cut or stripped since is refused")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *anchorsFile != "" && len(lockLogs) == 0 {
+		fmt.Fprintln(stderr, "lock audit verify: --anchors needs --lock")
 		return 2
 	}
 	if *data == "" || *keyFile == "" {
@@ -149,7 +167,82 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	if r.Outboxed > 0 {
 		fmt.Fprintf(stdout, "%d audit record(s) of committed changes not yet in the log: the hub appends them at its next start or change\n", r.Outboxed)
 	}
-	return 0
+	if len(lockLogs) == 0 {
+		return 0
+	}
+	return verifyLocks(*data, ed25519.PublicKey(pub), lockLogs, *anchorsFile, stdout, stderr)
+}
+
+// verifyLocks is lock audit verify --lock: each lock's chain, against its
+// kept anchor when there is one, and its records of hub decisions against
+// the hub's.
+func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anchorsFile string, stdout, stderr io.Writer) int {
+	anchors := map[string]lkaudit.Anchor{}
+	if anchorsFile != "" {
+		var err error
+		if anchors, err = verify.LoadAnchors(anchorsFile); err != nil {
+			fmt.Fprintln(stderr, "lock audit verify:", err)
+			return 1
+		}
+	}
+	kept := maps.Clone(anchors)
+	reps, err := verify.Locks(context.Background(), data, pub, logs, anchors)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock audit verify:", err)
+		return 1
+	}
+	code := 0
+	for _, r := range reps {
+		for _, p := range r.Problems {
+			fmt.Fprintf(stdout, "FAIL %s: %s\n", r.Instance, p)
+		}
+		if !r.OK() {
+			code = 1
+			continue
+		}
+		how := "not anchored (pass --anchors FILE to see a cut tail next time)"
+		switch {
+		case r.Anchored:
+			how = fmt.Sprintf("anchored at line %d of the last run", kept[r.Instance].Line)
+		case anchorsFile != "":
+			how = "not anchored: no anchor kept for it yet (a first run, or its entry or the file was removed)"
+		}
+		fmt.Fprintf(stdout, "OK: %s: %d audit records chained (%d before the chain), %d hub decisions match the hub's, %s\n", r.Instance, r.Records, r.Legacy, r.HubDecisions, how)
+		if r.Unsigned > 0 {
+			fmt.Fprintf(stdout, "  %s: %d of them without the hub's signature (checked on ticket, outcome, approver and facade)\n", r.Instance, r.Unsigned)
+		}
+		if r.Unrecorded > 0 {
+			fmt.Fprintf(stdout, "  %s: %d hub decision(s) on it not in this log (not acted on yet, or cut from it)\n", r.Instance, r.Unrecorded)
+		}
+		anchors[r.Instance] = r.Anchor
+	}
+	if anchorsFile != "" {
+		// Only verified logs move their anchor forward.
+		if err := verify.SaveAnchors(anchorsFile, anchors); err != nil {
+			fmt.Fprintln(stderr, "lock audit verify:", err)
+			return 1
+		}
+	}
+	return code
+}
+
+// lockLogFlag is the repeatable --lock INSTANCE=PATH.
+type lockLogFlag []verify.LockLog
+
+func (f *lockLogFlag) String() string { return "" }
+
+func (f *lockLogFlag) Set(v string) error {
+	inst, path, ok := strings.Cut(v, "=")
+	if !ok || !keys.ValidInstance(inst) || path == "" {
+		return fmt.Errorf("want INSTANCE=PATH, got %q", v)
+	}
+	for _, l := range *f {
+		if l.Instance == inst {
+			return fmt.Errorf("--lock %s given twice", inst)
+		}
+	}
+	*f = append(*f, verify.LockLog{Instance: inst, Path: path})
+	return nil
 }
 
 func runtimeDir() string {
@@ -593,5 +686,56 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", abs, len(tg.Chats))
+	return 0
+}
+
+func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	const use = "usage: lock mobile pair --name NAME | list | revoke NAME|ID  [--file lockfamily.yaml] [--socket PATH]"
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, use)
+		return 2
+	}
+	sub := args[0]
+	fs := flag.NewFlagSet("mobile "+sub, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
+	name := fs.String("name", "", "the phone's name (a-z, 0-9, -)")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return 2
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock mobile:", err)
+		return 1
+	}
+	state := stateDir(family.Project(filepath.Dir(abs)))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	c := mobilecli.Dial(*sock)
+	switch {
+	case sub == "pair" && len(pos) == 0 && *name != "":
+		if fi, err := stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+			fmt.Fprintln(stderr, "lock mobile pair: the device is confirmed at a terminal; stdin is not one")
+			return 1
+		}
+		// The origin lock up applied (reviewed), not the yaml as it is now.
+		var origin string
+		if origin, err = family.AppliedMobileOrigin(state); err == nil {
+			err = mobilecli.Pair(ctx, c, *name, origin, state, bufio.NewReader(stdin), stdout)
+		}
+	case sub == "list" && len(pos) == 0:
+		err = mobilecli.List(ctx, c, state, stdout)
+	case sub == "revoke" && len(pos) == 1:
+		err = mobilecli.Revoke(ctx, c, pos[0], state, stdout)
+	default:
+		fmt.Fprintln(stderr, use)
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "lock mobile:", err)
+		return 1
+	}
 	return 0
 }

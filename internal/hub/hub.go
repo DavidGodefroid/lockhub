@@ -35,6 +35,9 @@ type Info struct {
 	// Production tickets with a Retype need the human to type it.
 	Production bool
 	Retype     string
+	// Raw is the ticket as the lock signed it (set by Decide for the
+	// codec: a device signs its hash).
+	Raw []byte
 }
 
 // Verdict is a human's answer, as a facade reports it.
@@ -48,6 +51,15 @@ type Verdict struct {
 	Facade          string
 	// Retype is what the human typed, for production tickets.
 	Retype string
+	// A decision taken on a device (facade mobile) comes with the nonce
+	// and time the device signed, its assertion and its record (the
+	// codec checks the assertion before signing). Nothing else may carry
+	// them.
+	Nonce        string
+	At           time.Time
+	Device       []byte // the assertion, JSON
+	DeviceID     string
+	DeviceRecord []byte
 }
 
 // Codec is the ticket format: lockkit's ticket package in production,
@@ -78,6 +90,7 @@ var (
 	ErrNotRouted   = errors.New("this facade may not decide this ticket")
 	ErrBadRequest  = errors.New("bad request")
 	ErrRetype      = errors.New("approving this production ticket needs its name typed exactly")
+	ErrDevice      = errors.New("device refused")
 )
 
 // DefaultMaxPending is the hub's cap on an instance's pending tickets.
@@ -131,6 +144,9 @@ func (h *Hub) LockKey(instance string) (ed25519.PublicKey, bool) {
 	k, ok := h.c.Locks[instance]
 	return k, ok
 }
+
+// PublicKey is the hub's signing key, public half.
+func (h *Hub) PublicKey() ed25519.PublicKey { return h.c.Key.Public().(ed25519.PublicKey) }
 
 // Routes is the routing in force.
 func (h *Hub) Routes() route.Rules { return h.c.Routes }
@@ -303,6 +319,10 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID {
 		return nil, fmt.Errorf("%w: field too long", ErrBadRequest)
 	}
+	onDevice := v.Facade == route.Mobile
+	if onDevice != (len(v.Device) > 0) || onDevice != (len(v.DeviceRecord) > 0) || onDevice != (v.Nonce != "") || onDevice != !v.At.IsZero() {
+		return nil, fmt.Errorf("%w: a mobile decision, and only one, carries the device's assertion", ErrBadRequest)
+	}
 	if err := h.auditReady(ctx); err != nil {
 		return nil, err
 	}
@@ -332,6 +352,22 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if err != nil {
 			return fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 		}
+		info.Raw = tk.Raw
+		at := now
+		if onDevice {
+			// The time the device signed: recent, not ahead of the hub.
+			if v.At.After(now.Add(h.c.MaxSkew)) || v.At.Before(now.Add(-DeviceWindow)) {
+				return fmt.Errorf("%w: the device's decision is dated %s", ErrDevice, v.At.Format(time.RFC3339))
+			}
+			if !tk.Expires.IsZero() && v.At.After(tk.Expires) {
+				return ErrExpired
+			}
+			d, err := tx.Device(v.DeviceID)
+			if err != nil || d.State != store.DeviceActive || string(d.Record) != string(v.DeviceRecord) {
+				return fmt.Errorf("%w: device %s is not active", ErrDevice, v.DeviceID)
+			}
+			at = v.At
+		}
 		// Production tickets are answered where the human can see them:
 		// never on a chat facade, whatever the facade itself checks.
 		if info.Production && !route.CanReveal(v.Facade) {
@@ -340,8 +376,11 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if v.Approved && info.Production && info.Retype != "" && v.Retype != info.Retype {
 			return ErrRetype
 		}
-		raw, err = h.c.Codec.SignDecision(h.c.Key, info, v, now)
+		raw, err = h.c.Codec.SignDecision(h.c.Key, info, v, at)
 		if err != nil {
+			if onDevice {
+				return fmt.Errorf("%w: %v", ErrDevice, err)
+			}
 			return err
 		}
 		if err := tx.SetState(ref, tk.State, to, now); err != nil {
@@ -353,7 +392,7 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		instance = tk.Instance
 		return h.audit(tx, audit.Record{
 			Event: string(ev), Ticket: ref.ID, Instance: tk.Instance, Risk: tk.Risk, State: string(to),
-			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw),
+			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw), Device: v.DeviceID,
 		})
 	})
 	if err != nil {
@@ -461,3 +500,82 @@ func validID(id string) bool {
 
 // RequestWindow is how far a lock request's time may be from the hub's.
 const RequestWindow = time.Minute
+
+// DeviceWindow is how long a device's signed decision stays acceptable
+// to the hub after the time it signed.
+const DeviceWindow = 5 * time.Minute
+
+// AddDevice records a device the human confirmed on the host (approver:
+// who confirmed), with its record and fingerprint.
+func (h *Hub) AddDevice(ctx context.Context, id string, record []byte, fingerprint, approver string, signCount uint32) error {
+	if len(id) > MaxID || len(fingerprint) > MaxID || len(approver) > MaxID || len(record) > 16<<10 {
+		return fmt.Errorf("%w: field too long", ErrBadRequest)
+	}
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+		if err := tx.PutDevice(store.Device{ID: id, Record: record, SignCount: signCount, Created: h.c.Now()}); err != nil {
+			return err
+		}
+		return h.audit(tx, audit.Record{Event: "device-pair", State: store.DeviceActive, Device: id, Fingerprint: fingerprint, Approver: approver})
+	})
+	if err == nil {
+		h.flushAudit(ctx)
+	}
+	return err
+}
+
+// RevokeDevice stops a device: its decisions are refused from now on.
+func (h *Hub) RevokeDevice(ctx context.Context, id, approver string) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+		d, err := tx.Device(id)
+		if err != nil {
+			return err
+		}
+		if d.State == store.DeviceRevoked {
+			return nil
+		}
+		if err := tx.SetDeviceState(id, store.DeviceRevoked, h.c.Now()); err != nil {
+			return err
+		}
+		return h.audit(tx, audit.Record{Event: "device-revoke", State: store.DeviceRevoked, Device: id, Approver: approver})
+	})
+	if err == nil {
+		h.flushAudit(ctx)
+	}
+	return err
+}
+
+// Device returns a device.
+func (h *Hub) Device(ctx context.Context, id string) (store.Device, error) {
+	var d store.Device
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+		var err error
+		d, err = tx.Device(id)
+		return err
+	})
+	return d, err
+}
+
+// UseCounter records the authenticator counter n of an assertion of an
+// active device. A counter that does not grow (when either is not 0) is
+// a cloned authenticator: refused.
+func (h *Hub) UseCounter(ctx context.Context, id string, n uint32) error {
+	return h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+		d, err := tx.Device(id)
+		if err != nil {
+			return err
+		}
+		if d.State != store.DeviceActive {
+			return fmt.Errorf("%w: device %s is %s", ErrDevice, id, d.State)
+		}
+		if (n != 0 || d.SignCount != 0) && n <= d.SignCount {
+			return fmt.Errorf("%w: the authenticator counter went from %d to %d", ErrDevice, d.SignCount, n)
+		}
+		return tx.SetSignCount(id, n, h.c.Now())
+	})
+}

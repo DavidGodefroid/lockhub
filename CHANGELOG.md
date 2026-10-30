@@ -35,6 +35,42 @@ digest).
   and of the hub for a new workspace, by digest, once cosign verified it
   was signed by that repository's release workflow for that tag.
   `--image` still pins one by hand.
+- Mobile facade (#10): an installable web app (embedded, no build step) on
+  its own listener, published on host loopback for the human's TLS reverse
+  proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones
+  pair with `lock mobile pair` (one-time code, WebAuthn registration with
+  user verification, fingerprint confirmed at the terminal); `lock up`
+  reviews paired devices and pins them at the locks that set
+  `devices: true` (`--devices-file`; their image needs lockkit ≥ v0.4.0),
+  with `seal_clear` (clear screens sealed end to end to the phones) and
+  `require_device` (locks refuse approvals of those risk classes not
+  signed by a phone). Each decision on the phone is a WebAuthn assertion
+  over the decision and the hash of the lock's signed ticket, checked by
+  the hub before it signs and by the locks after (lockkit v0.4.0). Sign
+  counters, single-use challenges and drafts, `__Host-` session cookie,
+  Origin and custom-header checks on every POST, strict CSP. The phone
+  answers every risk class but `unlock`. Audit records carry the device;
+  device pairings and revocations are audited. `lock mobile list|revoke`;
+  `lock doctor` reports devices paired since the last `lock up`.
+- Requires lockkit v0.4.0 (compatible: tickets and decisions without
+  devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+- `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
+  lock-side audit logs (lockkit's `audit.log`, or its directory): the
+  chain (lockkit `audit.Verify`), and every record of a hub decision
+  (`approval: hub` approved or denied, or any record with `hub_sig`)
+  against the decision the hub signed for that instance and ticket: same
+  outcome, approver and facade, and same signature when the record has
+  one (locksql does not record `hub_sig` yet: its records are checked on
+  the rest, and counted). A record whose hub fields do not read fails.
+  Hub decisions the log has no record of are counted (not acted on yet,
+  or cut). With `--anchors FILE` (host only, 0600) each verified log's
+  anchor is kept between runs and the next run uses lockkit
+  `audit.VerifyAnchored`, so a log cut before it or stripped of its chain
+  is refused; a failed log keeps its old anchor (a cut after the anchor
+  is not seen until the next run). A second hub approval of one ticket
+  fails. Not checked: records a hub-mode lock should not write at all
+  (a local approval).
+
 - `lock doctor` asks the hub for its queue over the facade socket: it
   says whether the hub answers, shows the pending caps and rate limit
   (lockkit's defaults: each lock 20 pending plans, 10 new tickets per

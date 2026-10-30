@@ -4,8 +4,11 @@
 //
 //	facade            read  read-pii  write  prod-write  policy-loosen  unlock  reveal
 //	tty, deck          yes    yes      yes      yes          yes         yes     yes
-//	mobile             yes    yes      yes      yes          yes         yes     yes
+//	mobile             yes    yes      yes      yes          yes         no      yes
 //	slack, telegram    yes    yes      yes      no           no          no      no
+//
+// Mobile decisions are signed by the device itself (locks verify them);
+// unlock stays off mobile until secrets can be typed there.
 //
 // A workspace's configuration can only narrow this table (remove facades
 // for an instance), never widen it.
@@ -42,6 +45,8 @@ var (
 	local = []string{TTY, Deck, Mobile}
 	// chatRisks are what a chat facade may answer.
 	chatRisks = []string{Read, ReadPII, Write}
+	// mobileRisks are what the mobile facade may answer.
+	mobileRisks = []string{Read, ReadPII, Write, ProdWrite, PolicyLoosen}
 )
 
 // KnownFacade reports whether f is a facade name.
@@ -67,6 +72,8 @@ func (r Rules) Allowed(inst, f, risk string) error {
 		return fmt.Errorf("unknown facade %q", f)
 	case !KnownRisk(risk):
 		return fmt.Errorf("unknown risk class %q", risk)
+	case f == Mobile && !slices.Contains(mobileRisks, risk):
+		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
 	case !slices.Contains(local, f) && !slices.Contains(chatRisks, risk):
 		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
 	}
