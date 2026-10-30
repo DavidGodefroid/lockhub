@@ -226,7 +226,8 @@ func TestConfigRefusals(t *testing.T) {
 		"wrong repo":                strings.Replace(yamlConf(""), sqlImg, strings.Replace(sqlImg, "locksql", "lockmq", 1), 1),
 		"bad routing":               yamlConf("  routing:\n    crm-prod: [slack]\n"),
 		"unknown lock":              yamlConf("  routing:\n    nope: [tty]\n"),
-		"allowed_uids on locksql":   strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    allowed_uids: [1000]", 1),
+		"allowed_uids locksql's":    strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    allowed_uids: [10001]", 1),
+		"allowed_uids locksql root": strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    allowed_uids: [1000, 0]", 1),
 		"allowed_uids root":         strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [0]", 1),
 		"allowed_uids negative":     strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [-1]", 1),
 		"allowed_uids too big":      strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [4294967295]", 1),
@@ -325,6 +326,32 @@ func TestAllowedUIDs(t *testing.T) {
 	got, _ = w.up("", &fake{keys: f.keys})
 	if !strings.Contains(got, "- lock events serves uids 1000 besides") || strings.Contains(got, "+ lock events serves") {
 		t.Errorf("a removed allowed_uids is not reviewed:\n%s", got)
+	}
+}
+
+// A locksql lock takes allowed_uids too (locksql v0.11.2): its console
+// gets --allowed-uids, the review shows it, and no other lock gets it.
+func TestAllowedUIDsLocksql(t *testing.T) {
+	conf := strings.Replace(yamlConf(""), "    image: "+sqlImg+"\n", "    image: "+sqlImg+"\n    allowed_uids: [1000]\n", 1)
+	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	os.WriteFile(p, []byte(conf), 0o644)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"})
+	sql := out[strings.Index(out, "  lock-crm-prod:"):]
+	sql = sql[:strings.Index(sql, "\n  lock-events:")]
+	if n := strings.Count(out, `"--allowed-uids"`); n != 1 || !strings.Contains(sql, `command: ["console", "--allowed-uids", "1000", "--hub"`) {
+		t.Errorf("compose: %d --allowed-uids:\n%s", n, out)
+	}
+	w := newWS(t, conf)
+	got, err := w.up("y\n", newFake())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, got)
+	}
+	if !strings.Contains(got, "lock crm-prod serves uids 1000 besides its clients group (allowed_uids)") || strings.Contains(got, "lock events serves uids") {
+		t.Errorf("review of allowed_uids:\n%s", got)
 	}
 }
 

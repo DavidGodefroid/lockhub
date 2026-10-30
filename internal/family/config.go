@@ -127,11 +127,11 @@ type Lock struct {
 	// lock refuses reveals; renewals need no facade key.
 	Reveal bool `yaml:"reveal,omitempty"`
 	// AllowedUIDs may reach the lock's console besides the members of its
-	// clients group (`console --allowed-uids`, lockmq v0.4.1 and lockfile
-	// v0.5.1 or later): the uid lea's agents run as (the host user's),
-	// which names no account in the lock's image. lockmq and lockfile
-	// only: locksql's console takes no such flag yet, and a lockhttp lock
-	// is reached by lea's gate, an account of its image.
+	// clients group (`console --allowed-uids`, locksql v0.11.2, lockmq
+	// v0.4.1 and lockfile v0.5.1 or later): the uid lea's agents run as
+	// (the host user's), which names no account in the lock's image.
+	// Not on lockhttp: a lockhttp lock is reached by lea's gate, an
+	// account of its image.
 	AllowedUIDs UIDList `yaml:"allowed_uids,omitempty"`
 }
 
@@ -172,7 +172,7 @@ func (u UIDList) MarshalYAML() (any, error) {
 }
 
 // AllowedUIDTypes are the lock types whose console takes --allowed-uids.
-var AllowedUIDTypes = []string{"lockmq", "lockfile"}
+var AllowedUIDTypes = []string{"locksql", "lockmq", "lockfile"}
 
 // validAllowedUIDs checks a lock's allowed_uids: uids (not root, not the
 // console's own, not -1), each once, for a type that takes them.

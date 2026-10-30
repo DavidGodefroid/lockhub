@@ -70,6 +70,12 @@ for l in $LOCKS; do
 	"$lock" add "${l#*:}" "${l%%:*}"
 done
 local_hub .lockfamily/lockfamily.yaml
+# lea's agents run as the host user's uid, which has no account in the
+# lock's image: the locksql lock names one (allowed_uids, locksql v0.11.2).
+if [ -n "$sql" ]; then
+	sed -i '/^  db:$/a\    allowed_uids: [4242]' .lockfamily/lockfamily.yaml
+	grep -q '^    allowed_uids: \[4242\]$' .lockfamily/lockfamily.yaml || die "allowed_uids not added to the db lock"
+fi
 # The layout before .lockfamily: lockfamily.yaml at the workspace's root.
 mv .lockfamily/lockfamily.yaml lockfamily.yaml
 rmdir .lockfamily
@@ -132,6 +138,7 @@ grep -q "up: project " up.out || die "lock up did not finish"
 grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
 [ -z "$sql" ] || grep -q "  profile locksql " up.out || die "the locksql profile is not in the review"
+[ -z "$sql" ] || grep -q "lock db serves uids 4242 besides its clients group" up.out || die "the db lock's allowed_uids is not in the review"
 say "I11: the legacy root file is read with a warning and copied, exactly as reviewed; the human removes it"
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"
 grep -qF "lockfamily.yaml now lives in $ws/.lockfamily/lockfamily.yaml (lea's agents only read it there); remove $ws/lockfamily.yaml" up.out || die "the legacy file was not copied into .lockfamily"
@@ -301,6 +308,17 @@ if [ -n "$sql" ]; then
 	# As lea runs an agent: its own account in the clients group, the
 	# socket volume, the workspace at its path; no network at all.
 	asagent() { docker run --rm --network none --user agent -v "${p}_db-run:/run/locksql" -v "$ws:$ws:ro" -w "$ws" "$sqlimg" "$@"; }
+	# As lea runs its agents: a uid with no account in the image (the
+	# host user's), in the clients group. allowed_uids names 4242 only.
+	asuid() { docker run --rm --network none --user "$1:$1" --group-add 10000 -e HOME=/tmp -v "${p}_db-run:/run/locksql" -v "$ws:$ws:ro" -w "$ws" "$sqlimg" status --profile e2e; }
+	ok=""
+	for i in $(seq 1 30); do
+		if asuid 4242 >uid4242.out 2>&1; then ok=1; break; fi
+		sleep 2
+	done
+	[ -n "$ok" ] || { cat uid4242.out; die "uid 4242 (allowed_uids) refused by the locksql lock"; }
+	asuid 4243 >uid4243.out 2>&1 && { cat uid4243.out; die "uid 4243 (not in allowed_uids) served by the locksql lock"; }
+	grep -q "closed the connection" uid4243.out || { cat uid4243.out; die "uid 4243: not refused by the console"; }
 	# A literal the agent typed, shaped as a personal value (on a column
 	# that is not personal: locksql limits how a PII column is filtered): the
 	# screen that leaves the lock masks every literal (locksql's
