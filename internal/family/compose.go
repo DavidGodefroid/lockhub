@@ -190,7 +190,7 @@ func Compose(c *Config, p Paths) string {
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)
 			cmd = append(cmd, deviceArgs(c, l, p)...)
-			if p.Facades != "" {
+			if p.Facades != "" && l.Reveal {
 				cmd = append(cmd, "--facade-keys-file", LockFacadesPath)
 			}
 		}
@@ -237,7 +237,7 @@ func Compose(c *Config, p Paths) string {
 			w("        target: /run/lockfamily-devices/devices.json")
 			w("        read_only: true")
 		}
-		if p.Facades != "" && !k.Gate {
+		if p.Facades != "" && l.Reveal && !k.Gate {
 			w("      - type: bind")
 			w("        source: %s", q(p.Facades))
 			w("        target: %s", q(LockFacadesPath))

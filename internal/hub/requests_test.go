@@ -139,14 +139,16 @@ func TestAnswerValidation(t *testing.T) {
 		bad  bool   // the lock's answer is refused
 	}{
 		"free text error":   {body: `{"error":"SELECT secret FROM t failed"}`, want: "failed"},
-		"two members":       {body: `{"reveal":{},"error":"failed"}`, bad: true},
+		"two members":       {body: `{"reveal":{},"error":"failed"}`, want: "failed", bad: true},
 		"ticket to reveal":  {body: `{"ticket":"X1"}`, want: "failed", bad: true},
 		"not an object":     {body: `{"reveal":"text"}`, want: "failed", bad: true},
-		"oversized":         {body: `{"reveal":{"x":"` + strings.Repeat("a", hub.MaxAnswer) + `"}}`, bad: true},
+		"oversized":         {body: `{"reveal":{"x":"` + strings.Repeat("a", hub.MaxAnswer) + `"}}`, want: "failed", bad: true},
 		"policy_changed ok": {body: `{"error":"policy_changed"}`, want: "policy_changed"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 2 * time.Second }, a)
+			// A refused answer ends the request at once: the facade hears
+			// "failed" well before RequestWait.
+			e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = time.Minute }, a)
 			e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
 			done := make(chan error, 1)
 			go func() {

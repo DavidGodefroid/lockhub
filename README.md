@@ -73,12 +73,17 @@ locks:
     type: locksql
     image: ghcr.io/davidgodefroid/locksql@sha256:…
     devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
+    reveal: true                         # Ctrl-O reveals on tty/deck (lockkit ≥ v0.5.0)
 ```
 
 A lock without `devices: true` pins no phone: `lock up` routes it away from
 mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
 hub's approvals from the other facades as before). The review names what each
 lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
+Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
+lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lock
+approve` or lea's deck can show its clear screen; without it the lock refuses
+reveals.
 
 **Exposure.** `lock up` publishes the mobile listener on `127.0.0.1:8444`
 only. The phone reaches it through a TLS reverse proxy or tunnel that you run

@@ -5,9 +5,13 @@ digest).
 
 ## Unreleased
 
-Builds on lockkit v0.6.0. Reveals and renewals need locks built on lockkit
-v0.5.0 or later; older locks ignore the new `requests` member of the
-decisions poll. A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
+Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
+start with the generated commands. Reveals and renewals need locks built on
+lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
+decisions poll: the facade's request times out). A reveal also needs
+`reveal: true` on the lock in `lockfamily.yaml` (opt-in, like `devices`:
+only then does `lock up` pass `--facade-keys-file`, which older images
+refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
 - Mobile facade: optional Web Push (`hub.mobile.push: true` →
@@ -164,11 +168,15 @@ could not check them now) are shown as such, and never allow one click.
   - `lock up` creates per-user tty and deck facade keys
     (`$XDG_STATE_HOME/lockfamily/facades/`, 0600), reviews them
     (`facade tty key …`), mounts their public halves read-only in every lock
-    at `/run/lockfamily-facades/facades.json` with `--facade-keys-file`, and keeps a
-    host-only copy of the pinned lock keys there for facades to verify a
-    lock's answers. up.json carries the same set (`facade_keys`) for lea's
-    lockhttp gate (`--facade-keys-file`, lockhttp#16), which lock up does
-    not run.
+    with `reveal: true` at `/run/lockfamily-facades/facades.json` with
+    `--facade-keys-file` (reviewed: `lock … pins the host facades' keys`),
+    and keeps a host-only copy of the pinned lock keys there for facades to
+    verify a lock's answers. up.json carries the same set (`facade_keys`)
+    and each lock's `reveal` for lea's lockhttp gate (`--facade-keys-file`,
+    lockhttp#16, lockhttp v0.5.0 or later), which lock up does not run.
+  - A renewal routed to mobile with Web Push on may send a push for a
+    ticket the one-click path approves a moment later (the push carries no
+    content; the phone then finds nothing waiting).
   - `lock approve`: `o` reveals (Ctrl-O too where the terminal passes it;
     macOS keeps ^O), clearly marked and escaped; `r` on an expired ticket
     approves it again; a renewal shows what changed.

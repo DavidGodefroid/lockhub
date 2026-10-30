@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -347,7 +348,9 @@ func TestConfigChangeRecreatesHub(t *testing.T) {
 // lock up pins the host facades' keys in every lock: created once,
 // private on the host, reviewed like any key, mounted read-only.
 func TestFacadeKeys(t *testing.T) {
-	w := newWS(t, yamlConf(""))
+	// crm-prod opts in to reveals (its image takes --facade-keys-file);
+	// events does not, and gets neither the flag nor the mount.
+	w := newWS(t, strings.Replace(yamlConf(""), "    image: "+sqlImg+"\n", "    image: "+sqlImg+"\n    reveal: true\n", 1))
 	f := newFake()
 	out, err := w.up("y\n", f)
 	if err != nil {
@@ -387,6 +390,17 @@ func TestFacadeKeys(t *testing.T) {
 	if !strings.Contains(string(compose), `"--facade-keys-file", "/run/lockfamily-facades/facades.json"`) ||
 		!strings.Contains(string(compose), `target: "/run/lockfamily-facades/facades.json"`) {
 		t.Errorf("compose:\n%s", compose)
+	}
+	if n := strings.Count(string(compose), "/run/lockfamily-facades/facades.json"); n != 2 {
+		t.Errorf("the facade keys go to crm-prod only (flag and mount), %d mentions:\n%s", n, compose)
+	}
+	if !strings.Contains(out, "lock crm-prod pins the host facades' keys") || strings.Contains(out, "lock events pins the host facades") {
+		t.Errorf("review of the reveals:\n%s", out)
+	}
+	var us UpState
+	if b, err := os.ReadFile(filepath.Join(filepath.Dir(w.file), UpFile)); err != nil || json.Unmarshal(b, &us) != nil ||
+		!us.Locks["crm-prod"].Reveal || us.Locks["events"].Reveal {
+		t.Errorf("up.json reveal flags: %+v %v", us.Locks, err)
 	}
 	// Second run: same keys, nothing to review.
 	out, err = w.up("", &fake{keys: f.keys})

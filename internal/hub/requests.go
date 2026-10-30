@@ -219,14 +219,11 @@ func (h *Hub) ask(ctx context.Context, q Request) (Answer, error) {
 // one of reveal (the lock's signed answer), ticket (a renewal's id) or
 // error (a code of AnswerCodes; any other text becomes "failed": a lock's
 // error text is never passed on).
+//
+// The request is looked up first: an answer the hub cannot use (too
+// large, not one member) ends it "failed" at once, so the facade is not
+// left waiting for the request's timeout.
 func (h *Hub) AnswerRequest(instance, id string, body []byte) error {
-	if len(body) > MaxAnswer {
-		return fmt.Errorf("%w: answer over %d bytes", ErrBadRequest, MaxAnswer)
-	}
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(body, &m); err != nil || len(m) != 1 {
-		return fmt.Errorf("%w: an answer is an object with one member", ErrBadRequest)
-	}
 	h.mu.Lock()
 	r := h.reqs[instance][id]
 	if r == nil || !h.c.Now().Before(r.expires) {
@@ -235,11 +232,19 @@ func (h *Hub) AnswerRequest(instance, id string, body []byte) error {
 	}
 	delete(h.reqs[instance], id)
 	h.mu.Unlock()
-	var a Answer
-	bad := func(why string) error {
+	fail := func(err error) error {
 		r.done <- Answer{Error: "failed"}
-		return fmt.Errorf("%w: %s", ErrBadAnswer, why)
+		return err
 	}
+	if len(body) > MaxAnswer {
+		return fail(fmt.Errorf("%w: answer over %d bytes", ErrBadRequest, MaxAnswer))
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil || len(m) != 1 {
+		return fail(fmt.Errorf("%w: an answer is an object with one member", ErrBadRequest))
+	}
+	var a Answer
+	bad := func(why string) error { return fail(fmt.Errorf("%w: %s", ErrBadAnswer, why)) }
 	switch {
 	case m["reveal"] != nil:
 		v := bytes.TrimSpace(m["reveal"])

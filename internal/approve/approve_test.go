@@ -203,3 +203,23 @@ func TestScreenShowsRenewalChanges(t *testing.T) {
 		}
 	}
 }
+
+// An expired ticket (lock approve renew) says how long ago, never a
+// negative "expires in".
+func TestScreenExpiredTicket(t *testing.T) {
+	now := time.Now()
+	raw := []byte(`{"id":"O1","source":{"lock":"locksql"},"screen":{"header":"h"}}`)
+	for _, c := range []struct {
+		at   time.Time
+		want string
+	}{{now.Add(-2 * time.Hour), "expired 2h0m0s ago"}, {now.Add(time.Hour), "expires in 1h0m0s"}} {
+		at := c.at
+		out, _, err := approve.Screen(api.QueueItem{ID: "O1", Instance: "crm", Risk: "write", Ticket: raw, Expires: &at}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, c.want) || strings.Contains(out, "expires in -") {
+			t.Errorf("screen lacks %q:\n%s", c.want, out)
+		}
+	}
+}

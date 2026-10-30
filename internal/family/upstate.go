@@ -45,6 +45,11 @@ type UpLock struct {
 	GateHome string `json:"gate_home_volume,omitempty"`
 	// GID is the console's clients group, which lea's agents join.
 	GID string `json:"client_gid"`
+	// Reveal: the lock pins the host facades' keys (lockfamily.yaml
+	// reveal: true). For a lockhttp instance, lea's gate then passes
+	// --facade-keys-file with FacadeKeys; otherwise it does not (an
+	// older gate refuses the flag).
+	Reveal bool `json:"reveal,omitempty"`
 }
 
 // NewUpState is the contract for c, run as compose project project.
@@ -53,7 +58,7 @@ func NewUpState(c *Config, project, ws, hubKey string) UpState {
 		HubURL: "http://lockhub:8443", HubKey: hubKey, Locks: map[string]UpLock{}}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
-		ul := UpLock{Type: l.Type, Profile: l.Profile, Socket: project + "_" + n + "-run", GID: Kinds[l.Type].GID}
+		ul := UpLock{Type: l.Type, Profile: l.Profile, Socket: project + "_" + n + "-run", GID: Kinds[l.Type].GID, Reveal: l.Reveal}
 		if Kinds[l.Type].Gate {
 			ul.GateHome = project + "_" + n + "-gate"
 		}

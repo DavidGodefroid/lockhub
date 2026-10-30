@@ -114,6 +114,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		if l.Profile != "" {
 			s = append(s, fmt.Sprintf("lock %s profile %s", n, l.Profile))
 		}
+		if l.Reveal {
+			s = append(s, fmt.Sprintf("lock %s pins the host facades' keys: Ctrl-O reveals its clear screen", n))
+		}
 		if m := c.Hub.Mobile; m != nil {
 			if !l.Devices {
 				s = append(s, fmt.Sprintf("lock %s pins no device: not answered on mobile", n))

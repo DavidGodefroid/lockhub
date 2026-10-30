@@ -133,7 +133,11 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 	fmt.Fprintf(&b, "%s · %s · %s%s\n", clean(t.Source.Lock), clean(it.Instance), clean(it.Risk), prod)
 	fmt.Fprintf(&b, "ticket %s · asked by (unverified) %s · workspace %s\n", clean(it.ID), clean(t.Requester.Agent), clean(t.Workspace))
 	if it.Expires != nil {
-		fmt.Fprintf(&b, "expires in %s\n", it.Expires.Sub(now).Round(time.Minute))
+		if d := it.Expires.Sub(now).Round(time.Minute); d >= 0 {
+			fmt.Fprintf(&b, "expires in %s\n", d)
+		} else {
+			fmt.Fprintf(&b, "expired %s ago\n", -d)
+		}
 	}
 	fmt.Fprintln(&b, rule)
 	if t.Screen.Header != "" {
