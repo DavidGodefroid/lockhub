@@ -69,8 +69,8 @@ jobs:
       - name: Postgres for the locksql lock
         run: |
           docker run -d --name "e2e-pg-${{ github.run_id }}" -p 5432:5432 -e POSTGRES_PASSWORD=e2e-only postgres:17 >/dev/null
-          for i in $(seq 1 60); do docker exec "e2e-pg-${{ github.run_id }}" pg_isready -U postgres -q && break; sleep 1; done
-          docker exec "e2e-pg-${{ github.run_id }}" pg_isready -U postgres
+          for i in $(seq 1 60); do docker exec "e2e-pg-${{ github.run_id }}" pg_isready -h 127.0.0.1 -U postgres -q && break; sleep 1; done
+          docker exec "e2e-pg-${{ github.run_id }}" pg_isready -h 127.0.0.1 -U postgres
       - name: phase 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -123,10 +123,11 @@ in its own home volume instead (`LOCKSQL_PII_DIR`, locksql v0.11.0 or later):
 its first start writes the first rule set there after your review at its
 terminal, as do `pii add` and the later PII proposals. The rule sets of
 `.locksql/pii/` in the workspace, if any, are copied in once; from then on
-the console's copy is in force: at each start it takes the profile's new mask
-rules (a tightening you made in the workspace and lock up reviewed), never
-what would loosen it (allow rules, removed masks), which you change at the
-console. A locksql image older than v0.11.0 ignores the variable and cannot
+the console's copy is in force (`/home/locksql/pii-rules/pii/<set>.toml` in
+the volume `<project>_<instance>-home`): at each start it takes the
+profile's new mask rules (a tightening you made in the workspace and lock up
+reviewed), never what would loosen it or change its mode (allow rules,
+removed masks, mode changes), which you change at the console. A locksql image older than v0.11.0 ignores the variable and cannot
 write its first rule set: `lock add locksql <instance>` again pins a newer
 release.
 

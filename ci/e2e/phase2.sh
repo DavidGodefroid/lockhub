@@ -17,7 +17,9 @@
 # Locks: LOCKS="name:type ..." (default: locksql db, LockHTTP web and api);
 # a lockhttp named "web" is the gate, "api" the control gate without
 # --hub-net, a locksql named "db" serves Postgres at PGHOST:PGPORT
-# (superuser postgres, password PGPASSWORD; the job's service container).
+# (superuser postgres, password PGPASSWORD, both required by default: a
+# throwaway server, the workflow's container; the script creates the app
+# database and the ro role in it).
 #
 # The deck facade (lea's deck, lea#182/#200) is not driven here: lea
 # routes a hub ticket only to the deck of the lea container whose agent
