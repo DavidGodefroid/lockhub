@@ -5,6 +5,14 @@ digest).
 
 ## Unreleased
 
+Supported locks: as v0.2.2, plus locksql v0.11.1 (lockkit v0.7.1), the
+first locksql whose audit records of hub decisions carry `hub_sig`
+(locksql#118): `lock audit verify --lock` checks its approvals, denials
+and renewals against the hub's signed decisions instead of counting them
+unsigned.
+
+- CI: phase 5 fails on a `lock doctor` failure (#63).
+
 ## v0.2.2 (2026-10-30)
 
 Supported locks: as v0.2.1. `lock add` now pins locksql v0.11.0 or later
