@@ -194,10 +194,23 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		return
 	}
 	noKeys := func(s []string) []string {
-		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") || strings.HasPrefix(l, "hub secret ") })
+		return slices.DeleteFunc(slices.Clone(s), func(l string) bool {
+			return strings.Contains(l, " key ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ")
+		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil))); len(ch) > 0 {
 		warn("lockfamily.yaml changed since the last lock up (run lock up to review it): %s", strings.Join(ch, "; "))
+	}
+	// Devices paired or revoked since: the locks pin them at the next lock up.
+	if devs, err := ReadDevices(d.State); err != nil {
+		warn("paired devices: %v", err)
+	} else {
+		onlyDevices := func(s []string) []string {
+			return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return !strings.HasPrefix(l, "device ") })
+		}
+		if ch := diff(onlyDevices(a.Summary), devicesSummary(devs)); len(ch) > 0 {
+			warn("paired devices changed since the last lock up (run lock up to pin them at the locks): %s", strings.Join(ch, "; "))
+		}
 	}
 	// The hub reads its chat tokens at start: one rotated since is not in
 	// use until lock up recreates it. Only tokens the last lock up applied

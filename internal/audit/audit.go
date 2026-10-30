@@ -44,6 +44,10 @@ type Record struct {
 	Reason   string `json:"reason,omitempty"`
 	// Decision is the hash of the signed decision, when there is one.
 	Decision string `json:"decision,omitempty"`
+	// Device is the approval device of a mobile decision or of a device
+	// event (pair, revoke), Fingerprint its record's fingerprint.
+	Device      string `json:"device,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// Outbox is the id of the outbox row the record came from (records
 	// from before the outbox have none): ids only grow along the log, so
 	// a row logged already, or replayed, is told apart exactly.
