@@ -5,12 +5,8 @@ digest).
 
 ## Unreleased
 
-- A reveal or renewal request that an old lock process took (and never
-  answers) while the live lock was between polls is offered again to
-  every poller of the instance after 2 s (`ReofferAfter`), instead of
-  waiting for the live lock's poll to time out after the facade gave up
-  (30 s). A lock that does not answer is woken once per 2 s at most for each open
-  request.
+- A `lock import` or `lock add` refused for a new workspace no longer
+  leaves an empty `.lockfamily/` behind.
 
 ## v0.2.0 (2026-10-30)
 

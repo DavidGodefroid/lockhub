@@ -121,3 +121,16 @@ func TestImportIntoFreshWorkspace(t *testing.T) {
 		t.Errorf("notes %v", notes)
 	}
 }
+
+func TestImportRefusedIntoFreshWorkspaceLeavesNoDir(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, Dir, FileName)
+	a := write(t, filepath.Join(root, "a", Dir, FileName), "version: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck]\n  routing:\n    crm-prod: [deck]\nlocks:\n  crm-prod:\n    type: locksql\n    image: "+sqlImg+"\n")
+	b := write(t, filepath.Join(root, "b", Dir, FileName), "version: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck]\n  routing:\n    crm-prod: [tty]\nlocks:\n  crm-prod:\n    type: locksql\n    image: "+sqlImg+"\n")
+	if _, err := Import(base, []string{a, b}); err == nil || !strings.Contains(err.Error(), "no facade") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(base)); !os.IsNotExist(err) {
+		t.Errorf("%s left behind by a refused import: %v", filepath.Dir(base), err)
+	}
+}
