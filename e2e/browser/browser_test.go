@@ -217,13 +217,15 @@ func TestWebAppApproves(t *testing.T) {
 	}
 	retry := func(what string, f func() string) string {
 		t.Helper()
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 8; i++ {
 			if s := f(); s != "" {
 				return s
 			}
+			time.Sleep(time.Duration(i+1) * 500 * time.Millisecond)
 			eval(`(() => { document.getElementById("status").textContent = ""; return ""; })()`)
 		}
-		t.Fatalf("%s: the headless browser kept refusing focus", what)
+		t.Fatalf("%s: the headless browser kept refusing focus (visibility %s, hasFocus %s)", what,
+			eval(`document.visibilityState`), eval(`String(document.hasFocus())`))
 		return ""
 	}
 
