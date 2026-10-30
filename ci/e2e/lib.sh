@@ -18,6 +18,8 @@ ws_project() { jq -r .project "$1/.lockfamily/up.json"; }
 # lock add pins would not test this commit. The released ref is kept for
 # the cosign shim: lock up's check of the hub's signer identity runs, with
 # lock up's own flags, on that release.
+# Outside CI: export E2E_HUB_IMAGE and E2E_COSIGN_SHIM as ci/e2e/ci-hub.sh
+# does, with SHIM_DIR first in PATH.
 local_hub() {
 	[ -n "${E2E_HUB_IMAGE:-}" ] || die "E2E_HUB_IMAGE is not set (ci/e2e/local-hub.sh)"
 	[ -n "${E2E_COSIGN_SHIM:-}" ] || die "E2E_COSIGN_SHIM is not set (ci/e2e/local-hub.sh)"

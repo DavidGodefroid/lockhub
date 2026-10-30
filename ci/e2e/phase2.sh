@@ -15,7 +15,8 @@
 . "$(dirname "$0")/lib.sh"
 lock=$1
 LOCKS=${LOCKS:-"web:lockhttp api:lockhttp"}
-ws=$(mktemp -d)/projects
+# Canonical (lock up prints resolved paths; a TMPDIR may be a link).
+ws=$(realpath "$(mktemp -d)")/projects
 mkdir -p "$ws"
 cd "$ws"
 agents="$E2E_ID-agents"
@@ -24,8 +25,8 @@ cleanup() {
 	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" >/dev/null 2>&1 || true
 	# A run that died while .lockfamily was moved aside (the link check).
 	if [ ! -f "$ws/.lockfamily/up.json" ] && [ -f "$ws/lf-real/up.json" ]; then
-		rm -f "$ws/.lockfamily"
-		mv "$ws/lf-real" "$ws/.lockfamily"
+		rm -f "$ws/.lockfamily" || true
+		mv "$ws/lf-real" "$ws/.lockfamily" || true
 	fi
 	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
