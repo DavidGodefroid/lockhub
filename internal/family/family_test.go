@@ -74,7 +74,7 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		if f.keys["nohelp"] != "" {
 			return []byte("lockhub serve\n"), nil
 		}
-		return []byte("lockhub rotate-key --new FILE\n"), nil
+		return []byte("lockhub pubkey\nlockhub rotate-key --new FILE\n"), nil
 	}
 	if strings.Contains(line, " lockhub pubkey ") {
 		return []byte(f.keys["hub/held"] + "\n"), nil

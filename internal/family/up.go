@@ -333,9 +333,13 @@ func (u *Up) Do(ctx context.Context) error {
 	// whose key was rotated: found out now, not with the hub stopped.
 	if hk, _ := readHubKeys(u.State); rot.hub || (pinned && len(hk) > 1) {
 		help, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "help")...)
-		if err != nil || !strings.Contains(string(help), "rotate-key") {
+		if err != nil || !strings.Contains(string(help), "rotate-key") || !strings.Contains(string(help), "pubkey") {
 			if rot.hub {
-				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key (%v): lock up --pin a newer lockhub first", c.Hub.Image, err)
+				why := ""
+				if err != nil {
+					why = fmt.Sprintf(" (%v)", err)
+				}
+				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lock up --pin a newer lockhub first", c.Hub.Image, why)
 			}
 			return fmt.Errorf("--pin: %s predates hub key rotation and would refuse this hub's audit log (its key was rotated)", c.Hub.Image)
 		}
