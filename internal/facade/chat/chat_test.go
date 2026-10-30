@@ -27,6 +27,7 @@ type fakeChat struct {
 	closes  []string // outcomes, one per Close call
 	ok      int      // successful closes
 	fail    func(n int) error
+	hang    bool // Close blocks until its context ends
 	answers chan chat.Answer
 }
 
@@ -39,10 +40,15 @@ func (f *fakeChat) Post(context.Context, chat.Card) (string, error) {
 	return fmt.Sprintf("m%d", f.posts), nil
 }
 
-func (f *fakeChat) Close(_ context.Context, _ string, _ chat.Card, outcome string) error {
+func (f *fakeChat) Close(ctx context.Context, _ string, _ chat.Card, outcome string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.closes = append(f.closes, outcome)
+	if f.hang {
+		f.mu.Unlock()
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	defer f.mu.Unlock()
 	if err := f.fail(len(f.closes)); err != nil {
 		return err
 	}
@@ -76,6 +82,11 @@ type env struct {
 
 func run(t *testing.T, tries int, base time.Duration, fail func(n int) error) env {
 	t.Helper()
+	return runWith(t, nil, tries, base, fail)
+}
+
+func runWith(t *testing.T, mod func(*chat.Facade), tries int, base time.Duration, fail func(n int) error) env {
+	t.Helper()
 	l := hubtest.NewLock("crm")
 	e := hubtest.NewWith(t, func(c *hub.Config) {
 		c.Codec, c.Now = ticketcodec.Codec{}, nil
@@ -83,6 +94,9 @@ func run(t *testing.T, tries int, base time.Duration, fail func(n int) error) en
 	}, l)
 	f := &fakeChat{fail: fail, answers: make(chan chat.Answer)}
 	fc := &chat.Facade{H: e.Hub, T: f, Wait: 50 * time.Millisecond, RetryBase: base, RetryMax: 16 * base, RetryTries: tries}
+	if mod != nil {
+		mod(fc)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { fc.Run(ctx); close(done) }()
@@ -183,24 +197,19 @@ func TestFailedCloseGivesUpAndStaleClickRefused(t *testing.T) {
 	}
 }
 
-// A click on a message whose close waits for its retry tries the close
-// again at once (but not twice within RetryBase); a message the transport
-// says is gone is not retried, by a click or by the timer.
-func TestStaleClickRetriesNowAndGoneNotRetried(t *testing.T) {
-	// Tries 1-3 fail (retried after 100, 200 ms; the 4th would wait
-	// 400 ms); the 4th, brought forward by a click, says gone.
-	e := run(t, 10, 100*time.Millisecond, func(n int) error {
-		if n >= 4 {
-			return fmt.Errorf("chat.update: message_not_found: %w", chat.ErrGone)
-		}
-		return errDown
-	})
+// A click on a message whose close waits for its timer retry tries the
+// close at once, at most once per RetryBase, and such tries do not count
+// toward RetryTries.
+func TestStaleClickBringsTheRetryForward(t *testing.T) {
+	// base 100 ms, max 1.6 s: tries 1-5 by timer (waits 100..800 ms),
+	// then the next timer retry is 1.6 s away. RetryTries 6.
+	e := run(t, 6, 100*time.Millisecond, func(int) error { return errDown })
 	if _, err := e.e.Hub.Decide(context.Background(), e.ref, hub.Verdict{ApproverID: "host:david", Facade: route.TTY}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "3 tries", func() bool { _, c, _ := e.f.counts(); return c == 3 })
-	time.Sleep(120 * time.Millisecond)
-	replies := make(chan string, 4)
+	waitFor(t, "5 tries", func() bool { _, c, _ := e.f.counts(); return c == 5 })
+	time.Sleep(150 * time.Millisecond)
+	replies := make(chan string, 1)
 	click := func() {
 		e.f.answers <- chat.Answer{Instance: e.ref.Instance, ID: e.ref.ID, Approve: true, ApproverID: "slack:T1:U1", Display: "u1",
 			Reply: func(_ context.Context, s string) { replies <- s }}
@@ -208,18 +217,67 @@ func TestStaleClickRetriesNowAndGoneNotRetried(t *testing.T) {
 			t.Fatalf("stale click: %q", r)
 		}
 	}
-	start := time.Now()
-	click()
-	click() // within RetryBase of the first: no extra try
-	waitFor(t, "the click's try", func() bool { _, c, _ := e.f.counts(); return c == 4 })
-	if d := time.Since(start); d > 300*time.Millisecond {
-		t.Fatalf("the click did not bring the retry forward (%s)", d)
+	closes := func() int { _, c, _ := e.f.counts(); return c }
+	for want := 6; want <= 8; want++ {
+		start := time.Now()
+		click()
+		waitFor(t, "the click's try", func() bool { return closes() == want })
+		if d := time.Since(start); d > 80*time.Millisecond {
+			t.Fatalf("try %d came %s after the click: not brought forward", want, d)
+		}
+		click() // within RetryBase: no extra try
+		time.Sleep(50 * time.Millisecond)
+		if c := closes(); c != want {
+			t.Fatalf("%d closes after a second click within RetryBase, want %d", c, want)
+		}
+		time.Sleep(70 * time.Millisecond)
 	}
-	time.Sleep(150 * time.Millisecond)
-	click()
-	// Not gone, the next timer retry would come 800 ms after the 4th.
-	time.Sleep(1200 * time.Millisecond)
-	if _, c, _ := e.f.counts(); c != 4 {
+	// 8 tries, 3 of them clicked: not given up at RetryTries 6; the timer
+	// still has its 6th try to make.
+	waitFor(t, "the timer's 6th try", func() bool { return closes() == 9 })
+	time.Sleep(300 * time.Millisecond)
+	if c := closes(); c != 9 {
+		t.Fatalf("%d closes after the 6th counted try, want 9", c)
+	}
+}
+
+// A message the transport says is gone is not retried, by the timer or by
+// a click.
+func TestGoneNotRetried(t *testing.T) {
+	e := run(t, 10, 50*time.Millisecond, func(int) error {
+		return fmt.Errorf("chat.update: message_not_found: %w", chat.ErrGone)
+	})
+	if _, err := e.e.Hub.Decide(context.Background(), e.ref, hub.Verdict{ApproverID: "host:david", Facade: route.TTY}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the close", func() bool { _, c, _ := e.f.counts(); return c == 1 })
+	replies := make(chan string, 1)
+	e.f.answers <- chat.Answer{Instance: e.ref.Instance, ID: e.ref.ID, Approve: true, ApproverID: "slack:T1:U1", Display: "u1",
+		Reply: func(_ context.Context, s string) { replies <- s }}
+	<-replies
+	time.Sleep(400 * time.Millisecond)
+	if _, c, _ := e.f.counts(); c != 1 {
 		t.Fatalf("a gone message was retried: %d closes", c)
+	}
+}
+
+// A close that hangs is cut at CloseTimeout and retried, and the facade
+// keeps answering clicks meanwhile.
+func TestHangingCloseBounded(t *testing.T) {
+	e := runWith(t, func(fc *chat.Facade) { fc.CloseTimeout = 100 * time.Millisecond }, 10, 20*time.Millisecond, nil)
+	e.f.mu.Lock()
+	e.f.hang = true
+	e.f.mu.Unlock()
+	if _, err := e.e.Hub.Decide(context.Background(), e.ref, hub.Verdict{ApproverID: "host:david", Facade: route.TTY}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "3 cut tries", func() bool { _, c, _ := e.f.counts(); return c >= 3 })
+	replies := make(chan string, 1)
+	start := time.Now()
+	e.f.answers <- chat.Answer{Instance: e.ref.Instance, ID: "OTHER", Approve: true, ApproverID: "slack:T1:U1", Display: "u1",
+		Reply: func(_ context.Context, s string) { replies <- s }}
+	<-replies
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("a click waited %s behind a hanging close", d)
 	}
 }

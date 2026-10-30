@@ -7,14 +7,16 @@ digest).
 
 - Slack and Telegram: a message close (`chat.update`, `editMessageText`)
   that fails (a rate limit, a network error, a 5xx) is retried with
-  backoff (2 s doubling to 5 min, 15 tries), so a decided, withdrawn or
-  expired ticket's message no longer keeps live buttons after one failure
-  (#60). A message the service says can no longer be edited is not
-  retried; Telegram's "message is not modified" (a retry after another
-  chat failed) counts as done. A click on stale buttons is still refused
-  by the facade and by the hub, and tries the close again at once (at
-  most once per 2 s). Each retry has its own 15 s bound, and the facade
-  goes back to clicks and the queue after two of them.
+  backoff (2 s doubling to 5 min, 15 tries, about 40 min), so a decided,
+  withdrawn or expired ticket's message no longer keeps live buttons
+  after one failure (#60). Every close is bounded (15 s), and the facade
+  goes back to clicks and the queue after two retries. A message the
+  service says can no longer be edited is not retried; Telegram's
+  "message is not modified" (a retry after another chat failed) counts as
+  done. A click on stale buttons is still refused (by the facade and by
+  the hub); on Slack it also tries the close again at once, at most once
+  per 2 s, without using up a try. A ticket decided on a chat is no
+  longer posted again from a queue snapshot taken before the decision.
 
 ## v0.2.2 (2026-10-30)
 
