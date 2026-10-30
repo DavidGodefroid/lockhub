@@ -19,10 +19,10 @@ ws_project() { jq -r .project "$1/.lockfamily/up.json"; }
 local_hub() {
 	[ -n "${E2E_HUB_IMAGE:-}" ] || die "E2E_HUB_IMAGE is not set (ci/e2e/local-hub.sh)"
 	sed -i "s#^  image: ghcr.io/davidgodefroid/lockhub@sha256:[0-9a-f]*\$#  image: $E2E_HUB_IMAGE#" "$1"
-	grep -qx "  image: $E2E_HUB_IMAGE" "$1" || die "the hub image of $1 is not this commit's build"
+	grep -qxF "  image: $E2E_HUB_IMAGE" "$1" || die "the hub image of $1 is not this commit's build"
 }
 # hub_is_local PROJECT: the running hub is this commit's build.
 hub_is_local() {
-	got=$(docker inspect -f '{{.Config.Image}}' "$1-lockhub-1")
+	got=$(docker inspect -f '{{.Config.Image}}' "$1-lockhub-1") || die "no hub container $1-lockhub-1"
 	[ "$got" = "$E2E_HUB_IMAGE" ] || die "the hub runs $got, not this commit's build $E2E_HUB_IMAGE"
 }
