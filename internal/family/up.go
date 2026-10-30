@@ -604,8 +604,9 @@ func (u *Up) Do(ctx context.Context) error {
 			return fmt.Errorf("%s: the hub runs %s, but the file was not updated: %w", u.File, c.Hub.Image, err)
 		}
 	}
-	// A legacy root lockfamily.yaml moves into .lockfamily (lea's agents
-	// only read it there): exactly what the human reviewed.
+	// A legacy root lockfamily.yaml is copied into .lockfamily (lea's
+	// agents only read it there), exactly what the human reviewed; the
+	// human removes the root one.
 	if Legacy(u.File) {
 		nf := filepath.Join(ws, Dir, FileName)
 		if err := ensureDir(nf); err != nil {
