@@ -127,7 +127,7 @@ for u in "http://lockhub:8443/v1/hello" "http://lockhub/v1/hello"; do
 done
 # By another name resolving into the hub's network: the --hub-net rule.
 docker network disconnect "$hubnet" "${p}-lockhub-1"
-docker network connect --alias e2ehubalias "$hubnet" "${p}-lockhub-1"
+docker network connect --alias lockhub --alias e2ehubalias "$hubnet" "${p}-lockhub-1"
 docker run --rm --network "$hubnet" curlimages/curl:8.11.1 -sS -m 10 -o /dev/null -w '%{http_code}\n' "http://e2ehubalias:8443/v1/hello" | grep -qx 200 ||
 	die "the alias does not reach the hub on its network"
 code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "http://e2ehubalias:8443/v1/hello" || true)
