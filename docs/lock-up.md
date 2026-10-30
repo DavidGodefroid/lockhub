@@ -128,6 +128,54 @@ Not yet: Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
 `-vault` image variant, which lock up does not pass or pin), and lockfile's
 shipped seccomp profile (lock up uses Docker's default).
 
+## Restoring a hub version, rotating keys
+
+`lock up --pin sha256:<digest>` (or the whole
+`ghcr.io/davidgodefroid/lockhub@sha256:…` reference) runs the hub on that
+image: a previous version restored by digest. The review shows the image
+line that changes; cosign checks the image is a lockhub release as for any
+other; once applied, lockfamily.yaml takes the digest, so the next lock up
+keeps it. `hub-images.log` in the state directory lists the hub images
+applied in the workspace, oldest first. An older hub on data a newer one
+wrote may refuse to start: the hub's data has no downgrade path. A hub
+image from before key rotation (no `lockhub rotate-key`) refuses an audit
+log whose key was rotated.
+
+`lock up --rotate hub`, `--rotate <instance>` or `--rotate all`
+(repeatable, or comma-separated) replaces keys. The new keys are made
+before the review, which shows each key line that changes; declined (or
+`--dry-run`), they are dropped.
+
+- A lock's new key is made by its own `hub-key`, in its own volume, under
+  `.lockfamily-rotate` (its home, or the gate's `--home` for lockhttp);
+  after the yes, the setup service `rotkey-<instance>` (the key's account,
+  no network) moves it over the old one, whose private key is gone. The
+  hub's lock list takes the new key and the lock's console restarts.
+- The hub's new key is made by `lockhub keygen` in the hub's data
+  directory (`rotate/`); the hub image must have `lockhub rotate-key`. After the yes, lock up stops the hub and runs
+  `lockhub rotate-key`: the audit outbox is flushed under the old key, a
+  `key_rotated` record signed by the old and the new key ends the old
+  key's part of the audit log, the old key is listed in
+  `retired-keys.pub` (data directory) and the new one replaces `hub.key`.
+  Every lock restarts to pin the new key (the `hubkey` volume and
+  up.json carry it). lea's gate reads the hub key at its start: restart
+  it.
+- A restarted console asks again for what it does not take from Vault
+  (`lock attach`).
+
+If the hub's rotation stops halfway, the hub stays stopped (no lock
+executes anything) and lock up refuses to start it until `lock up
+--rotate hub` is run again, which finishes the same rotation with the same
+new key.
+
+`hub-keys.pub` in the state directory lists every hub key, oldest first,
+the current one last. `lock audit verify --hub-key-file` takes it (a file
+with one key is the same as before any rotation): the log must be signed
+by each key in turn, handed over by a `key_rotated` record signed by both,
+and end on the last key, so that a log cut back to before a rotation is
+refused; each decision must be signed by the key of the record that
+vouches for it.
+
 ## Why lockhttp is different
 
 (lea's side of this, the gate in hub mode, is not in lea yet: until it is,

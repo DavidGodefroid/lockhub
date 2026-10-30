@@ -37,6 +37,9 @@ type Paths struct {
 	// Profiles are the fingerprints of the reviewed profile copies, by
 	// type: a lock's label, so that a new copy recreates its console.
 	Profiles map[string]string
+	// Rotate are the locks whose key lock up --rotate replaces: each gets
+	// the setup service rotkey-<instance> (rotate.go).
+	Rotate []string
 }
 
 // Kind is what lock up knows of a lock type's image: the console's
@@ -260,6 +263,28 @@ func Compose(c *Config, p Paths) string {
 			w("    volumes:")
 			w("      - %s", q(name+"-gate:/g"))
 		}
+	}
+	for _, name := range p.Rotate {
+		l, ok := c.Locks[name]
+		if !ok {
+			continue
+		}
+		k := Kinds[l.Type]
+		home, vol, user := "/home/"+l.Type, name+"-home", k.UID+":"+k.GID
+		if k.Gate {
+			home, vol, user = "/g", name+"-gate", gateUID+":"+gateGID
+		}
+		// rotkey-<instance> drops or applies the new key lock up --rotate
+		// made in the lock's own volume, as the key's owner.
+		w("  %s:", q("rotkey-"+name))
+		w("    image: %s", q(l.Image))
+		w("    profiles: [setup]")
+		w("    user: %s", q(user))
+		w("    entrypoint: [\"/bin/sh\", \"-c\", %s, \"rotkey\"]", q(rotkeyScript(home, name)))
+		w("    network_mode: none")
+		hardening(w)
+		w("    volumes:")
+		w("      - %s", q(vol+":"+home))
 	}
 	// profile-<type> copies the reviewed profile into its volume (lock
 	// up runs it after the human's yes), as root: the lock reads it only.

@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,12 +39,19 @@ func (r *Report) bad(format string, a ...any) {
 	r.Problems = append(r.Problems, fmt.Sprintf(format, a...))
 }
 
-// Hub verifies the hub data directory dir against the hub's public key.
-// It may run against a running hub: the database is read as of one
-// instant first, then the log, which by then holds every record
-// committed before that instant (or the outbox does).
-func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, error) {
+// Hub verifies the hub data directory dir against the hub's public keys:
+// every key it was signed with, oldest first (lock up --rotate hub
+// adds one), the current one last. It may run against a running hub: the
+// database is read as of one instant first, then the log, which by then
+// holds every record committed before that instant (or the outbox does).
+// Each decision must be signed by the key of the log record that vouches
+// for it.
+func Hub(ctx context.Context, dir string, hubKeys []ed25519.PublicKey) (Report, error) {
 	var r Report
+	if len(hubKeys) == 0 {
+		return r, errors.New("no hub key")
+	}
+	hubKey := hubKeys[len(hubKeys)-1]
 	st, err := store.OpenReadOnly(filepath.Join(dir, "hub.db"))
 	if err != nil {
 		return r, err
@@ -63,10 +71,19 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	if i := bytes.LastIndexByte(logBytes, '\n'); i < len(logBytes)-1 {
 		logBytes = logBytes[:i+1]
 	}
-	n, err := audit.VerifySigned(bytes.NewReader(logBytes), hubKey)
+	keyOf := map[int64]int{} // seq of a decision record → its key
+	n, end, err := audit.VerifyKeys(bytes.NewReader(logBytes), hubKeys, func(rec audit.Record, k int) {
+		if rec.Decision != "" {
+			keyOf[rec.Seq] = k
+		}
+	})
 	r.Records = n
 	if err != nil {
 		r.bad("audit chain: %v", err)
+		return r, nil
+	}
+	if end != len(hubKeys)-1 {
+		r.bad("audit chain: ends signed by hub key %d of %d: the log was cut back to before a key rotation, or the key file lists a key the log was never handed over to", end+1, len(hubKeys))
 		return r, nil
 	}
 	// Decisions the audit log vouches for.
@@ -118,8 +135,16 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
 	}
+	// The key a decision must be signed by: its record's (the outbox's
+	// rows are the current key's).
+	keyFor := func(rec audit.Record) ed25519.PublicKey {
+		if k, ok := keyOf[rec.Seq]; ok && rec.Seq != 0 {
+			return hubKeys[k]
+		}
+		return hubKey
+	}
 	for _, d := range decisions {
-		r.check(hubKey, d, inLog)
+		r.check(keyFor, d, inLog)
 	}
 	// What the log records beyond the snapshot was committed after it.
 	if len(inLog) > 0 {
@@ -138,7 +163,7 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			for _, d := range ds {
 				since = d.Seq
 				if _, ok := inLog[d.Instance+"/"+d.Ticket]; ok {
-					r.check(hubKey, d, inLog)
+					r.check(keyFor, d, inLog)
 				}
 			}
 		}
@@ -157,9 +182,13 @@ func content(r audit.Record) audit.Record {
 
 // check verifies one stored decision against the record vouching for it,
 // which it takes out of inLog.
-func (r *Report) check(hubKey ed25519.PublicKey, d store.Decision, inLog map[string]audit.Record) {
+func (r *Report) check(keyFor func(audit.Record) ed25519.PublicKey, d store.Decision, inLog map[string]audit.Record) {
 	r.Decisions++
 	key := d.Instance + "/" + d.Ticket
+	hubKey := keyFor(audit.Record{})
+	if rec, ok := inLog[key]; ok {
+		hubKey = keyFor(rec)
+	}
 	dec, err := ticket.VerifyDecision(hubKey, d.Raw)
 	switch {
 	case err != nil:

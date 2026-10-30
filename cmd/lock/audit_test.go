@@ -22,6 +22,18 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/ticketcodec"
 )
 
+// hubPrivs are the hub keys of hubWithDecision's data dirs.
+var hubPrivs = map[string]ed25519.PrivateKey{}
+
+func hubPrivOf(t *testing.T, data string) ed25519.PrivateKey {
+	t.Helper()
+	k, ok := hubPrivs[data]
+	if !ok {
+		t.Fatal("no hub key")
+	}
+	return k
+}
+
 // hubWithDecision is a hub data dir holding one approved ticket of crm,
 // its key file, and crm's lock-side log of it.
 func hubWithDecision(t *testing.T) (data, keyFile, lockLog string) {
@@ -53,6 +65,7 @@ func hubWithDecision(t *testing.T) (data, keyFile, lockLog string) {
 	}
 	al.Close()
 	st.Close()
+	hubPrivs[data] = hpriv
 	dec, err := ticket.VerifyDecision(hpub, draw)
 	if err != nil {
 		t.Fatal(err)
@@ -97,5 +110,47 @@ func TestAuditVerifyLocks(t *testing.T) {
 		if code, out := verifyRun(bad...); code != 2 {
 			t.Errorf("%q: %d %s", bad, code, out)
 		}
+	}
+}
+
+// Once the hub key is rotated, the key file lists every key, oldest
+// first: the hub's and the locks' records of decisions made before it
+// still verify.
+func TestAuditVerifyRotatedHubKey(t *testing.T) {
+	data, keyFile, lockLog := hubWithDecision(t)
+	_, k1, _ := ed25519.GenerateKey(rand.Reader)
+	old, _ := os.ReadFile(keyFile)
+	// The old key signs the log so far (hubWithDecision's): rotate it.
+	p := filepath.Join(data, "tickets.jsonl")
+	b, _ := os.ReadFile(p)
+	if !bytes.Contains(b, []byte(`"sig"`)) {
+		t.Fatal("unsigned log")
+	}
+	priv := hubPrivOf(t, data)
+	al, err := audit.OpenSigned(p, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	al.Rotate(k1)
+	al.Close()
+	verifyRun := func(keys string) (int, string) {
+		kf := filepath.Join(t.TempDir(), "hub-keys.pub")
+		os.WriteFile(kf, []byte(keys), 0o644)
+		var out, errb bytes.Buffer
+		code := run([]string{"audit", "verify", "--data", data, "--hub-key-file", kf, "--lock", "crm=" + lockLog}, devNull(t), &out, &errb)
+		return code, out.String() + errb.String()
+	}
+	newKey := base64.StdEncoding.EncodeToString(k1.Public().(ed25519.PublicKey)) + "\n"
+	if code, out := verifyRun(string(old) + newKey); code != 0 || !strings.Contains(out, "OK: crm:") {
+		t.Fatalf("both keys: %d %s", code, out)
+	}
+	if code, out := verifyRun(string(old)); code != 1 {
+		t.Errorf("old key only: %d %s", code, out)
+	}
+	if code, out := verifyRun(newKey + string(old)); code != 1 {
+		t.Errorf("keys out of order: %d %s", code, out)
+	}
+	if code, out := verifyRun("\n"); code != 1 || !strings.Contains(out, "no key") {
+		t.Errorf("empty key file: %d %s", code, out)
 	}
 }

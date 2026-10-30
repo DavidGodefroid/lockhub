@@ -70,6 +70,17 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if f.failing != "" && strings.Contains(line, f.failing) {
 		return nil, errors.New("refused")
 	}
+	// lock up --rotate: the new keys (rotate.go) are keys["<name>/new"].
+	if strings.Contains(line, " rotate-key ") || strings.Contains(line, "keygen --data /var/lib/lockhub/rotate") {
+		return []byte(f.keys["hub/new"] + "\n"), nil
+	}
+	if strings.Contains(line, rotateDir) {
+		for n, k := range f.keys {
+			if base, ok := strings.CutSuffix(n, "/new"); ok && strings.Contains(line, " --instance "+base) {
+				return []byte(k + "\n"), nil
+			}
+		}
+	}
 	for _, a := range args {
 		if a == "keygen" {
 			return []byte(f.keys["hub"] + "\n"), nil

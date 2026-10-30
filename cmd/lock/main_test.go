@@ -22,6 +22,8 @@ func TestRun(t *testing.T) {
 		{[]string{"audit"}, 2, "", "usage: lock audit verify"},
 		{[]string{"up", "--nope"}, 2, "", "flag provided but not defined"},
 		{[]string{"up"}, 1, "", "stdin is not one"},
+		{[]string{"up", "--dry-run", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lock add slack"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "#gen", "--user", "U1x"}, 2, "", "slack.channel"},

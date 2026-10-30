@@ -240,3 +240,98 @@ func TestStartFlushesOutbox(t *testing.T) {
 		t.Fatalf("started past a forged outbox record: %v", err)
 	}
 }
+
+// lockhub rotate-key flushes the outbox under the old key, logs the
+// rotation signed by both keys, retires the old key and takes the new
+// one; run again after a crash, it finishes the same rotation.
+func TestRotateKey(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	k0, _ := keys.Load(filepath.Join(data, "hub.key"))
+	st, _ := store.Open(filepath.Join(data, "hub.db"))
+	rec := []byte(`{"seq":0,"at":"2027-01-01T00:00:00Z","event":"push","ticket":"T1","instance":"crm","state":"pending","prev":"","hash":""}`)
+	st.Tx(context.Background(), func(tx *store.Tx) error {
+		return tx.QueueAudit(rec, func(id int64) string { return audit.SignOutbox(k0, id, rec) })
+	})
+	st.Close()
+	stage := func() (string, ed25519.PublicKey) {
+		dir := filepath.Join(data, "rotate")
+		os.RemoveAll(dir)
+		os.Mkdir(dir, 0o700)
+		pub, err := keys.Generate(filepath.Join(dir, "hub.key"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return filepath.Join(dir, "hub.key"), pub
+	}
+	if code := run(context.Background(), []string{"rotate-key"}, &out, &errb); code != 2 {
+		t.Errorf("rotate-key without --new = %d", code)
+	}
+	p1, k1 := stage()
+	out.Reset()
+	if code := run(context.Background(), []string{"rotate-key", "--data", data, "--new", p1}, &out, &errb); code != 0 || strings.TrimSpace(out.String()) != keys.Public(k1) {
+		t.Fatalf("rotate-key = %d %q: %s", code, out.String(), errb.String())
+	}
+	if _, err := os.Stat(p1); !os.IsNotExist(err) {
+		t.Error("staged key left")
+	}
+	if cur, _ := keys.Load(filepath.Join(data, "hub.key")); !cur.Public().(ed25519.PublicKey).Equal(k1) {
+		t.Error("hub.key not replaced")
+	}
+	pub0 := k0.Public().(ed25519.PublicKey)
+	if b, _ := os.ReadFile(filepath.Join(data, keys.RetiredFile)); string(b) != keys.Public(pub0)+"\n" {
+		t.Errorf("retired %q", b)
+	}
+	logPath := filepath.Join(data, "tickets.jsonl")
+	b, _ := os.ReadFile(logPath)
+	if n, end, err := audit.VerifyKeys(bytes.NewReader(b), []ed25519.PublicKey{pub0, k1}, nil); err != nil || n != 2 || end != 1 {
+		t.Fatalf("log after rotation: %d %d %v\n%s", n, end, err, b)
+	}
+	if !strings.Contains(strings.SplitN(string(b), "\n", 2)[0], `"ticket":"T1"`) {
+		t.Errorf("outbox not flushed before the rotation:\n%s", b)
+	}
+	// The hub starts on the new key, its log signed by both.
+	if _, closeHub, err := openHub(data); err != nil {
+		t.Fatalf("hub after rotation: %v", err)
+	} else {
+		closeHub()
+	}
+	// A rotation that stopped after its record: finished, not logged twice.
+	p2, k2 := stage()
+	k1priv, _ := keys.Load(filepath.Join(data, "hub.key"))
+	al, err := audit.OpenSigned(logPath, k1priv, pub0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2priv, _ := keys.Load(p2)
+	al.Rotate(k2priv)
+	al.Close()
+	if _, _, err := openHub(data); err == nil {
+		t.Error("hub started on a log handed over to another key")
+	}
+	if pub, err := rotateKey(data, p2); err != nil || !pub.Equal(k2) {
+		t.Fatalf("finishing: %v", err)
+	}
+	b, _ = os.ReadFile(logPath)
+	if c := strings.Count(string(b), audit.EventKeyRotated); c != 2 {
+		t.Errorf("%d rotations logged, want 2", c)
+	}
+	if _, closeHub, err := openHub(data); err != nil {
+		t.Fatalf("hub after the finished rotation: %v", err)
+	} else {
+		closeHub()
+	}
+	// The current key again, or a retired one: refused.
+	p3, _ := stage()
+	os.Remove(p3)
+	cur, _ := os.ReadFile(filepath.Join(data, "hub.key"))
+	os.WriteFile(p3, cur, 0o600)
+	if _, err := rotateKey(data, p3); err == nil || !strings.Contains(err.Error(), "current one") {
+		t.Errorf("same key: %v", err)
+	}
+}

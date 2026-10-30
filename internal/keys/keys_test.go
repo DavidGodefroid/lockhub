@@ -58,3 +58,33 @@ func TestLoadLocks(t *testing.T) {
 		}
 	}
 }
+
+func TestRetired(t *testing.T) {
+	dir := t.TempDir()
+	a, _, _ := ed25519.GenerateKey(rand.Reader)
+	b, _, _ := ed25519.GenerateKey(rand.Reader)
+	cur, _, _ := ed25519.GenerateKey(rand.Reader)
+	if ks, err := LoadRetired(dir, cur); err != nil || ks != nil {
+		t.Errorf("none: %v %v", ks, err)
+	}
+	w := func(s string) { os.WriteFile(filepath.Join(dir, RetiredFile), []byte(s), 0o644) }
+	w(string(FormatPublics([]ed25519.PublicKey{a, b})) + "\n")
+	if ks, err := LoadRetired(dir, cur); err != nil || len(ks) != 2 || !ks[0].Equal(a) || !ks[1].Equal(b) {
+		t.Errorf("two: %v %v", ks, err)
+	}
+	// A rotation that retired cur, then stopped before hub.key changed.
+	w(string(FormatPublics([]ed25519.PublicKey{a, cur})))
+	if ks, err := LoadRetired(dir, cur); err != nil || len(ks) != 1 {
+		t.Errorf("cur last: %v %v", ks, err)
+	}
+	for name, s := range map[string]string{
+		"cur first": string(FormatPublics([]ed25519.PublicKey{cur, a})),
+		"twice":     string(FormatPublics([]ed25519.PublicKey{a, a})),
+		"junk":      "nope\n",
+	} {
+		w(s)
+		if _, err := LoadRetired(dir, cur); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

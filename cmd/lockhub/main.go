@@ -51,6 +51,8 @@ Usage:
                                                and the mobile web app on its own listener, reached through
                                                the human's TLS reverse proxy or tunnel at URL
   lockhub keygen [--data DIR]                  create the hub's signing key, print its public half
+  lockhub rotate-key --new FILE [--data DIR]   hand the stopped hub over to the key FILE (made by keygen):
+                                               logged, signed by both keys; print the new public half
   lockhub version                              print the version
   lockhub help                    show this help
 `
@@ -75,6 +77,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return serve(ctx, args[1:], stderr)
 	case "keygen":
 		return keygen(args[1:], stdout, stderr)
+	case "rotate-key":
+		return rotateKeyCmd(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lockhub: unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -100,34 +104,157 @@ func keygen(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func rotateKeyCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("rotate-key", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	data := fs.String("data", "/var/lib/lockhub", "the hub's data directory")
+	next := fs.String("new", "", "the new key (PKCS#8 PEM, 0600, as lockhub keygen writes it)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *next == "" || fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: lockhub rotate-key --new FILE [--data DIR]")
+		return 2
+	}
+	pub, err := rotateKey(*data, *next)
+	if err != nil {
+		fmt.Fprintln(stderr, "lockhub rotate-key:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, keys.Public(pub))
+	return 0
+}
+
+// rotateKey hands the hub of data over to the key at next. The hub must
+// be stopped (lock up stops it). The audit outbox is flushed into the log
+// under the current key, then a key_rotated record signed by both keys
+// ends the current key's part of the log, the current key is listed in
+// retired-keys.pub, and next replaces hub.key (next's file is moved). Run
+// again after a crash, it finishes the same rotation: a rotation the log
+// already has is not appended twice.
+func rotateKey(data, next string) (ed25519.PublicKey, error) {
+	keyPath := filepath.Join(data, "hub.key")
+	cur, err := keys.Load(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("hub key: %w", err)
+	}
+	nk, err := keys.Load(next)
+	if err != nil {
+		return nil, fmt.Errorf("new key: %w", err)
+	}
+	curPub, nextPub := cur.Public().(ed25519.PublicKey), nk.Public().(ed25519.PublicKey)
+	if curPub.Equal(nextPub) {
+		return nil, errors.New("the new key is the current one")
+	}
+	retired, err := keys.LoadRetired(data, curPub)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range retired {
+		if k.Equal(nextPub) {
+			return nil, errors.New("the new key was retired before")
+		}
+	}
+	logPath := filepath.Join(data, "tickets.jsonl")
+	// A rotation that stopped after its record: the log already ends on
+	// the new key.
+	done := false
+	if b, err := os.ReadFile(logPath); err == nil {
+		_, end, verr := audit.VerifyKeys(bytes.NewReader(b), append(slices.Clip(retired), curPub, nextPub), nil)
+		done = verr == nil && end == len(retired)+1
+	}
+	if !done {
+		// The outbox is flushed under the current key (openHubLog), so
+		// that no row signed by it is left for the new one to refuse.
+		_, al, closeHub, err := openHubLog(data)
+		if err != nil {
+			return nil, err
+		}
+		_, err = al.Rotate(nk)
+		closeHub()
+		if err != nil {
+			return nil, fmt.Errorf("audit log: %w", err)
+		}
+	}
+	if err := writeSynced(filepath.Join(data, keys.RetiredFile), keys.FormatPublics(append(slices.Clip(retired), curPub)), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(next, keyPath); err != nil {
+		return nil, err
+	}
+	if d, err := os.Open(data); err == nil {
+		d.Sync()
+		d.Close()
+	}
+	return nextPub, nil
+}
+
+// writeSynced replaces path with b through a synced temporary file.
+func writeSynced(path string, b []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
+}
+
 // openHub opens the hub on data: hub.key, locks.json, hub.db,
 // tickets.jsonl. Anything missing or wrong refuses to start.
 func openHub(data string) (*hub.Hub, func(), error) {
+	h, _, closeHub, err := openHubLog(data)
+	return h, closeHub, err
+}
+
+// openHubLog is openHub that also returns the audit log.
+func openHubLog(data string) (*hub.Hub, *audit.Log, func(), error) {
 	if codec == nil {
-		return nil, nil, errors.New("built without a ticket codec")
+		return nil, nil, nil, errors.New("built without a ticket codec")
 	}
 	key, err := keys.Load(filepath.Join(data, "hub.key"))
 	if err != nil {
-		return nil, nil, fmt.Errorf("hub key: %w (run lockhub keygen)", err)
+		return nil, nil, nil, fmt.Errorf("hub key: %w (run lockhub keygen)", err)
 	}
 	locks, err := keys.LoadLocks(filepath.Join(data, "locks.json"))
 	if err != nil {
-		return nil, nil, fmt.Errorf("lock instances: %w", err)
+		return nil, nil, nil, fmt.Errorf("lock instances: %w", err)
 	}
 	st, err := store.Open(filepath.Join(data, "hub.db"))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	al, err := audit.OpenSigned(filepath.Join(data, "tickets.jsonl"), key)
+	// The keys before this one (lockhub rotate-key): the log is signed by
+	// each in turn.
+	retired, err := keys.LoadRetired(data, key.Public().(ed25519.PublicKey))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("hub key: %w", err)
+	}
+	al, err := audit.OpenSigned(filepath.Join(data, "tickets.jsonl"), key, retired...)
 	if err != nil {
 		st.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	routes, err := loadRoutes(filepath.Join(data, "routing.json"), locks)
 	if err != nil {
 		al.Close()
 		st.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks, Routes: routes})
 	// Committed changes whose audit records a crash left in the outbox
@@ -135,9 +262,9 @@ func openHub(data string) (*hub.Hub, func(), error) {
 	if err := h.FlushAudit(context.Background()); err != nil {
 		al.Close()
 		st.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return h, func() { al.Close(); st.Close() }, nil
+	return h, al, func() { al.Close(); st.Close() }, nil
 }
 
 func serve(ctx context.Context, args []string, stderr io.Writer) int {

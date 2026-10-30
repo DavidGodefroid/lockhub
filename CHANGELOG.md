@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- `lock up --pin sha256:<digest>` restores a previous hub image by digest
+  (reviewed, cosign-verified, written to lockfamily.yaml once applied;
+  `hub-images.log` keeps the history), and `lock up --rotate
+  hub|INSTANCE|all` replaces the hub's or locks' keys through the review
+  (docs/lock-up.md). The hub's rotation is `lockhub rotate-key`: a
+  `key_rotated` audit record signed by both keys, the old key in the data
+  directory's `retired-keys.pub`, which the hub reads at start. `lock
+  audit verify --hub-key-file` takes a file of keys, oldest first (lock
+  up's `hub-keys.pub`); with one key, as before. An older `lock audit
+  verify` or hub refuses a log with a `key_rotated` record.
 - lock up runs consoles lea's agents can reach, and tells lea how
   (docs/lock-up.md):
   - lockfamily.yaml lives in `.lockfamily/` (lea mounts it read-only in
