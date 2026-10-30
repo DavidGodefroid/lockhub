@@ -475,8 +475,8 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if info.Production && !route.CanReveal(v.Facade) {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
-		// Every production approval needs the instance name typed (hub
-		// plan H1), whatever the ticket's lockkit Retype flag says.
+		// Every production approval needs the instance name typed (#64),
+		// whatever the ticket's lockkit Retype flag says.
 		if v.Approved && info.Production && (info.Instance == "" || v.Retype != info.Instance) {
 			return ErrRetype
 		}

@@ -14,7 +14,8 @@ digest).
   plain `y`. Chat facades still never answer production. Upgrade note: a
   deck that sends `flags.retype` (lea v0.3.1 or older) can no longer
   approve production tickets through this hub; use `lock approve` or the
-  phone, or upgrade lea (v0.3.2).
+  phone, or upgrade lea to a release with DavidGodefroid/lea#222 (planned
+  for lea v0.3.2).
 
 ## v0.2.2 (2026-10-30)
 
