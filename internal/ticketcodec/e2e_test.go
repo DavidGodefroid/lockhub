@@ -105,9 +105,15 @@ func TestLockkitEndToEnd(t *testing.T) {
 func TestHelloAnnouncesVersionsAndKey(t *testing.T) {
 	hubPub, hubPriv, _ := ed25519.GenerateKey(rand.Reader)
 	dir := t.TempDir()
-	st, _ := store.Open(filepath.Join(dir, "hub.db"))
+	st, err := store.Open(filepath.Join(dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer st.Close()
-	al, _ := audit.Open(filepath.Join(dir, "tickets.jsonl"))
+	al, err := audit.Open(filepath.Join(dir, "tickets.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer al.Close()
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: ticketcodec.Codec{}, Key: hubPriv, Locks: map[string]ed25519.PublicKey{}})
 	srv := httptest.NewServer(api.LockHandler(h, "e2e"))

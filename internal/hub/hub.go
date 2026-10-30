@@ -136,8 +136,14 @@ func (h *Hub) Codec() Codec { return h.c.Codec }
 // Now is the hub's clock.
 func (h *Hub) Now() time.Time { return h.c.Now() }
 
-// KeyID names the hub's key as decisions and tickets name keys.
-func (h *Hub) KeyID() string { return h.c.Codec.KeyID(h.c.Key.Public().(ed25519.PublicKey)) }
+// KeyID names the hub's key as decisions and tickets name keys ("" for
+// a hub without a key).
+func (h *Hub) KeyID() string {
+	if len(h.c.Key) != ed25519.PrivateKeySize {
+		return ""
+	}
+	return h.c.Codec.KeyID(h.c.Key.Public().(ed25519.PublicKey))
+}
 
 // Store is the hub's store.
 func (h *Hub) Store() *store.Store { return h.c.Store }
