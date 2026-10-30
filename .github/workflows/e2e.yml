@@ -44,7 +44,7 @@ jobs:
         run: |
           set -o pipefail
           go test -tags integration -count=1 -timeout 20m -run '^TestHubPhase1$' -v ./test/integration | tee phase1.out
-          ! grep -q -- '--- SKIP' phase1.out
+          if grep -q -- '--- SKIP' phase1.out; then echo "a subtest skipped"; exit 1; fi
           grep -q '^--- PASS: TestHubPhase1 ' phase1.out
 
   phase2:

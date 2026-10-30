@@ -92,6 +92,6 @@ cd "$imp"
 grep -q "routing narrowed to tty" import.out || die "the strictest routing was not kept"
 grep -q "adds lock crm-only" import.out || die "crm-only not added"
 f=.lockfamily/lockfamily.yaml
-grep -A2 '^  routing:' "$f" | grep -q 'shared:' || die "routing not written"
+sed -n '/^  routing:/,/^locks:/p' "$f" | tr -d ' \n' | grep -q 'routing:shared:-tty' || { cat "$f"; die "routing of shared is not exactly [tty]"; }
 sed -n '/^  routing:/,/^locks:/p' "$f" | grep -q 'deck' && die "a facade one sub-project refuses was kept"
 echo "phase 5: OK"
