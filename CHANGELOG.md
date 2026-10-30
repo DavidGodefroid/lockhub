@@ -5,6 +5,12 @@ digest).
 
 ## Unreleased
 
+- CI: e2e phases 2 and 5 check the image the hub container actually runs,
+  and lock up's hub signer identity with the real cosign on the release
+  lock add pinned (the local build stands in for it only at docker run).
+- lock up's refusal of a `.lockfamily` others can write prints the mode in
+  octal (`mode 0775`), not as `-rwxrwxr-x`.
+
 ## v0.2.0 (2026-10-30)
 
 ### Supported locks
@@ -49,11 +55,6 @@ CLI with the hub.
   ticket approved through the facade socket, I2 directly and through a
   LockHTTP gate, I11, a second lock up) and phase 5 (install.sh, lock add,
   lock up, lock import) end to end with released images.
-- CI: e2e phases 2 and 5 check the image the hub container actually runs,
-  and lock up's hub signer identity with the real cosign on the release
-  lock add pinned (the local build stands in for it only at docker run).
-- lock up's refusal of a `.lockfamily` others can write prints the mode in
-  octal (`mode 0775`), not as `-rwxrwxr-x`.
 - Note for upgrades: lock up now resolves the workspace's links, so a
   workspace opened through a symbolic link gets a new project (and state):
   its first lock up is a full review again.
