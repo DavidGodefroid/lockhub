@@ -11,7 +11,9 @@ digest).
   hub's config label changes and compose recreates the hub, which reads
   its tokens at start. Before, the hub kept the old token until it
   restarted. `lock doctor` warns about a token rotated since the last
-  `lock up`.
+  `lock up`. The first `lock up` after upgrading with a chat facade
+  shows the new `hub secret` lines once, asks for a yes, and recreates
+  the hub.
 
 ## v0.1.1 (2026-10-30)
 

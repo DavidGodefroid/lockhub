@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 )
@@ -29,6 +30,16 @@ func chatTokens(c *Config, hubData string) []string {
 		s = append(s, fmt.Sprintf("hub secret %s %s", f, tokenID(filepath.Join(hubData, f))))
 	}
 	return s
+}
+
+// secretFile is the secret file a chatTokens line is about.
+func secretFile(line string) (string, bool) {
+	rest, ok := strings.CutPrefix(line, "hub secret ")
+	if !ok {
+		return "", false
+	}
+	f, _, _ := strings.Cut(rest, " ")
+	return f, true
 }
 
 // tokenID identifies the token in path: the first 64 bits of a

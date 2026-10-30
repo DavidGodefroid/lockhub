@@ -57,23 +57,35 @@ func TestChatTokenRotationRecreatesHub(t *testing.T) {
 				t.Fatalf("rotation not reviewed: %v\n%s", err, out)
 			}
 			f3 := &fake{keys: f.keys}
-			if _, err := w.up("y\n", f3); err != nil {
+			applyOut, err := w.up("y\n", f3)
+			if err != nil {
 				t.Fatal(err)
 			}
+			out += applyOut
 			if f3.upCompose == first {
 				t.Error("a rotated token leaves the hub service unchanged: compose would not recreate it, the hub keeps the old token")
 			}
 			for _, p := range []string{"applied.json", "compose.yaml"} {
 				b, _ := os.ReadFile(filepath.Join(state, p))
-				if strings.Contains(string(b), "first-secret") || strings.Contains(string(b), "second-secret") {
+				if leaks(string(b)) {
 					t.Errorf("%s holds a token:\n%s", p, b)
 				}
 			}
-			if strings.Contains(out, "second-secret") || strings.Contains(out, "first-secret") {
+			if leaks(out) {
 				t.Errorf("token shown:\n%s", out)
 			}
 		})
 	}
+}
+
+// leaks reports whether s holds any token the tests use.
+func leaks(s string) bool {
+	for _, tok := range []string{"first-secret", "second-secret", "xapp-1-A", "123:one", "123:two"} {
+		if strings.Contains(s, tok) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestChatTokenMissingIsALine(t *testing.T) {
@@ -109,7 +121,28 @@ func TestDoctorTokenRotated(t *testing.T) {
 	if err := AddTelegram(d.File, state, chatconf.Telegram{Chats: []chatconf.TelegramChat{{Chat: -1001, From: 7}, {Chat: 42, From: 42}}}, "123:two"); err != nil {
 		t.Fatal(err)
 	}
-	if out, _ := doc(t, d); !strings.Contains(out, "chat token changed") || !strings.Contains(out, "hub secret "+chatconf.TelegramToken) {
+	out, _ := doc(t, d)
+	if !strings.Contains(out, "chat token changed") || !strings.Contains(out, "hub secret "+chatconf.TelegramToken) {
 		t.Errorf("rotation not warned:\n%s", out)
+	}
+	if leaks(out) {
+		t.Errorf("token shown:\n%s", out)
+	}
+}
+
+// An applied.json from before token identities, or a facade added since
+// the last lock up, is no rotation.
+func TestDoctorNoTokenWarningWithoutAppliedToken(t *testing.T) {
+	d, _ := healthy(t) // applied without a chat facade
+	os.WriteFile(d.File, []byte(yamlConf(tgHub)), 0o644)
+	if err := AddTelegram(d.File, d.State, chatconf.Telegram{Chats: []chatconf.TelegramChat{{Chat: -1001, From: 7}, {Chat: 42, From: 42}}}, "123:one"); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := doc(t, d)
+	if strings.Contains(out, "chat token changed") {
+		t.Errorf("rotation warned for a token never applied:\n%s", out)
+	}
+	if !strings.Contains(out, "lockfamily.yaml changed") {
+		t.Errorf("new facade not warned:\n%s", out)
 	}
 }
