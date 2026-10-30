@@ -86,6 +86,15 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 			s = append(s, fmt.Sprintf("hub telegram chat %d user %d", ch.Chat, ch.From))
 		}
 	}
+	if m := c.Hub.Mobile; m != nil {
+		s = append(s, fmt.Sprintf("hub mobile origin %s on 127.0.0.1:%d", m.Origin, m.Port))
+		if m.SealClear {
+			s = append(s, "locks seal clear screens to the paired devices")
+		}
+		if len(m.RequireDevice) > 0 {
+			s = append(s, "locks accept only device-signed approvals of "+strings.Join(m.RequireDevice, ","))
+		}
+	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
@@ -141,6 +150,15 @@ func (u *Up) Do(ctx context.Context) error {
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
+	devices, err := ReadDevices(u.State)
+	if err != nil {
+		return fmt.Errorf("paired devices: %w", err)
+	}
+	if len(devices) > 0 {
+		paths.Devices = DevicesFile(u.State)
+	} else if m := c.Hub.Mobile; m != nil && (m.SealClear || len(m.RequireDevice) > 0) {
+		fmt.Fprintln(u.Out, "note: hub.mobile seal_clear and require_device take effect once a device is paired (lock mobile pair, then lock up)")
+	}
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.
 	composeYAML := []byte(Compose(c, paths))
@@ -200,6 +218,7 @@ func (u *Up) Do(ctx context.Context) error {
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := append(Summary(c, hp, lockPubs), chatTokens(c, hubData)...)
+	sum = append(sum, devicesSummary(devices)...)
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")
 	var prev Applied

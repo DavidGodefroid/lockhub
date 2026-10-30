@@ -6,6 +6,7 @@ package family
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -51,6 +52,47 @@ type Hub struct {
 	// Telegram is who may answer on Telegram (required when telegram is
 	// enabled).
 	Telegram *chatconf.Telegram `yaml:"telegram,omitempty"`
+	// Mobile configures the mobile facade (required when mobile is
+	// enabled).
+	Mobile *Mobile `yaml:"mobile,omitempty"`
+}
+
+// Mobile is the mobile facade: the phone reaches the hub at Origin
+// through the human's own TLS reverse proxy or tunnel, which forwards to
+// 127.0.0.1:Port on the host (never the lock API, never the facade
+// socket).
+//
+//	hub:
+//	  facades: [tty, deck, mobile]
+//	  mobile:
+//	    origin: https://hub.example.ts.net
+//	    port: 8444                       # default
+//	    seal_clear: true                 # locks seal clear screens to paired phones
+//	    require_device: [prod-write]     # locks accept only device-signed approvals of these
+type Mobile struct {
+	Origin        string   `yaml:"origin"`
+	Port          int      `yaml:"port,omitempty"`
+	SealClear     bool     `yaml:"seal_clear,omitempty"`
+	RequireDevice []string `yaml:"require_device,omitempty"`
+}
+
+func (m *Mobile) validate() error {
+	u, err := url.Parse(m.Origin)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.User != nil || u.String() != m.Origin || strings.ToLower(m.Origin) != m.Origin || u.Port() == "443" {
+		return fmt.Errorf("mobile.origin: want an https origin as a browser writes it (https://host[:port], lowercase, no path), got %q", m.Origin)
+	}
+	if m.Port == 0 {
+		m.Port = 8444
+	}
+	if m.Port < 1024 || m.Port > 65535 {
+		return fmt.Errorf("mobile.port: want 1024-65535, got %d", m.Port)
+	}
+	for _, r := range m.RequireDevice {
+		if !route.KnownRisk(r) {
+			return fmt.Errorf("mobile.require_device: unknown risk class %q", r)
+		}
+	}
+	return nil
 }
 
 // Lock is one lock instance.
@@ -123,6 +165,16 @@ func (c *Config) validate(needLocks bool) error {
 		return fmt.Errorf("hub.telegram: set, but telegram is not in hub.facades")
 	case on:
 		if err := c.Hub.Telegram.Validate(); err != nil {
+			return fmt.Errorf("hub.%w", err)
+		}
+	}
+	switch on := slices.Contains(c.Hub.Facades, route.Mobile); {
+	case on && c.Hub.Mobile == nil:
+		return fmt.Errorf("hub.mobile: the mobile facade needs its origin (hub.mobile.origin)")
+	case !on && c.Hub.Mobile != nil:
+		return fmt.Errorf("hub.mobile: set, but mobile is not in hub.facades")
+	case on:
+		if err := c.Hub.Mobile.validate(); err != nil {
 			return fmt.Errorf("hub.%w", err)
 		}
 	}

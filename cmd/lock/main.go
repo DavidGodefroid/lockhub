@@ -24,6 +24,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/family"
+	"github.com/DavidGodefroid/lockhub/internal/mobilecli"
 	"github.com/DavidGodefroid/lockhub/internal/verify"
 )
 
@@ -46,6 +47,10 @@ Usage:
                                           keeping the strictest routing
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
+  lock mobile pair --name NAME [--file lockfamily.yaml] [--socket PATH]
+                                          pair a phone with the mobile facade (confirmed at this terminal)
+  lock mobile list|revoke NAME|ID [--file lockfamily.yaml] [--socket PATH]
+                                          list or revoke paired phones; lock up then (un)pins them at the locks
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lock version                            print the version
@@ -72,6 +77,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 0
 	case "approve":
 		return approveCmd(args[1:], stdin, stdout, stderr)
+	case "mobile":
+		return mobileCmd(args[1:], stdin, stdout, stderr)
 	case "up":
 		return upCmd(args[1:], stdin, stdout, stderr)
 	case "add":
@@ -447,5 +454,52 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", *file, len(tg.Chats))
+	return 0
+}
+
+func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	const use = "usage: lock mobile pair --name NAME | list | revoke NAME|ID  [--file lockfamily.yaml] [--socket PATH]"
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, use)
+		return 2
+	}
+	sub := args[0]
+	fs := flag.NewFlagSet("mobile "+sub, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
+	name := fs.String("name", "", "the phone's name (a-z, 0-9, -)")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return 2
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock mobile:", err)
+		return 1
+	}
+	state := stateDir(family.Project(filepath.Dir(abs)))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	c := mobilecli.Dial(*sock)
+	switch {
+	case sub == "pair" && len(pos) == 0 && *name != "":
+		if fi, err := stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+			fmt.Fprintln(stderr, "lock mobile pair: the device is confirmed at a terminal; stdin is not one")
+			return 1
+		}
+		err = mobilecli.Pair(ctx, c, *name, state, bufio.NewReader(stdin), stdout)
+	case sub == "list" && len(pos) == 0:
+		err = mobilecli.List(ctx, c, state, stdout)
+	case sub == "revoke" && len(pos) == 1:
+		err = mobilecli.Revoke(ctx, c, pos[0], state, stdout)
+	default:
+		fmt.Fprintln(stderr, use)
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "lock mobile:", err)
+		return 1
+	}
 	return 0
 }

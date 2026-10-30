@@ -161,7 +161,7 @@ func New(c Config) (*Service, error) {
 	}
 	u, err := url.Parse(c.Origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.String() != c.Origin || strings.ToLower(c.Origin) != c.Origin ||
-		u.Path != "" || u.Port() == "443" {
+		u.Path != "" || u.RawQuery != "" || u.User != nil || u.Port() == "443" {
 		return nil, fmt.Errorf("mobile: origin %q: want an https origin as a browser writes it (https://host[:port], lowercase, no path)", c.Origin)
 	}
 	if c.Now == nil {

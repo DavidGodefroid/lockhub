@@ -5,6 +5,25 @@ digest).
 
 ## Unreleased
 
+- Mobile facade (#10): an installable web app (embedded, no build step) on
+  its own listener, published on host loopback for the human's TLS reverse
+  proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones
+  pair with `lock mobile pair` (one-time code, WebAuthn registration with
+  user verification, fingerprint confirmed at the terminal); `lock up`
+  reviews paired devices and pins them at every lock (`--devices-file`),
+  with `seal_clear` (clear screens sealed end to end to the phones) and
+  `require_device` (locks refuse approvals of those risk classes not
+  signed by a phone). Each decision on the phone is a WebAuthn assertion
+  over the decision and the hash of the lock's signed ticket, checked by
+  the hub before it signs and by the locks after (lockkit v0.4.0). Sign
+  counters, single-use challenges and drafts, `__Host-` session cookie,
+  Origin and custom-header checks on every POST, strict CSP. The phone
+  answers every risk class but `unlock`. Audit records carry the device;
+  device pairings and revocations are audited. `lock mobile list|revoke`;
+  `lock doctor` reports devices paired since the last `lock up`.
+- Requires lockkit v0.4.0 (compatible: tickets and decisions without
+  devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries
   each chat secret's identity (a short hash, never the token), so the
