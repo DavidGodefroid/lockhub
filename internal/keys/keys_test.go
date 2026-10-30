@@ -59,6 +59,33 @@ func TestLoadLocks(t *testing.T) {
 	}
 }
 
+func TestLoadOrCreateP256(t *testing.T) {
+	p := filepath.Join(t.TempDir(), VAPIDFile)
+	k, err := LoadOrCreateP256(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", fi.Mode().Perm())
+	}
+	again, err := LoadOrCreateP256(p)
+	if err != nil || !again.Equal(k) {
+		t.Fatalf("second load: a different key (%v)", err)
+	}
+	os.Chmod(p, 0o640)
+	if _, err := LoadOrCreateP256(p); err == nil || !strings.Contains(err.Error(), "0600") {
+		t.Errorf("group-readable key: %v", err)
+	}
+	// An Ed25519 key is not a VAPID key.
+	ed := filepath.Join(t.TempDir(), "hub.key")
+	if _, err := Generate(ed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateP256(ed); err == nil {
+		t.Error("loaded an Ed25519 key as P-256")
+	}
+}
+
 func TestRetired(t *testing.T) {
 	dir := t.TempDir()
 	a, _, _ := ed25519.GenerateKey(rand.Reader)
