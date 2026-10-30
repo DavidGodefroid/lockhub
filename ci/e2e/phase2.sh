@@ -102,7 +102,8 @@ for u in "http://lockhub:8443/v1/hello" "http://$hubip:8443/v1/hello"; do
 done
 
 say "a ticket, approved through the facade socket"
-agent -o /dev/null -w '%{http_code}\n' -x "http://$gate:3128" -m 120 "http://example.com/" >curl.out 2>&1 &
+# A write (a body the agent chose): the gate holds it and asks the hub.
+agent -o /dev/null -w '%{http_code}\n' -x "http://$gate:3128" -m 120 -d probe=1 "http://example.com/" >curl.out 2>&1 &
 cpid=$!
 ok=""
 for i in $(seq 1 30); do
@@ -111,10 +112,18 @@ for i in $(seq 1 30); do
 	if tr -d '\r' <approve.out | grep -q '^approved'; then ok=1; break; fi
 done
 cat approve.out
-[ -n "$ok" ] || die "no ticket approved"
+if [ -z "$ok" ]; then
+	cat curl.out
+	docker logs "$gate" 2>&1 | tail -20
+	docker logs "${p}-lockhub-1" 2>&1 | tail -20
+	die "no ticket approved"
+fi
 wait "$cpid" || true
 cat curl.out
-grep -q '^200' curl.out || die "the approved request did not pass"
+# example.com answers a POST with 200 or an error of its own: what counts
+# is that the gate let it out (not 403/E_DENIED or 5xx of the gate).
+code=$(tr -d '\r' <curl.out | tail -1)
+case "$code" in 2??|3??|404|405|411) ;; *) docker logs "$gate" 2>&1 | tail -20; die "the approved request did not pass ($code)" ;; esac
 "$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub"
 
 say "I11: .lockfamily is read-only for an agent (mounted as lea mounts it)"
