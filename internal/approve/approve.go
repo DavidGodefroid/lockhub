@@ -176,12 +176,12 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 }
 
 // changeWords says what happened to a plan-hash input since the expired
-// ticket (lockkit ticket.Change kinds; "unchecked" from lockkit v0.6.0).
+// ticket (lockkit ticket.Change kinds).
 func changeWords(kind string) string {
 	switch kind {
-	case "changed", "new", "gone":
+	case ticket.ChangeChanged, ticket.ChangeNew, ticket.ChangeGone:
 		return kind
-	case "unchecked":
+	case ticket.ChangeUnchecked:
 		return "not checked now — the run checks it"
 	}
 	return sanitize.Terminal(kind, false)

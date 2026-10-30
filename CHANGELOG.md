@@ -5,8 +5,10 @@ digest).
 
 ## Unreleased
 
-Builds on lockkit v0.5.0. Reveals and renewals need locks built on lockkit
-v0.5.0; older locks ignore the new `requests` member of the decisions poll.
+Builds on lockkit v0.6.0. Reveals and renewals need locks built on lockkit
+v0.5.0 or later; older locks ignore the new `requests` member of the
+decisions poll. A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
+could not check them now) are shown as such, and never allow one click.
 
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`

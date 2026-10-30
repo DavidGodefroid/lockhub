@@ -1,5 +1,5 @@
-github.com/DavidGodefroid/lockkit v0.5.0 h1:0rMTTGFh5sSYtHtmwuMFvwoflQVzt4iZnL+srHi1Egw=
-github.com/DavidGodefroid/lockkit v0.5.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
+github.com/DavidGodefroid/lockkit v0.6.0 h1:CyBijT1qfD+7WIIc7rNzbpeaezYh5VcG4JL8zxbMogg=
+github.com/DavidGodefroid/lockkit v0.6.0/go.mod h1:RXG/MvYxBK2h2cAccPWkyX9HsrpkJgWw0A8Y7SyEbuE=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMFLdQ=
