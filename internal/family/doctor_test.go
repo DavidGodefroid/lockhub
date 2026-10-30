@@ -106,7 +106,7 @@ func TestDoctorHealthy(t *testing.T) {
 		t.Fatalf("%d problems:\n%s", n, out)
 	}
 	for _, want := range []string{"lockfamily.yaml", "engine", "hub key", "facade socket", "lock-events running", "internal",
-		"hub answers on the facade socket: 0 ticket(s) pending", "at most 20 tickets pending", "10 new ones per 5m0s", "at most 50 per lock", "one agent can use it up", "pending crm-prod: 0 of 20"} {
+		"hub answers on the facade socket: 0 ticket(s) pending", "at most 20 plans pending", "10 new tickets per 5m0s", "at most 50 per lock", "one agent can use it up", "pending crm-prod on the hub: 0 of 20"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q:\n%s", want, out)
 		}
@@ -213,7 +213,7 @@ func TestDoctorHubAnswersAndCaps(t *testing.T) {
 	queueAnswer.Store(tickets)
 	d, _ := healthy(t)
 	out, n := doc(t, d)
-	if n != 0 || !strings.Contains(out, "17 ticket(s) pending") || !strings.Contains(out, "warn pending crm-prod: 16 of 20: near the cap") || !strings.Contains(out, "ok   pending events: 1 of 20") {
+	if n != 0 || !strings.Contains(out, "17 ticket(s) pending") || !strings.Contains(out, "warn pending crm-prod on the hub: 16 of 20") || !strings.Contains(out, "near the cap") || !strings.Contains(out, "ok   pending events on the hub: 1 of 20") {
 		t.Errorf("%d:\n%s", n, out)
 	}
 	queueAnswer.Store("down")
@@ -221,8 +221,34 @@ func TestDoctorHubAnswersAndCaps(t *testing.T) {
 	if n == 0 || !strings.Contains(out, "FAIL hub answers the facade socket with 500") {
 		t.Errorf("%d:\n%s", n, out)
 	}
+	queueAnswer.Store("{not json")
+	if out, n := doc(t, d); n == 0 || !strings.Contains(out, "FAIL hub queue") {
+		t.Errorf("%d:\n%s", n, out)
+	}
 	os.Remove(filepath.Join(d.Runtime, "lockhub", "facade.sock"))
 	if out, _ := doc(t, d); strings.Contains(out, "hub answers") {
 		t.Errorf("asked the hub without a socket:\n%s", out)
+	}
+}
+
+// A socket left by a hub that died: nobody listens.
+func TestDoctorStaleSocket(t *testing.T) {
+	d, _ := healthy(t)
+	sd, _ := os.MkdirTemp("", "ds")
+	defer os.RemoveAll(sd)
+	l, err := net.Listen("unix", filepath.Join(sd, "s"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.(*net.UnixListener).SetUnlinkOnClose(false)
+	l.Close()
+	os.Chmod(filepath.Join(sd, "s"), 0o600)
+	sock := filepath.Join(d.Runtime, "lockhub", "facade.sock")
+	os.Remove(sock)
+	if err := os.Rename(filepath.Join(sd, "s"), sock); err != nil {
+		t.Fatal(err)
+	}
+	if out, n := doc(t, d); n == 0 || !strings.Contains(out, "FAIL hub does not answer on the facade socket") {
+		t.Errorf("%d:\n%s", n, out)
 	}
 }
