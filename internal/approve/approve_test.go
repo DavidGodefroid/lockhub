@@ -31,6 +31,11 @@ type env struct {
 	st   *store.Store
 	lock ed25519.PrivateKey
 	sock string
+	// pushed counts the tickets pushed: each is created a second after
+	// the one before, so the queue (ordered by created, then id) lists
+	// them in push order (lockhub#55: two tickets of one second were
+	// ordered by their random ULIDs).
+	pushed *int
 }
 
 func setup(t *testing.T) env {
@@ -55,12 +60,14 @@ func setup(t *testing.T) env {
 	srv := &http.Server{Handler: api.FacadeHandler(h), ConnContext: peer.ConnContext}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
-	return env{h, st, priv, sock}
+	return env{h, st, priv, sock, new(int)}
 }
 
 func (e env) push(t *testing.T, risk ticket.Risk, prod bool, body string) string {
+	*e.pushed++
+	created := time.Now().Add(-time.Hour).Add(time.Duration(*e.pushed) * time.Second)
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm"}, risk,
-		"sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), time.Now(), 0)
+		"sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), created, 0)
 	tk.Workspace, tk.Requester = "ws", ticket.Requester{Agent: "dev-1\x1b[31m", Session: "s"}
 	tk.Screen = ticket.Screen{Header: "query on crm", Body: []string{body}, Warnings: []string{"touches 3 rows"}}
 	if prod {

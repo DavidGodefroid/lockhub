@@ -120,6 +120,9 @@ func (f *fakeTG) all() string {
 
 var dump func() string
 
+// waitFor bounds eventually.
+const waitFor = 30 * time.Second
+
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	defer func() {
@@ -127,13 +130,18 @@ func eventually(t *testing.T, what string, cond func() bool) {
 			t.Log(dump())
 		}
 	}()
-	for i := 0; i < 300; i++ {
+	// A deadline, not a count of polls: on a loaded runner the facade's
+	// close after a decision (an fsync'd audit flush, then an HTTP call)
+	// took more than 3 s (lockhub#55). Only a failure waits this long.
+	for deadline := time.Now().Add(waitFor); ; {
 		if cond() {
 			return
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out after %s: %s", waitFor, what)
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out: %s", what)
 }
 
 type env struct {
