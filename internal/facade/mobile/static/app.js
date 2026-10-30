@@ -178,13 +178,17 @@ async function login() {
   status("Signing in…");
   let r;
   const pending = await getKey("pending");
+  let note = "";
   if (pending) {
     try {
       r = await loginWith(pending);
+      if (await getKey("device")) note = "Paired. Revoke the device this phone replaced: lock mobile revoke NAME on the host.";
       await putKey("device", pending);
       await kv("readwrite", (s) => s.delete("pending"));
     } catch (e) {
-      if (!(await getKey("device"))) throw e;
+      // Not confirmed at the host (or revoked): forget it.
+      if (e.kind === "assertion") await kv("readwrite", (s) => s.delete("pending"));
+      if (!(await getKey("device"))) throw new Error(e.kind === "assertion" ? "The pairing was not confirmed on the host: pair again." : e.message);
     }
   }
   if (!r) {
@@ -193,7 +197,7 @@ async function login() {
     r = await loginWith(dev);
   }
   $("who").textContent = r.name;
-  status("");
+  status(note);
   show("queue");
   poll();
 }

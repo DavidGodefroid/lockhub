@@ -97,6 +97,7 @@ type Service struct {
 	rpID string
 	wa   *webauthn.WebAuthn
 
+	confirmMu  sync.Mutex // one confirmation at a time: names stay unique
 	mu         sync.Mutex
 	pairings   map[string]*pairing // by id
 	failed     int                 // wrong pairing codes since the last success
@@ -961,17 +962,9 @@ func (s *Service) pairStart(w http.ResponseWriter, r *http.Request, _ string) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "name: 1 to 32 of a-z, 0-9, -")
 		return
 	}
-	ds, err := s.c.Hub.Store().Devices(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "cannot list devices")
+	if s.activeName(r.Context(), req.Name) {
+		writeErr(w, http.StatusConflict, "name", "an active device is named "+req.Name+": revoke it first (lock mobile revoke "+req.Name+")")
 		return
-	}
-	for _, d := range ds {
-		var dev ticket.Device
-		if d.State == store.DeviceActive && json.Unmarshal(d.Record, &dev) == nil && dev.Name == req.Name {
-			writeErr(w, http.StatusConflict, "name", "an active device is named "+req.Name+": revoke it first (lock mobile revoke "+req.Name+")")
-			return
-		}
 	}
 	now := s.c.Now()
 	s.mu.Lock()
@@ -981,6 +974,10 @@ func (s *Service) pairStart(w http.ResponseWriter, r *http.Request, _ string) {
 	for _, p := range s.pairings {
 		if p.state == waiting || p.state == registered {
 			open++
+			if p.name == req.Name {
+				writeErr(w, http.StatusConflict, "name", "a pairing for "+req.Name+" is open")
+				return
+			}
 		}
 	}
 	if open >= maxPairings {
@@ -1083,6 +1080,12 @@ func (s *Service) pairConfirm(w http.ResponseWriter, r *http.Request, approver s
 	s.changed(p)
 	delete(s.pairings, p.id)
 	s.mu.Unlock()
+	s.confirmMu.Lock()
+	defer s.confirmMu.Unlock()
+	if s.activeName(r.Context(), dev.Name) {
+		writeErr(w, http.StatusConflict, "name", "an active device is named "+dev.Name)
+		return
+	}
 	if err := s.c.Hub.AddDevice(r.Context(), dev.ID, rec, fp, approver, n); err != nil {
 		writeErr(w, http.StatusConflict, "device", "the device could not be recorded: "+err.Error())
 		return
@@ -1138,6 +1141,22 @@ func (s *Service) revoke(w http.ResponseWriter, r *http.Request, approver string
 	}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// activeName reports whether an active device has name (or the devices
+// cannot be read: then as if it had).
+func (s *Service) activeName(ctx context.Context, name string) bool {
+	ds, err := s.c.Hub.Store().Devices(ctx)
+	if err != nil {
+		return true
+	}
+	for _, d := range ds {
+		var dev ticket.Device
+		if d.State == store.DeviceActive && json.Unmarshal(d.Record, &dev) == nil && dev.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Fingerprint of a canonical record, for callers holding bytes.

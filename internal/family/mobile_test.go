@@ -115,8 +115,50 @@ func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
 	if err := PinDevice(filepath.Join(w.dir, "state"), a.Device()); err != nil {
 		t.Fatal(err)
 	}
-	out, err := w.up("y\n", newFake())
+	f := newFake()
+	out, err := w.up("y\n", f)
 	if err != nil || !strings.Contains(out, "  device phone webauthn:") {
 		t.Fatalf("with a device: %v\n%s", err, out)
+	}
+	state := filepath.Join(w.dir, "state")
+	if o, err := AppliedMobileOrigin(state); err != nil || o != "https://hub.example.net" {
+		t.Fatalf("applied origin %q %v", o, err)
+	}
+	// The locks mount the reviewed snapshot, not the live file.
+	snaps, _ := filepath.Glob(filepath.Join(state, "devices-*.json"))
+	if len(snaps) != 1 {
+		t.Fatalf("snapshots %v", snaps)
+	}
+	b, _ := os.ReadFile(filepath.Join(state, "compose.yaml"))
+	if !strings.Contains(string(b), "source: \""+snaps[0]+"\"") || strings.Contains(string(b), DevicesFile(state)+"\"") {
+		t.Fatalf("compose does not mount the snapshot:\n%s", b)
+	}
+}
+
+// A lock that pins no device would refuse every phone decision: the hub
+// does not route it to mobile; the review names what each lock does.
+func TestMobileRoutingAndReview(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	os.WriteFile(p, []byte(mobileYAML()), 0o644)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Routes(c)
+	if err := r.Allowed("crm-prod", "mobile", "write"); err != nil {
+		t.Fatalf("the opted-in lock is not on mobile: %v", err)
+	}
+	if err := r.Allowed("events", "mobile", "read"); err == nil {
+		t.Fatal("a lock that pins no device is answered on mobile")
+	}
+	if err := r.Allowed("events", "tty", "read"); err != nil {
+		t.Fatalf("events lost the terminal: %v", err)
+	}
+	sum := strings.Join(Summary(c, "", nil), "\n")
+	for _, want := range []string{"lock crm-prod accepts only device-signed approvals of prod-write,policy-loosen",
+		"lock crm-prod seals its clear screens to them", "lock events pins no device: not answered on mobile"} {
+		if !strings.Contains(sum, want) {
+			t.Errorf("review lacks %q", want)
+		}
 	}
 }

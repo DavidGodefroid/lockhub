@@ -1,10 +1,14 @@
 package family
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
@@ -95,4 +99,38 @@ func devicesSummary(devs []ticket.Device) []string {
 		s = append(s, fmt.Sprintf("device %s %s fingerprint %s", d.Name, d.ID, fp))
 	}
 	return s
+}
+
+// devicesSnapshot is the reviewed set of devices, written once lock up is
+// confirmed under a name of its own content: the locks mount that file,
+// never the live one, which lock mobile may change in between.
+func devicesSnapshot(state string, devs []ticket.Device) (path string, content []byte, err error) {
+	b, err := ticket.MarshalDevices(devs)
+	if err != nil {
+		return "", nil, err
+	}
+	sum := sha256.Sum256(b)
+	return filepath.Join(state, "devices-"+hex.EncodeToString(sum[:8])+".json"), b, nil
+}
+
+// AppliedMobileOrigin is hub.mobile.origin as the last confirmed lock up
+// applied it (lock up's private state, not the workspace's yaml, which
+// agents can write).
+func AppliedMobileOrigin(state string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
+	if err != nil {
+		return "", fmt.Errorf("no applied configuration (run lock up first): %w", err)
+	}
+	var a Applied
+	if err := json.Unmarshal(b, &a); err != nil {
+		return "", err
+	}
+	for _, l := range a.Summary {
+		if rest, ok := strings.CutPrefix(l, "hub mobile origin "); ok {
+			if o, _, ok := strings.Cut(rest, " on "); ok {
+				return o, nil
+			}
+		}
+	}
+	return "", errors.New("the applied configuration has no mobile facade (hub.mobile, then lock up)")
 }

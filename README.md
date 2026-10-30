@@ -54,9 +54,10 @@ locks:
     devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
 ```
 
-A lock without `devices: true` refuses every decision taken on a phone (it
-pins none); `seal_clear` and `require_device` apply to the locks that pin the
-phones. Its image must take `--devices-file` (lockkit v0.4.0 or later).
+A lock without `devices: true` pins no phone: `lock up` routes it away from
+mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
+hub's approvals from the other facades as before). The review names what each
+lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
 
 **Exposure.** `lock up` publishes the mobile listener on `127.0.0.1:8444`
 only. The phone reaches it through a TLS reverse proxy or tunnel that you run
@@ -77,7 +78,10 @@ phone at the locks: `lock up` reviews the device like any key and recreates
 the locks with it. `lock mobile list`, `lock mobile revoke NAME` (then `lock
 up`). The confirmation is only as strong as the facade socket: whoever can
 open it (your host account, never an agent container) can confirm a device.
-`require_device` needs a paired device: `lock up` refuses it otherwise.
+`require_device` needs a paired device: `lock up` refuses it otherwise, so
+revoking the last phone leaves the locks pinning it (the hub refuses it) until
+you remove `require_device` and run `lock up`. `lock mobile pair` checks the
+phone's origin against the one the last `lock up` applied.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
 secrets yet); production tickets ask for the instance name; `hub.routing`

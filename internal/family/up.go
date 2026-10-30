@@ -88,19 +88,23 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 	}
 	if m := c.Hub.Mobile; m != nil {
 		s = append(s, fmt.Sprintf("hub mobile origin %s on 127.0.0.1:%d", m.Origin, m.Port))
-		if m.SealClear {
-			s = append(s, "locks seal clear screens to the paired devices")
-		}
-		if len(m.RequireDevice) > 0 {
-			s = append(s, "locks accept only device-signed approvals of "+strings.Join(m.RequireDevice, ","))
-		}
 	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
 			fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
-		if l.Devices {
-			s = append(s, fmt.Sprintf("lock %s pins the paired devices", n))
+		if m := c.Hub.Mobile; m != nil {
+			if !l.Devices {
+				s = append(s, fmt.Sprintf("lock %s pins no device: not answered on mobile", n))
+			} else {
+				s = append(s, fmt.Sprintf("lock %s pins the paired devices", n))
+				if m.SealClear {
+					s = append(s, fmt.Sprintf("lock %s seals its clear screens to them", n))
+				}
+				if len(m.RequireDevice) > 0 {
+					s = append(s, fmt.Sprintf("lock %s accepts only device-signed approvals of %s", n, strings.Join(m.RequireDevice, ",")))
+				}
+			}
 		}
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
@@ -160,8 +164,12 @@ func (u *Up) Do(ctx context.Context) error {
 	// Every lock carries the paired devices' identity: a device paired or
 	// revoked recreates them (they read the file at start).
 	paths.DevicesID = fingerprint(append([]string{"devices"}, devicesSummary(devices)...))
+	snapPath, snapContent, err := devicesSnapshot(u.State, devices)
+	if err != nil {
+		return err
+	}
 	if len(devices) > 0 {
-		paths.Devices = DevicesFile(u.State)
+		paths.Devices = snapPath
 	} else if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
 		// Fail closed: without a device, the locks would take the hub's
 		// approvals of these risk classes again.
@@ -278,13 +286,19 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(hubData, "locks.json"), append(lb, '\n'), 0o600); err != nil {
 		return err
 	}
-	rb, _ := json.MarshalIndent(route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}, "", "  ")
+	rb, _ := json.MarshalIndent(Routes(c), "", "  ")
 	if err := os.WriteFile(filepath.Join(hubData, "routing.json"), append(rb, '\n'), 0o600); err != nil {
 		return err
 	}
 	cb, _ := json.MarshalIndent(chatconf.Settings{Slack: c.Hub.Slack, Telegram: c.Hub.Telegram}, "", "  ")
 	if err := os.WriteFile(filepath.Join(hubData, chatconf.File), append(cb, '\n'), 0o600); err != nil {
 		return err
+	}
+	if paths.Devices != "" {
+		// 0644: the locks read it through a read-only bind mount.
+		if err := os.WriteFile(snapPath, snapContent, 0o644); err != nil {
+			return err
+		}
 	}
 	paths.Config = fp
 	composeYAML = []byte(Compose(c, paths))
@@ -310,6 +324,32 @@ func privateDir(d string) error {
 		return err
 	}
 	return checkPrivate(d)
+}
+
+// Routes is the hub's routing for c: hub.routing, and a lock that pins no
+// device narrowed away from mobile (it would refuse every decision taken
+// there).
+func Routes(c *Config) route.Rules {
+	r := route.Rules{Enabled: c.Hub.Facades, Only: map[string][]string{}}
+	for inst, fs := range c.Hub.Routing {
+		r.Only[inst] = slices.Clone(fs)
+	}
+	if slices.Contains(c.Hub.Facades, route.Mobile) {
+		for _, n := range c.Instances() {
+			if c.Locks[n].Devices {
+				continue
+			}
+			fs, ok := r.Only[n]
+			if !ok {
+				fs = slices.Clone(c.Hub.Facades)
+			}
+			r.Only[n] = slices.DeleteFunc(fs, func(f string) bool { return f == route.Mobile })
+		}
+	}
+	if len(r.Only) == 0 {
+		r.Only = nil
+	}
+	return r
 }
 
 // anyDevices reports whether a lock pins the paired devices.

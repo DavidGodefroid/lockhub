@@ -488,12 +488,10 @@ func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "lock mobile pair: the device is confirmed at a terminal; stdin is not one")
 			return 1
 		}
-		var cfg *family.Config
-		if cfg, err = family.Load(abs); err == nil && cfg.Hub.Mobile == nil {
-			err = errors.New("lockfamily.yaml enables no mobile facade (hub.facades: [mobile], hub.mobile.origin)")
-		}
-		if err == nil {
-			err = mobilecli.Pair(ctx, c, *name, cfg.Hub.Mobile.Origin, state, bufio.NewReader(stdin), stdout)
+		// The origin lock up applied (reviewed), not the yaml as it is now.
+		var origin string
+		if origin, err = family.AppliedMobileOrigin(state); err == nil {
+			err = mobilecli.Pair(ctx, c, *name, origin, state, bufio.NewReader(stdin), stdout)
 		}
 	case sub == "list" && len(pos) == 0:
 		err = mobilecli.List(ctx, c, state, stdout)
