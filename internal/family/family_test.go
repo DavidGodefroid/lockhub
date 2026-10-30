@@ -89,7 +89,7 @@ type ws struct {
 }
 
 func newWS(t *testing.T, conf string) ws {
-	dir := t.TempDir()
+	dir, _ := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link
 	file := filepath.Join(dir, "projects", Dir, FileName)
 	os.MkdirAll(filepath.Dir(file), 0o755)
 	for _, t := range Types {
