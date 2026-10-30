@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+- Slack and Telegram: a message close (`chat.update`, `editMessageText`)
+  that fails (a rate limit, a network error, a 5xx) is retried with
+  backoff (2 s doubling to 5 min, 15 tries), so a decided, withdrawn or
+  expired ticket's message no longer keeps live buttons after one failure
+  (#60). A message the service says can no longer be edited is not
+  retried; Telegram's "message is not modified" (a retry after another
+  chat failed) counts as done. A click on stale buttons is still refused
+  by the facade and by the hub, and tries the close again at once.
+
 ## v0.2.2 (2026-10-30)
 
 Supported locks: as v0.2.1. `lock add` now pins locksql v0.11.0 or later

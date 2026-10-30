@@ -241,12 +241,21 @@ func (t *Telegram) Post(ctx context.Context, c chat.Card) (string, error) {
 // Close implements chat.Transport.
 func (t *Telegram) Close(ctx context.Context, ref string, c chat.Card, outcome string) error {
 	var errs []error
+	gone := 0
 	for _, r := range strings.Split(ref, ",") {
 		ch, id, _ := strings.Cut(r, ":")
 		m := t.message(c, outcome)
 		m["chat_id"], _ = strconv.ParseInt(ch, 10, 64)
 		m["message_id"], _ = strconv.ParseInt(id, 10, 64)
-		if err := t.call(ctx, "editMessageText", m, nil); err != nil {
+		switch err := t.call(ctx, "editMessageText", m, nil); {
+		case err == nil:
+		case strings.Contains(err.Error(), "message is not modified"):
+			// Already rewritten (a retry of a close that failed in
+			// another chat).
+		case strings.Contains(err.Error(), "message to edit not found") || strings.Contains(err.Error(), "message can't be edited"):
+			gone++
+			errs = append(errs, err)
+		default:
 			errs = append(errs, err)
 		}
 	}
@@ -254,6 +263,10 @@ func (t *Telegram) Close(ctx context.Context, ref string, c chat.Card, outcome s
 	t.mu.Lock()
 	delete(t.handles, hex.EncodeToString(h[:12]))
 	t.mu.Unlock()
+	if len(errs) > 0 && gone == len(errs) {
+		// Every message that failed is gone: retrying cannot help.
+		return fmt.Errorf("%w: %w", chat.ErrGone, errors.Join(errs...))
+	}
 	return errors.Join(errs...)
 }
 

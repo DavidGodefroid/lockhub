@@ -218,7 +218,15 @@ func (s *Slack) Post(ctx context.Context, c chat.Card) (string, error) {
 func (s *Slack) Close(ctx context.Context, ref string, c chat.Card, outcome string) error {
 	m := s.message(c, outcome)
 	m["ts"] = ref
-	return s.call(ctx, s.c.BotToken, "chat.update", m, nil)
+	err := s.call(ctx, s.c.BotToken, "chat.update", m, nil)
+	if err != nil {
+		for _, code := range []string{"message_not_found", "cant_update_message", "edit_window_closed", "channel_not_found", "is_archived"} {
+			if err.Error() == "chat.update: "+code {
+				return fmt.Errorf("%w: %w", chat.ErrGone, err)
+			}
+		}
+	}
+	return err
 }
 
 // envelope is a Socket Mode frame.

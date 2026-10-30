@@ -396,3 +396,29 @@ func TestLongTextStaysInsideItsCodeSpan(t *testing.T) {
 		}
 	}
 }
+
+// Close and its retries (#60): a message Slack can no longer update is
+// gone (not retried); a rate limit or a 5xx is retried.
+func TestCloseErrors(t *testing.T) {
+	for answer, gone := range map[string]bool{"message_not_found": true, "cant_update_message": true, "edit_window_closed": true,
+		"ratelimited": false, "internal_error": false, "": false} {
+		t.Run(answer, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if answer == "" {
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": answer})
+			}))
+			t.Cleanup(srv.Close)
+			s, err := slack.New(slack.Config{Team: "T1", Users: []string{"U1"}, Channel: "C1", AppToken: "xapp-1", BotToken: "xoxb-1", API: srv.URL + "/api/"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = s.Close(context.Background(), "17000.1", chat.Card{Instance: "crm", ID: "T1"}, "approved by u")
+			if err == nil || errors.Is(err, chat.ErrGone) != gone {
+				t.Fatalf("Close: %v, want gone %v", err, gone)
+			}
+		})
+	}
+}

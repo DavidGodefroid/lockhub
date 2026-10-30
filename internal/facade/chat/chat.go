@@ -120,11 +120,31 @@ type Transport interface {
 	Facade() string
 	// Post sends a new message for c and returns its reference.
 	Post(ctx context.Context, c Card) (ref string, err error)
-	// Close rewrites message ref: no buttons, the outcome shown.
+	// Close rewrites message ref: no buttons, the outcome shown. A
+	// failed Close is retried (Facade.Run); an error wrapping ErrGone
+	// (the message cannot be edited any more) is not. Close must be
+	// safe to call again for a message it already rewrote.
 	Close(ctx context.Context, ref string, c Card, outcome string) error
 	// Listen delivers authenticated answers until ctx ends.
 	Listen(ctx context.Context, answers chan<- Answer) error
 }
+
+// ErrGone, wrapped by a transport's Close error, says the message can no
+// longer be edited (deleted, too old): the close is not retried.
+var ErrGone = errors.New("the message can no longer be edited")
+
+// Close retries (#60): a close that fails (a rate limit, a network error,
+// a 5xx) would leave a decided, withdrawn or expired ticket's message with
+// live buttons. It is retried with backoff, from RetryBase doubling up to
+// RetryMax, at most RetryTries times. A click on the stale buttons
+// meanwhile (or after the retries give up, or after a restart) is refused
+// by the facade ("no longer pending"), and the hub refuses any decision
+// on a ticket that is not pending.
+const (
+	DefaultRetryBase  = 2 * time.Second
+	DefaultRetryMax   = 5 * time.Minute
+	DefaultRetryTries = 15
+)
 
 // Facade runs a transport against the hub.
 type Facade struct {
@@ -133,11 +153,25 @@ type Facade struct {
 	Log io.Writer
 	// Wait is the queue long-poll (default 30s).
 	Wait time.Duration
+	// retries are the failed closes, by ticket (Run's loop only).
+	retries map[store.Ref]*closing
+	// RetryBase, RetryMax and RetryTries bound the retries of a failed
+	// close (defaults DefaultRetry*).
+	RetryBase, RetryMax time.Duration
+	RetryTries          int
 }
 
 type posted struct {
 	ref  string
 	card Card
+}
+
+// closing is a close that failed, waiting for its next try.
+type closing struct {
+	posted
+	outcome string
+	tries   int
+	next    time.Time
 }
 
 // Run serves until ctx ends or the transport fails for good.
@@ -170,7 +204,14 @@ func (f *Facade) Run(ctx context.Context) error {
 		}
 	}()
 	shown := map[store.Ref]*posted{}
+	f.retries = map[store.Ref]*closing{}
 	for {
+		var timer *time.Timer
+		var due <-chan time.Time
+		if next, ok := f.nextRetry(); ok {
+			timer = time.NewTimer(time.Until(next))
+			due = timer.C
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -182,7 +223,82 @@ func (f *Facade) Run(ctx context.Context) error {
 			f.sync(ctx, shown, tks)
 		case a := <-answers:
 			f.answer(ctx, shown, a)
+		case <-due:
+			f.retryCloses(ctx, time.Now())
 		}
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+}
+
+// close rewrites p's message with outcome; on a failure, the close is
+// kept for a retry.
+func (f *Facade) close(ctx context.Context, r store.Ref, p *posted, outcome string) {
+	err := f.T.Close(ctx, p.ref, p.card, outcome)
+	if err == nil {
+		return
+	}
+	c := &closing{posted: *p, outcome: outcome}
+	f.failed(r, c, err, time.Now())
+}
+
+// failed records a failed try of c: retried later, or dropped (gone, or
+// out of tries).
+func (f *Facade) failed(r store.Ref, c *closing, err error, now time.Time) {
+	c.tries++
+	base, maxd, tries := f.RetryBase, f.RetryMax, f.RetryTries
+	if base <= 0 {
+		base = DefaultRetryBase
+	}
+	if maxd <= 0 {
+		maxd = DefaultRetryMax
+	}
+	if tries <= 0 {
+		tries = DefaultRetryTries
+	}
+	switch {
+	case errors.Is(err, ErrGone):
+		f.logf("close %s/%s: %v (not retried)", r.Instance, r.ID, err)
+		delete(f.retries, r)
+		return
+	case c.tries >= tries:
+		f.logf("close %s/%s: %v (gave up after %d tries: its buttons stay, and are refused)", r.Instance, r.ID, err, c.tries)
+		delete(f.retries, r)
+		return
+	}
+	d := base << (c.tries - 1)
+	if d > maxd || d <= 0 {
+		d = maxd
+	}
+	c.next = now.Add(d)
+	f.retries[r] = c
+	f.logf("close %s/%s: %v (try %d, again in %s)", r.Instance, r.ID, err, c.tries, d)
+}
+
+// nextRetry is when the earliest pending retry is due.
+func (f *Facade) nextRetry() (time.Time, bool) {
+	var next time.Time
+	for _, c := range f.retries {
+		if next.IsZero() || c.next.Before(next) {
+			next = c.next
+		}
+	}
+	return next, !next.IsZero()
+}
+
+// retryCloses tries again every close due at now.
+func (f *Facade) retryCloses(ctx context.Context, now time.Time) {
+	for r, c := range f.retries {
+		if c.next.After(now) {
+			continue
+		}
+		if err := f.T.Close(ctx, c.ref, c.card, c.outcome); err != nil {
+			f.failed(r, c, err, time.Now())
+			continue
+		}
+		delete(f.retries, r)
+		f.logf("close %s/%s: done (try %d)", r.Instance, r.ID, c.tries+1)
 	}
 }
 
@@ -214,9 +330,7 @@ func (f *Facade) sync(ctx context.Context, shown map[store.Ref]*posted, tks []st
 	}
 	for r, p := range shown {
 		if !pending[r] {
-			if err := f.T.Close(ctx, p.ref, p.card, "no longer pending (answered elsewhere, withdrawn or expired)"); err != nil {
-				f.logf("close %s/%s: %v", r.Instance, r.ID, err)
-			}
+			f.close(ctx, r, p, "no longer pending (answered elsewhere, withdrawn or expired)")
 			delete(shown, r)
 		}
 	}
@@ -232,7 +346,14 @@ func (f *Facade) answer(ctx context.Context, shown map[store.Ref]*posted, a Answ
 	p := shown[r]
 	switch {
 	case p == nil:
+		// A stale button (its close failed or is still being retried,
+		// or the facade restarted): refused here, and by the hub, which
+		// decides only pending tickets. A close waiting for its retry
+		// is tried again now.
 		reply("this ticket is no longer pending")
+		if c := f.retries[r]; c != nil {
+			c.next = time.Now()
+		}
 		return
 	case !p.card.Answerable:
 		reply(p.card.Why)
@@ -253,8 +374,6 @@ func (f *Facade) answer(ctx context.Context, shown map[store.Ref]*posted, a Answ
 	if a.Approve {
 		verb = "approved"
 	}
-	if err := f.T.Close(ctx, p.ref, p.card, verb+" by "+a.Display); err != nil {
-		f.logf("close %s/%s: %v", a.Instance, a.ID, err)
-	}
+	f.close(ctx, r, p, verb+" by "+a.Display)
 	delete(shown, r)
 }
