@@ -53,7 +53,7 @@ type Card struct {
 // CardOf builds the card of a pending ticket for facade, and whether the
 // facade shows it at all (an instance routed away from it: not shown).
 func CardOf(t store.Ticket, rules route.Rules, facade string) (Card, bool) {
-	if len(rules.Enabled) > 0 && !slices.Contains(rules.Enabled, facade) {
+	if !rules.On(facade) {
 		return Card{}, false
 	}
 	if only, ok := rules.Only[t.Instance]; ok && !slices.Contains(only, facade) {

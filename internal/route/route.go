@@ -10,6 +10,11 @@
 // Mobile decisions are signed by the device itself (locks verify them);
 // unlock stays off mobile until secrets can be typed there.
 //
+// A chat facade is routed only when the hub's configuration lists it
+// (Rules.Enabled): with no list (no routing.json, or one without
+// "facades"), only the local facades are, so a hub never routes a ticket
+// to a chat facade it does not run (invariant I9; fail closed).
+//
 // A workspace's configuration can only narrow this table (remove facades
 // for an instance), never widen it.
 package route
@@ -55,9 +60,13 @@ func KnownFacade(f string) bool { return slices.Contains(facades, f) }
 // KnownRisk reports whether r is a risk class.
 func KnownRisk(r string) bool { return slices.Contains(risks, r) }
 
-// Rules is the routing in force. The zero value is the defaults.
+// Rules is the routing in force. The zero value routes to the local
+// facades only (the table above without slack and telegram).
 type Rules struct {
-	// Enabled lists the facades this hub runs; empty: all of them.
+	// Enabled lists the facades this hub runs; empty: the local ones
+	// only (tty, deck, mobile), never a chat facade. Mobile stays
+	// implicit: it serves nothing without --mobile-listen, and its
+	// decisions are signed by a paired device the locks pin.
 	Enabled []string `json:"facades,omitempty"`
 	// Only, per instance, lists the facades that may answer it. Facades
 	// outside the defaults are ignored: Only narrows, never widens.
@@ -77,13 +86,23 @@ func (r Rules) Allowed(inst, f, risk string) error {
 	case !slices.Contains(local, f) && !slices.Contains(chatRisks, risk):
 		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
 	}
-	if len(r.Enabled) > 0 && !slices.Contains(r.Enabled, f) {
+	if !r.On(f) {
 		return fmt.Errorf("facade %s is not enabled on this hub", f)
 	}
 	if only, ok := r.Only[inst]; ok && !slices.Contains(only, f) {
 		return fmt.Errorf("instance %s is not routed to %s", inst, f)
 	}
 	return nil
+}
+
+// On reports whether facade f is enabled on this hub: listed in Enabled,
+// or, with no list, a local facade. A chat facade is never on unless
+// listed.
+func (r Rules) On(f string) bool {
+	if len(r.Enabled) == 0 {
+		return slices.Contains(local, f)
+	}
+	return slices.Contains(r.Enabled, f)
 }
 
 // CanReveal reports whether facade f may show a ticket's clear values

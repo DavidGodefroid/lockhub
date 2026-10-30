@@ -725,7 +725,7 @@ type QueueResult struct {
 // visible reports whether the mobile facade shows an instance's tickets
 // at all (routing narrowed it away: not shown).
 func visible(rules route.Rules, inst string) bool {
-	if len(rules.Enabled) > 0 && !contains(rules.Enabled, route.Mobile) {
+	if !rules.On(route.Mobile) {
 		return false
 	}
 	if only, ok := rules.Only[inst]; ok && !contains(only, route.Mobile) {
