@@ -13,6 +13,12 @@ decision bound to the exact plan that was approved.
 The hub never runs a request, never sees its results, and never sees values in
 clear.
 
+Chat facades (Slack, Telegram) show masked screens only and answer only non-
+production reads and writes; production tickets and policy loosening are
+answered in the terminal, the deck or a paired phone, unlocks in the terminal
+or the deck (`hub.Decide`, `internal/route`). A
+workspace's `lockfamily.yaml` can narrow this routing, never widen it.
+
 ## Status
 
 Early development. This repository holds:
