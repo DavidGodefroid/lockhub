@@ -16,11 +16,9 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 )
 
-// fixtures reads lockkit's own signed fixtures from the module this
-// build uses: a format change in lockkit fails here.
-// fixtures are lockkit's signed ticket fixtures: those of the lockkit
-// this build uses, or of the one LOCKKIT_FIXTURES names (the directory of
-// a lockkit module; the CI compatibility matrix, scripts/compat.sh).
+// fixtures are lockkit's signed ticket fixtures (a format change in lockkit
+// fails here): those of the lockkit this build uses, or of the one
+// LOCKKIT_FIXTURES names (a lockkit module directory; scripts/compat.sh).
 func fixtures(t *testing.T) (dir string, lock, hubKey ed25519.PrivateKey) {
 	t.Helper()
 	mod := os.Getenv("LOCKKIT_FIXTURES")

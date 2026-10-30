@@ -7,8 +7,8 @@ digest).
 
 - A lockkit compatibility check for CI (`scripts/compat.sh`): lockhub
   built on the pinned lockkit or on the release before it, its ticket
-  codec checked against the signed ticket fixtures of either
-  (`LOCKKIT_FIXTURES`).
+  codec checked against the signed ticket fixtures of either, or of the
+  newest lockkit release (`LOCKKIT_FIXTURES`).
 
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
