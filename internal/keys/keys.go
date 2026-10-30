@@ -5,11 +5,15 @@
 //
 //	hub.key     the hub's Ed25519 private key, PKCS#8 PEM, 0600
 //	locks.json  {"locks": {"<instance>": {"public_key": "<base64 raw 32 bytes>"}}}
+//	retired-keys.pub  the hub keys used before hub.key, oldest first, one
+//	            base64 public key per line (lockhub rotate-key appends)
 //
-// lock up writes both; lockhub keygen writes hub.key alone.
+// lock up writes hub.key and locks.json; lockhub keygen writes hub.key
+// alone.
 package keys
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -19,8 +23,72 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 )
+
+// RetiredFile is the list of the hub keys used before hub.key, in the
+// hub's data directory.
+const RetiredFile = "retired-keys.pub"
+
+// ParsePublics reads base64 Ed25519 public keys, one per line (blank
+// lines skipped), in order. A repeated key is refused.
+func ParsePublics(b []byte) ([]ed25519.PublicKey, error) {
+	var out []ed25519.PublicKey
+	for i, l := range strings.Split(string(b), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" {
+			continue
+		}
+		k, err := base64.StdEncoding.DecodeString(l)
+		if err != nil || len(k) != ed25519.PublicKeySize || Public(k) != l {
+			return nil, fmt.Errorf("line %d: not a base64 Ed25519 public key", i+1)
+		}
+		for _, o := range out {
+			if bytes.Equal(o, k) {
+				return nil, fmt.Errorf("line %d: key listed twice", i+1)
+			}
+		}
+		out = append(out, ed25519.PublicKey(k))
+	}
+	return out, nil
+}
+
+// FormatPublics is ParsePublics' format.
+func FormatPublics(ks []ed25519.PublicKey) []byte {
+	var b strings.Builder
+	for _, k := range ks {
+		b.WriteString(Public(k) + "\n")
+	}
+	return []byte(b.String())
+}
+
+// LoadRetired reads the retired hub keys of the data directory dir
+// (none when the file does not exist). current, the key of hub.key, is
+// left out when it ends the list: a rotation that stopped after
+// retiring it, before hub.key was replaced.
+func LoadRetired(dir string, current ed25519.PublicKey) ([]ed25519.PublicKey, error) {
+	b, err := os.ReadFile(filepath.Join(dir, RetiredFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	ks, err := ParsePublics(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", RetiredFile, err)
+	}
+	if n := len(ks); n > 0 && bytes.Equal(ks[n-1], current) {
+		ks = ks[:n-1]
+	}
+	for _, k := range ks {
+		if bytes.Equal(k, current) {
+			return nil, fmt.Errorf("%s: lists the current hub key before other keys", RetiredFile)
+		}
+	}
+	return ks, nil
+}
 
 const pemType = "PRIVATE KEY"
 

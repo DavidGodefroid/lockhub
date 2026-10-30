@@ -66,7 +66,9 @@ var hubFields = []string{"approval", "ticket", "approver", "facade", "hub_sig"}
 // that every record naming a hub decision (hub_sig) matches a decision
 // the hub's database holds and signed: same signature, approver and
 // facade. dir is the hub's data directory.
-func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []LockLog, anchors map[string]lkaudit.Anchor) ([]LockReport, error) {
+// hubKeys are the hub's keys, oldest first (Hub checks which one signs
+// each decision).
+func Locks(ctx context.Context, dir string, hubKeys []ed25519.PublicKey, logs []LockLog, anchors map[string]lkaudit.Anchor) ([]LockReport, error) {
 	st, err := store.OpenReadOnly(filepath.Join(dir, "hub.db"))
 	if err != nil {
 		return nil, err
@@ -87,8 +89,13 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 		}
 		for _, d := range ds {
 			since = d.Seq
-			dec, err := ticket.VerifyDecision(hubKey, d.Raw)
-			if err != nil {
+			var dec *ticket.Decision
+			for i := len(hubKeys) - 1; i >= 0 && dec == nil; i-- {
+				if v, err := ticket.VerifyDecision(hubKeys[i], d.Raw); err == nil {
+					dec = v
+				}
+			}
+			if dec == nil {
 				continue // Hub reports it
 			}
 			// Keyed on what the hub signed, not on the database's columns.

@@ -62,7 +62,7 @@ func lockLog(t *testing.T, dir string, pub ed25519.PublicKey, edit func(*lkaudit
 func TestLockLogsMatchTheHub(t *testing.T) {
 	dir, pub := build(t, 2)
 	path := lockLog(t, dir, pub, nil)
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", path}}, nil)
 	if err != nil || len(reps) != 1 {
 		t.Fatal(reps, err)
 	}
@@ -72,17 +72,17 @@ func TestLockLogsMatchTheHub(t *testing.T) {
 	}
 	// Anchored at that line: a grown log verifies, a cut one does not.
 	anchors := map[string]lkaudit.Anchor{"crm": r.Anchor}
-	if reps, _ := Locks(context.Background(), dir, pub, []LockLog{{"crm", filepath.Join(path, "audit.log")}}, anchors); !reps[0].OK() || !reps[0].Anchored {
+	if reps, _ := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", filepath.Join(path, "audit.log")}}, anchors); !reps[0].OK() || !reps[0].Anchored {
 		t.Fatalf("anchored: %+v", reps[0])
 	}
 	p := filepath.Join(path, "audit.log")
 	b, _ := os.ReadFile(p)
 	lines := strings.SplitAfter(strings.TrimSuffix(string(b), "\n"), "\n")
 	os.WriteFile(p, []byte(strings.Join(lines[:3], "")), 0o600)
-	if reps, _ := Locks(context.Background(), dir, pub, []LockLog{{"crm", p}}, anchors); reps[0].OK() {
+	if reps, _ := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", p}}, anchors); reps[0].OK() {
 		t.Error("cut tail accepted against its anchor")
 	}
-	if reps, _ := Locks(context.Background(), dir, pub, []LockLog{{"crm", p}}, nil); !reps[0].OK() {
+	if reps, _ := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", p}}, nil); !reps[0].OK() {
 		t.Errorf("the cut log, unanchored, should still verify (only an anchor sees it): %+v", reps[0])
 	}
 }
@@ -103,7 +103,7 @@ func TestLockLogClaimsADecisionTheHubDidNotMake(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir, pub := build(t, 2)
-			reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", lockLog(t, dir, pub, edit)}}, nil)
+			reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", lockLog(t, dir, pub, edit)}}, nil)
 			if err != nil || reps[0].OK() {
 				t.Fatalf("accepted: %+v %v", reps, err)
 			}
@@ -117,7 +117,7 @@ func TestLockLogEditedChain(t *testing.T) {
 	p := filepath.Join(path, "audit.log")
 	b, _ := os.ReadFile(p)
 	os.WriteFile(p, []byte(strings.Replace(string(b), `"event":"pending"`, `"event":"refused"`, 1)), 0o600)
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", p}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", p}}, nil)
 	if err != nil || reps[0].OK() || !strings.Contains(reps[0].Problems[0], "audit chain") {
 		t.Fatalf("%+v %v", reps, err)
 	}
@@ -150,7 +150,7 @@ func TestAnchorsFile(t *testing.T) {
 func TestUnsignedHubRecords(t *testing.T) {
 	dir, pub := build(t, 2)
 	path := lockLog(t, dir, pub, func(b *lkaudit.Base) { b.HubSig = "" })
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", path}}, nil)
 	if err != nil || !reps[0].OK() || reps[0].HubDecisions != 2 || reps[0].Unsigned != 2 || reps[0].Unrecorded != 0 {
 		t.Fatalf("%+v %v", reps, err)
 	}
@@ -162,7 +162,7 @@ func TestUnreadableHubRecord(t *testing.T) {
 	state := t.TempDir()
 	l, _ := lkaudit.Open(kit.Product{Name: "locksql"}, state)
 	l.Append(rawRecord(`{"event":"approved","ticket":"01FORGED","approver":"slack:evil","hub_sig":"Zm9yZ2Vk"}`))
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", filepath.Join(state, "locksql")}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", filepath.Join(state, "locksql")}}, nil)
 	if err != nil || reps[0].OK() || reps[0].Unrecorded != 1 {
 		t.Fatalf("%+v %v", reps, err)
 	}
@@ -190,7 +190,7 @@ func TestReplayedApproval(t *testing.T) {
 	if err := l.Append(rawRecord(raw)); err != nil {
 		t.Fatal(err)
 	}
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", path}}, nil)
 	if err != nil || reps[0].OK() || !strings.Contains(strings.Join(reps[0].Problems, ";"), "second approval") {
 		t.Fatalf("%+v %v", reps, err)
 	}
@@ -211,7 +211,7 @@ func TestRunRecordWithHubSig(t *testing.T) {
 	if err := l.Append(rawRecord(raw)); err != nil {
 		t.Fatal(err)
 	}
-	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	reps, err := Locks(context.Background(), dir, []ed25519.PublicKey{pub}, []LockLog{{"crm", path}}, nil)
 	if err != nil || !reps[0].OK() {
 		t.Fatalf("%+v %v", reps, err)
 	}

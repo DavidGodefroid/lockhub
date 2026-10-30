@@ -74,7 +74,7 @@ func TestPhaseSixExitCriterion(t *testing.T) {
 		}
 	}
 	// The audit chain verifies and records the device.
-	rep, err := verify.Hub(context.Background(), e.dir, e.hubKey.Public().(ed25519.PublicKey))
+	rep, err := verify.Hub(context.Background(), e.dir, []ed25519.PublicKey{e.hubKey.Public().(ed25519.PublicKey)})
 	if err != nil || !rep.OK() {
 		t.Fatalf("audit verify: %+v %v", rep, err)
 	}

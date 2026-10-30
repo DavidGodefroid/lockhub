@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
@@ -67,6 +68,14 @@ type Up struct {
 	In     *bufio.Reader
 	Out    io.Writer
 	DryRun bool
+	// Pin sets the hub image by digest (lock up --pin: a previous version
+	// restored); lockfamily.yaml takes it once applied.
+	Pin string
+	// Rotate names the keys lock up --rotate replaces: "hub", lock
+	// instances, "all".
+	Rotate []string
+	// Now is the clock (nil: time.Now).
+	Now func() time.Time
 }
 
 // Project is the compose project of a workspace: one per workspace.
@@ -176,6 +185,35 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// --pin: the configuration reviewed and applied is the file with the
+	// pinned hub image, written back once applied.
+	pinned := false
+	if u.Pin != "" {
+		ref, err := PinRef(u.Pin)
+		if err != nil {
+			return err
+		}
+		if ref == c.Hub.Image {
+			fmt.Fprintf(u.Out, "--pin: %s is the hub image already\n", ref)
+		} else {
+			old := c.Hub.Image
+			if raw, err = setHubImage(raw, ref); err != nil {
+				return fmt.Errorf("--pin: %s: %w", u.File, err)
+			}
+			if c, err = decode(raw, u.File, true); err != nil {
+				return err
+			}
+			pinned = true
+			fmt.Fprintf(u.Out, "--pin: the hub image becomes %s (was %s); %s takes it once applied\n", ref, old, u.File)
+		}
+		if !slices.Contains(hubImages(u.State), ref) {
+			fmt.Fprintf(u.Out, "note: %s never ran in this workspace (see %s); cosign still checks it is a lockhub release\n", ref, filepath.Join(u.State, HubImagesFile))
+		}
+	}
+	rot, err := parseRotate(c, u.Rotate)
+	if err != nil {
+		return err
+	}
 	// The workspace's canonical path (links resolved), as lea sees it:
 	// the project, the consoles' working directory and the socket names
 	// derive from it.
@@ -218,8 +256,21 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
+	appliedPath := filepath.Join(u.State, "applied.json")
+	// The new hub key, made before the review (lockhub keygen) and kept
+	// until it is the hub's.
+	stage := filepath.Join(hubData, "rotate")
+	attempted := filepath.Join(stage, "attempted")
+	if _, err := os.Stat(attempted); err == nil && !rot.hub {
+		return errors.New("a hub key rotation did not finish (the hub stays stopped): run lock up --rotate hub again to finish it")
+	}
+	if rot.any() {
+		if _, err := os.Stat(appliedPath); err != nil {
+			return errors.New("--rotate: nothing to rotate before the first lock up of this workspace")
+		}
+	}
 	facadesPath := filepath.Join(u.State, FacadesFile)
-	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
 		return fmt.Errorf("paired devices: %w", err)
@@ -286,6 +337,60 @@ func (u *Up) Do(ctx context.Context) error {
 	if !validPub(hp) {
 		return fmt.Errorf("hub key %s: not a base64 Ed25519 public key", hubPubPath)
 	}
+	oldHP := hp
+	// Until the human's yes, a key made for --rotate is dropped when lock
+	// up stops (declined, dry run, error): nothing of it is applied.
+	confirmed := false
+	defer func() {
+		if confirmed {
+			return
+		}
+		if rot.hub {
+			if _, err := os.Stat(attempted); err != nil {
+				os.RemoveAll(stage)
+			}
+		}
+		for _, n := range rot.locks {
+			u.Run.Run(context.WithoutCancel(ctx), composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "rotkey-"+n, "clear")...)
+		}
+	}()
+	// A hub image without rotate-key cannot rotate, and refuses a log
+	// whose key was rotated: found out now, not with the hub stopped.
+	if hk, _ := readHubKeys(u.State); rot.hub || (pinned && len(hk) > 1) {
+		help, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "help")...)
+		if err != nil || !strings.Contains(string(help), "rotate-key") || !strings.Contains(string(help), "pubkey") {
+			if rot.hub {
+				why := ""
+				if err != nil {
+					why = fmt.Sprintf(" (%v)", err)
+				}
+				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lock up --pin a newer lockhub first", c.Hub.Image, why)
+			}
+			return fmt.Errorf("--pin: %s predates hub key rotation and would refuse this hub's audit log (its key was rotated)", c.Hub.Image)
+		}
+	}
+	hubRotated := false // a rotation that stopped after the hub took the key
+	if rot.hub {
+		nk, done, err := u.stageHubKey(ctx, composeYAML, compose, stage)
+		if err != nil {
+			return fmt.Errorf("new hub key: %w", err)
+		}
+		if nk == hp && !done {
+			return errors.New("new hub key: lockhub keygen made the current key")
+		}
+		if done {
+			// Ask the hub which key it holds, rather than trust the
+			// stage's markers.
+			out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "pubkey", "--data", "/var/lib/lockhub")...)
+			if err != nil {
+				return fmt.Errorf("hub key rotation: reading the hub's key: %w", err)
+			}
+			if got := strings.TrimSpace(string(out)); got != nk {
+				return fmt.Errorf("hub key rotation: the hub holds %q, not the staged key %s (the hub stays stopped; look at %s)", got, nk, stage)
+			}
+		}
+		hp, hubRotated = nk, done
+	}
 	// The host facades' keys (created once, host-only): the locks pin
 	// their public halves, reviewed below like every other key. Until
 	// the first apply, the locks' file pins none.
@@ -319,6 +424,16 @@ func (u *Up) Do(ctx context.Context) error {
 		if !validPub(k) {
 			return fmt.Errorf("key of %s: not a base64 Ed25519 public key", n)
 		}
+		if slices.Contains(rot.locks, n) {
+			nk, err := u.stageLockKey(ctx, c, n, composeYAML, compose)
+			if err != nil {
+				return fmt.Errorf("new key of %s: %w", n, err)
+			}
+			if nk == k {
+				return fmt.Errorf("new key of %s: the lock gave its current key (its image does not make one under %s)", n, rotateDir)
+			}
+			k = nk
+		}
 		lockPubs[n] = k
 	}
 
@@ -333,7 +448,20 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	sum = append(sum, devicesSummary(devices)...)
 	fp := fingerprint(sum)
-	appliedPath := filepath.Join(u.State, "applied.json")
+	if rot.any() {
+		var what []string
+		if rot.hub {
+			what = append(what, "the hub")
+		}
+		what = append(what, rot.locks...)
+		fmt.Fprintf(u.Out, "--rotate: new keys for %s, made now and applied only on yes (the old private keys are deleted).\n", strings.Join(what, ", "))
+		if rot.hub {
+			fmt.Fprintln(u.Out, "  The hub stops while it takes its new key (logged, signed by both keys); every lock restarts to pin it.")
+		} else {
+			fmt.Fprintln(u.Out, "  The rotated locks restart.")
+		}
+		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lock attach).")
+	}
 	var prev Applied
 	b, err := os.ReadFile(appliedPath)
 	switch {
@@ -370,6 +498,10 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if u.DryRun {
 		return nil
+	}
+	confirmed = true
+	if err := u.applyRotation(ctx, c, rot, composeYAML, compose, stage, attempted, oldHP, hp, hubRotated); err != nil {
+		return err
 	}
 
 	// 4. Apply: the hub's lock list, then the stack.
@@ -426,6 +558,21 @@ func (u *Up) Do(ctx context.Context) error {
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}
+	// The consoles read their keys and the hub's at start: the ones whose
+	// keys changed start again.
+	if rot.any() {
+		var svcs []string
+		for _, n := range c.Instances() {
+			if !Kinds[c.Locks[n].Type].Gate && (rot.hub || slices.Contains(rot.locks, n)) {
+				svcs = append(svcs, "lock-"+n)
+			}
+		}
+		if len(svcs) > 0 {
+			if _, err := u.Run.Run(ctx, composeYAML, "docker", compose(append([]string{"up", "-d", "--no-deps", "--force-recreate"}, svcs...)...)...); err != nil {
+				return err
+			}
+		}
+	}
 	if err := os.WriteFile(composePath, composeYAML, 0o600); err != nil {
 		return err
 	}
@@ -440,6 +587,22 @@ func (u *Up) Do(ctx context.Context) error {
 	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
+	}
+	if err := writeHubKeys(u.State, hp); err != nil {
+		return err
+	}
+	now := time.Now
+	if u.Now != nil {
+		now = u.Now
+	}
+	if err := recordHubImage(u.State, c.Hub.Image, now()); err != nil {
+		return err
+	}
+	// --pin: lockfamily.yaml says what runs.
+	if pinned {
+		if err := writeFile(u.File, raw); err != nil {
+			return fmt.Errorf("%s: the hub runs %s, but the file was not updated: %w", u.File, c.Hub.Image, err)
+		}
 	}
 	// A legacy root lockfamily.yaml moves into .lockfamily (lea's agents
 	// only read it there): exactly what the human reviewed.
@@ -469,6 +632,14 @@ func (u *Up) Do(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	if rot.hub {
+		fmt.Fprintf(u.Out, "hub key rotated: lock audit verify takes --hub-key-file %s (every hub key, oldest first)\n", filepath.Join(u.State, HubKeysFile))
+	}
+	for _, n := range c.Instances() {
+		if Kinds[c.Locks[n].Type].Gate && (rot.hub || slices.Contains(rot.locks, n)) {
+			fmt.Fprintf(u.Out, "lea's gate for %s reads its keys at its start: restart it (lea) to take the new key\n", n)
+		}
+	}
 	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
 	for _, n := range c.Instances() {
 		fmt.Fprintf(u.Out, "  lock attach %s\n", n)

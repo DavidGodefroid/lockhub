@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+- CI: workflow e2e-lock-up runs the hub plan's phase 1 (locksql's
+  TestHubPhase1 against this tree), phase 2 (lock up, lock attach, a
+  ticket approved through the facade socket, I2 directly and through a
+  LockHTTP gate, I11, a second lock up) and phase 5 (install.sh, lock add,
+  lock up, lock import) end to end with released images.
+- Note for upgrades: lock up now resolves the workspace's links, so a
+  workspace opened through a symbolic link gets a new project (and state):
+  its first lock up is a full review again.
+
 Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
 start with the generated commands. Reveals and renewals need locks built on
 lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
@@ -20,6 +29,16 @@ could not check them now) are shown as such, and never allow one click.
   first to take it; the others no longer sleep out their poll with it (a
   lost wake-up). A poll that begins after the request was given still
   waits.
+- `lock up --pin sha256:<digest>` restores a previous hub image by digest
+  (reviewed, cosign-verified, written to lockfamily.yaml once applied;
+  `hub-images.log` keeps the history), and `lock up --rotate
+  hub|INSTANCE|all` replaces the hub's or locks' keys through the review
+  (docs/lock-up.md). The hub's rotation is `lockhub rotate-key`: a
+  `key_rotated` audit record signed by both keys, the old key in the data
+  directory's `retired-keys.pub`, which the hub reads at start. `lock
+  audit verify --hub-key-file` takes a file of keys, oldest first (lock
+  up's `hub-keys.pub`); with one key, as before. An older `lock audit
+  verify` or hub refuses a log with a `key_rotated` record.
 - `lock up` no longer overwrites the per-user `facades/locks.json` with the
   current workspace's lock keys: each workspace's keys go to
   `facades/locks.d/<project>.json` (with the workspace's path) and
