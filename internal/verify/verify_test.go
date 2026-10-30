@@ -142,7 +142,7 @@ func TestOutboxedDecision(t *testing.T) {
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
 	forged := []byte(strings.Replace(string(out[0].Record), `"approver":"host:uid:1"`, `"approver":"host:uid:2"`, 1))
 	if err := st.Tx(context.Background(), func(tx *store.Tx) error {
-		return tx.QueueAudit(forged, audit.SignOutbox(other, forged))
+		return tx.QueueAudit(forged, func(id int64) string { return audit.SignOutbox(other, id, forged) })
 	}); err != nil {
 		t.Fatal(err)
 	}

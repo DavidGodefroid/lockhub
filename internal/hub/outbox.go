@@ -24,13 +24,14 @@ func (h *Hub) audit(tx *store.Tx, rec audit.Record) error {
 	if err != nil {
 		return err
 	}
-	return tx.QueueAudit(b, audit.SignOutbox(h.c.Key, b))
+	return tx.QueueAudit(b, func(id int64) string { return audit.SignOutbox(h.c.Key, id, b) })
 }
 
 // auditReady is checked before every change: the records of earlier
-// changes must be in the log first. So at most one committed change (the
-// one whose own flush failed) waits in the outbox while the log is down,
-// and no further change commits until it is up again.
+// changes must be in the log first. So while the log is down, only the
+// changes already in flight when it failed commit (their records wait,
+// durable and signed, in the outbox); no change starting after commits
+// until it is up again.
 func (h *Hub) auditReady(ctx context.Context) error {
 	if err := h.FlushAudit(ctx); err != nil {
 		return fmt.Errorf("%w: %v", ErrAuditDown, err)
@@ -48,11 +49,13 @@ func (h *Hub) flushAudit(ctx context.Context) {
 }
 
 // FlushAudit appends the outbox's records to the audit log, in commit
-// order, dropping each once it is in the log. A record found as the
-// log's last one was appended before a crash that left it in the outbox:
-// it is dropped, not appended twice. A record not signed by the hub key
-// was not written by the hub: it stops the flush (and so every change)
-// for a human to look at, rather than be signed into the log.
+// order, dropping each once it is in the log. Each logged record carries
+// its outbox id, and ids only grow along the log: a row whose id is the
+// log's last was logged before a crash that left it in the outbox, and is
+// dropped; a row below it is a replay. A replay, or a row not signed by
+// the hub key for its id, was not written by the hub: it stops the flush
+// (and so every change) for a human to look at, rather than be signed
+// into the log.
 func (h *Hub) FlushAudit(ctx context.Context) error {
 	h.auditMu.Lock()
 	defer h.auditMu.Unlock()
@@ -62,14 +65,18 @@ func (h *Hub) FlushAudit(ctx context.Context) error {
 	}
 	pub := h.c.Key.Public().(ed25519.PublicKey)
 	for _, o := range rows {
-		if !audit.VerifyOutbox(pub, o.Record, o.Sig) {
+		if !audit.VerifyOutbox(pub, o.ID, o.Record, o.Sig) {
 			return fmt.Errorf("audit outbox record %d is not signed by the hub key: the database was written by someone else", o.ID)
 		}
 		var rec audit.Record
 		if err := json.Unmarshal(o.Record, &rec); err != nil {
 			return fmt.Errorf("audit outbox record %d: %w", o.ID, err)
 		}
-		if !h.c.Audit.IsLast(rec) {
+		switch last := h.c.Audit.LastOutbox(); {
+		case o.ID < last:
+			return fmt.Errorf("audit outbox record %d replayed: the log is at outbox record %d", o.ID, last)
+		case o.ID > last:
+			rec.Outbox = o.ID
 			if _, err := h.c.Audit.Append(rec); err != nil {
 				return fmt.Errorf("audit log: %w", err)
 			}

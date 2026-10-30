@@ -202,3 +202,16 @@ func TestFacadeRefusesUnknownPeer(t *testing.T) {
 		t.Errorf("unknown peer: %d", resp.StatusCode)
 	}
 }
+
+// With the audit log down, the hub answers 503 audit_down, not 500.
+func TestAuditDownIs503(t *testing.T) {
+	e, _, ca, _ := setup(t)
+	e.Log.Close()
+	if code, body := ca.do("POST", "/v1/tickets", ca.lock.Ticket("T1", "write", e.Clock.T, time.Hour), nil); code != http.StatusCreated {
+		t.Fatalf("push: %d %s", code, body)
+	}
+	code, body := ca.do("POST", "/v1/tickets", ca.lock.Ticket("T2", "write", e.Clock.T, time.Hour), nil)
+	if code != http.StatusServiceUnavailable || !strings.Contains(string(body), "audit_down") {
+		t.Fatalf("push with the log down: %d %s", code, body)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,8 +44,12 @@ type Record struct {
 	Reason   string `json:"reason,omitempty"`
 	// Decision is the hash of the signed decision, when there is one.
 	Decision string `json:"decision,omitempty"`
-	Prev     string `json:"prev"`
-	Hash     string `json:"hash"`
+	// Outbox is the id of the outbox row the record came from (records
+	// from before the outbox have none): ids only grow along the log, so
+	// a row logged already, or replayed, is told apart exactly.
+	Outbox int64  `json:"outbox,omitempty"`
+	Prev   string `json:"prev"`
+	Hash   string `json:"hash"`
 	// Sig is the hub key's signature over Hash (SignContext).
 	Sig string `json:"sig,omitempty"`
 }
@@ -62,14 +67,21 @@ const OutboxContext = "lockhub/audit-outbox/v1\x00"
 // SignOutbox signs an outboxed record (its JSON) with the hub key, so
 // that whoever can write the database cannot have the hub chain and sign
 // a record it never made.
-func SignOutbox(key ed25519.PrivateKey, record []byte) string {
-	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, append([]byte(OutboxContext), record...)))
+// The signature covers the row's id, so a row cannot be moved to
+// another id.
+func SignOutbox(key ed25519.PrivateKey, id int64, record []byte) string {
+	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, outboxMsg(id, record)))
 }
 
 // VerifyOutbox checks SignOutbox's signature.
-func VerifyOutbox(key ed25519.PublicKey, record []byte, sig string) bool {
+func VerifyOutbox(key ed25519.PublicKey, id int64, record []byte, sig string) bool {
 	b, err := base64.RawURLEncoding.DecodeString(sig)
-	return err == nil && ed25519.Verify(key, append([]byte(OutboxContext), record...), b)
+	return err == nil && ed25519.Verify(key, outboxMsg(id, record), b)
+}
+
+func outboxMsg(id int64, record []byte) []byte {
+	m := binary.BigEndian.AppendUint64([]byte(OutboxContext), uint64(id))
+	return append(m, record...)
 }
 
 // hashOf hashes r without its Hash and Sig fields. Field order is fixed by the
@@ -129,6 +141,10 @@ func open(path string, key ed25519.PublicKey) (*Log, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := cutTornTail(f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("audit %s: %w", path, err)
+	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		f.Close()
 		return nil, err
@@ -148,6 +164,36 @@ func open(path string, key ed25519.PublicKey) (*Log, error) {
 		l.prev, l.last = last.Hash, last
 	}
 	return l, nil
+}
+
+// cutTornTail removes a last line without its newline: an append the
+// process did not finish (power loss before its sync), which Append
+// always ends with a newline in the same write. Its change is still in
+// the hub's outbox, and is logged again from there.
+func cutTornTail(f *os.File) error {
+	size, err := f.Seek(0, io.SeekEnd)
+	if err != nil || size == 0 {
+		return err
+	}
+	// Look back for the last newline, up to one record's length.
+	n := min(size, MaxLine+1)
+	buf := make([]byte, n)
+	if _, err := f.ReadAt(buf, size-n); err != nil {
+		return err
+	}
+	if buf[n-1] == '\n' {
+		return nil
+	}
+	cut := int64(0)
+	if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+		cut = size - n + int64(i) + 1
+	} else if size > n {
+		return fmt.Errorf("%w: last record over %d bytes", ErrBroken, MaxLine)
+	}
+	if err := f.Truncate(cut); err != nil {
+		return err
+	}
+	return f.Sync()
 }
 
 // Append chains r (Seq, Prev and Hash are set here, and At unless r
@@ -196,20 +242,11 @@ func (l *Log) Append(r Record) (Record, error) {
 	return r, nil
 }
 
-// IsLast reports whether the log's last record has r's content (every
-// field but Seq, Prev, Hash and Sig): r was appended already. Two
-// consecutive records of the hub never share their content: a ticket's
-// state machine never repeats an event.
-func (l *Log) IsLast(r Record) bool {
+// LastOutbox is the outbox id of the log's last record (0: none).
+func (l *Log) LastOutbox() int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.seq == 0 {
-		return false
-	}
-	a, b := l.last, r
-	a.Seq, a.Prev, a.Hash, a.Sig = 0, "", "", ""
-	b.Seq, b.Prev, b.Hash, b.Sig = 0, "", "", ""
-	return a == b
+	return l.last.Outbox
 }
 
 // Close closes the file.

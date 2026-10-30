@@ -66,7 +66,8 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 	}
 	// Decisions the audit log vouches for.
 	inLog := map[string]audit.Record{} // instance/ticket → its decision record
-	logged := map[audit.Record]bool{}  // every record's content
+	var lastOutbox int64               // outbox ids only grow along the log
+	var last audit.Record
 	sc := bufio.NewScanner(bytes.NewReader(logBytes))
 	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
 	for sc.Scan() {
@@ -75,15 +76,21 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 		if rec.Decision != "" {
 			inLog[rec.Instance+"/"+rec.Ticket] = rec
 		}
-		logged[content(rec)] = true
+		if rec.Outbox != 0 {
+			if rec.Outbox <= lastOutbox {
+				r.bad("audit record %d: outbox record %d logged after outbox record %d (replayed)", rec.Seq, rec.Outbox, lastOutbox)
+			}
+			lastOutbox = rec.Outbox
+		}
+		last = rec
 	}
 	// Committed changes whose records are still in the outbox (the hub
 	// stopped between its commit and the log, or the log is down): signed
-	// by the hub key, they vouch for their decisions too, and are
-	// reported, not refused.
+	// by the hub key for their row, they vouch for their decisions too,
+	// and are reported, not refused.
 	for _, o := range outbox {
 		var rec audit.Record
-		if !audit.VerifyOutbox(hubKey, o.Record, o.Sig) {
+		if !audit.VerifyOutbox(hubKey, o.ID, o.Record, o.Sig) {
 			r.bad("audit outbox record %d: not signed by the hub key", o.ID)
 			continue
 		}
@@ -91,8 +98,17 @@ func Hub(ctx context.Context, dir string, hubKey ed25519.PublicKey) (Report, err
 			r.bad("audit outbox record %d: %v", o.ID, err)
 			continue
 		}
-		if logged[content(rec)] {
-			continue // logged already; the hub drops it at its next flush
+		switch {
+		case o.ID < lastOutbox:
+			r.bad("audit outbox record %d: replayed (the log is at outbox record %d)", o.ID, lastOutbox)
+			continue
+		case o.ID == lastOutbox:
+			// Logged already; the hub drops it at its next flush.
+			rec.Outbox = o.ID
+			if content(rec) != content(last) {
+				r.bad("audit outbox record %d differs from the record logged for it", o.ID)
+			}
+			continue
 		}
 		r.Outboxed++
 		if rec.Decision != "" {

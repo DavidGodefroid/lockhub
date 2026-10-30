@@ -85,3 +85,35 @@ func TestUndoFailureStopsLog(t *testing.T) {
 		t.Fatal("appended after a torn line it could not cut")
 	}
 }
+
+// A last line without its newline (power loss mid-append) is cut at open:
+// the hub starts, and logs the record again from its outbox.
+func TestTornTailCutAtOpen(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tickets.jsonl")
+	write(t, p, 2)
+	f, _ := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0)
+	f.WriteString(`{"seq":3,"at":"2027`)
+	f.Close()
+	l, err := Open(p)
+	if err != nil {
+		t.Fatalf("torn tail refused: %v", err)
+	}
+	if _, err := l.Append(Record{Event: "approve", Ticket: "T", Instance: "i", State: "approved"}); err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+	g, _ := os.Open(p)
+	defer g.Close()
+	if n, err := Verify(g); err != nil || n != 3 {
+		t.Fatalf("%d records, %v", n, err)
+	}
+	// A bad line that ends with its newline is not a torn append.
+	q := filepath.Join(t.TempDir(), "tickets.jsonl")
+	write(t, q, 1)
+	h, _ := os.OpenFile(q, os.O_WRONLY|os.O_APPEND, 0)
+	h.WriteString("{\"seq\":2}\n")
+	h.Close()
+	if _, err := Open(q); err == nil {
+		t.Error("a broken whole line accepted")
+	}
+}

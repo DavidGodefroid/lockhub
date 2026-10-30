@@ -3,10 +3,12 @@ package hub_test
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -101,6 +103,7 @@ func TestOutboxedRecordNotLoggedTwice(t *testing.T) {
 	if err := json.Unmarshal(out[0].Record, &rec); err != nil {
 		t.Fatal(err)
 	}
+	rec.Outbox = out[0].ID
 	if _, err := al.Append(rec); err != nil { // appended, then the crash
 		t.Fatal(err)
 	}
@@ -162,7 +165,9 @@ func TestForgedOutboxRecordRefused(t *testing.T) {
 	e := hubtest.New(t, 0, a)
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
 	rec := []byte(`{"seq":0,"at":"2027-01-01T00:00:00Z","event":"consume","ticket":"T9","instance":"crm-prod","state":"consumed","prev":"","hash":""}`)
-	if err := e.Store.Tx(ctx, func(tx *store.Tx) error { return tx.QueueAudit(rec, audit.SignOutbox(other, rec)) }); err != nil {
+	if err := e.Store.Tx(ctx, func(tx *store.Tx) error {
+		return tx.QueueAudit(rec, func(id int64) string { return audit.SignOutbox(other, id, rec) })
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.Hub.FlushAudit(ctx); err == nil {
@@ -223,5 +228,55 @@ func TestSweepPurgesNoncesWithLogDown(t *testing.T) {
 	err := e.Store.Tx(ctx, func(tx *store.Tx) error { return tx.UseNonce("crm-prod", "n-0123456789abcdef", e.Clock.T) })
 	if err != nil {
 		t.Errorf("nonce not purged: %v", err)
+	}
+}
+
+// A row the hub signed and logged, put back into the outbox, is a replay:
+// never logged twice.
+func TestReplayedOutboxRowRefused(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	e.Log.Close()
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "write", e.Clock.T, time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	old, err := e.Store.AuditOutbox(ctx)
+	if err != nil || len(old) != 1 {
+		t.Fatalf("outbox %v %v", old, err)
+	}
+	al, err := audit.OpenSigned(e.Audit, e.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer al.Close()
+	h := hub.New(hub.Config{Store: e.Store, Audit: al, Codec: hubtest.Codec{}, Key: e.Key, Locks: map[string]ed25519.PublicKey{"crm-prod": a.Pub}, Now: e.Clock.Now})
+	if _, _, err := h.Push(ctx, "crm-prod", a.Ticket("T2", "write", e.Clock.T, time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n := records(t, e.Audit); n != 2 {
+		t.Fatalf("%d records", n)
+	}
+	// Put the first row back, under its own id (its signature covers it).
+	db, err := sql.Open("sqlite", filepath.Join(e.Dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO audit_outbox(id, record, sig) VALUES (?, ?, ?)`, old[0].ID, old[0].Record, old[0].Sig); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.FlushAudit(ctx); err == nil || !strings.Contains(err.Error(), "replayed") {
+		t.Fatalf("replay flushed: %v", err)
+	}
+	if n := records(t, e.Audit); n != 2 {
+		t.Fatalf("%d records after a replay", n)
+	}
+	// Under another id, its signature does not hold.
+	db.Exec(`DELETE FROM audit_outbox`)
+	if _, err := db.Exec(`INSERT INTO audit_outbox(id, record, sig) VALUES (?, ?, ?)`, 99, old[0].Record, old[0].Sig); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.FlushAudit(ctx); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("moved row flushed: %v", err)
 	}
 }

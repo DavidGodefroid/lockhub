@@ -218,7 +218,9 @@ func TestStartFlushesOutbox(t *testing.T) {
 	}
 	queue := func(k ed25519.PrivateKey, ticket string) {
 		rec := []byte(`{"seq":0,"at":"2027-01-01T00:00:00Z","event":"push","ticket":"` + ticket + `","instance":"crm","state":"pending","prev":"","hash":""}`)
-		if err := st.Tx(context.Background(), func(tx *store.Tx) error { return tx.QueueAudit(rec, audit.SignOutbox(k, rec)) }); err != nil {
+		if err := st.Tx(context.Background(), func(tx *store.Tx) error {
+			return tx.QueueAudit(rec, func(id int64) string { return audit.SignOutbox(k, id, rec) })
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}

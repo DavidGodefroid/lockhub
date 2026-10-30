@@ -342,11 +342,19 @@ func (s *Store) PurgeNonces(ctx context.Context, before time.Time) error {
 	return err
 }
 
-// QueueAudit stores an audit record (JSON) and the hub key's signature
-// of it in the transaction, for the audit log once the transaction
-// commits (see Store.AuditOutbox).
-func (t *Tx) QueueAudit(record []byte, sig string) error {
-	_, err := t.tx.Exec(`INSERT INTO audit_outbox(record, sig) VALUES (?, ?)`, record, sig)
+// QueueAudit stores an audit record (JSON) in the transaction, with the
+// hub key's signature of it and its row id (sign), for the audit log once
+// the transaction commits (see Store.AuditOutbox).
+func (t *Tx) QueueAudit(record []byte, sign func(id int64) string) error {
+	res, err := t.tx.Exec(`INSERT INTO audit_outbox(record, sig) VALUES (?, '')`, record)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	_, err = t.tx.Exec(`UPDATE audit_outbox SET sig = ? WHERE id = ?`, sign(id), id)
 	return err
 }
 
