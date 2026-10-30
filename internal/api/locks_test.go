@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -240,5 +241,24 @@ func TestRequestsOverTheLockAPI(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Error(err)
+	}
+}
+
+func TestHelloNamesVersionsAndHubKey(t *testing.T) {
+	e, srv, _, _ := setup(t)
+	resp, err := http.Get(srv.URL + "/v1/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var h api.Hello
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(h.TicketVersions, []int{1}) || h.HubKeyID != (hubtest.Codec{}).KeyID(e.Pub) {
+		t.Errorf("hello %+v, want versions [1] and key %s", h, (hubtest.Codec{}).KeyID(e.Pub))
+	}
+	if (hub.New(hub.Config{})).KeyID() != "" {
+		t.Error("a hub without a key names one")
 	}
 }
