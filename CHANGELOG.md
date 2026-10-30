@@ -25,6 +25,13 @@ could not check them now) are shown as such, and never allow one click.
   up's `hub-keys.pub`); with one key, as before. An older `lock audit
   verify` or hub refuses a log with a `key_rotated` record.
 
+- A lockkit compatibility check (`scripts/compat.sh`, CI job `compat`):
+  lockhub built on the pinned lockkit, its ticket codec checked against
+  the signed ticket fixtures of the pinned lockkit, of the release before
+  it and of the newest release (`LOCKKIT_FIXTURES`). A build on the
+  release before the pin (`compat.sh prev …`) is manual: lockhub uses
+  lockkit v0.6.0's API.
+
 - Mobile facade: optional Web Push (`hub.mobile.push: true` →
   `lockhub serve --mobile-push`; off by default). When a ticket the phone
   may answer becomes pending, the hub sends a payload-less push (no ticket
