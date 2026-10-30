@@ -18,6 +18,8 @@ func TestRun(t *testing.T) {
 		{[]string{"help"}, 0, "lock approve", ""},
 		{[]string{"up"}, 2, "", `unknown command "up"`},
 		{[]string{"approve", "--bogus"}, 2, "", "flag provided but not defined"},
+		{[]string{"audit"}, 2, "", "usage: lock audit verify"},
+		{[]string{"audit", "verify"}, 2, "", "are required"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)
