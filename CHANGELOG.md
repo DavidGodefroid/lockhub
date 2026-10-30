@@ -7,8 +7,8 @@ digest).
 
 ## v0.1.1 (2026-10-30)
 
-Supported locks: images built on lockkit v0.3.1 or later within v0.3.x
-(locksql, lockfile, lockmq, lockhttp releases with hub mode). Locks built
+Supported locks: images built on lockkit v0.3.1 (tested), such as the
+first locksql, lockfile, lockmq and lockhttp releases with hub mode. Locks built
 on lockkit v0.3.0 do not know `--hub-plain-http` and refuse the generated
 command.
 
