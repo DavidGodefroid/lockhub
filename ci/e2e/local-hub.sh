@@ -13,9 +13,10 @@ shim=$1
 docker build -q -t ghcr.io/davidgodefroid/lockhub:e2e-local . >/dev/null
 id=$(docker image inspect -f '{{.Id}}' ghcr.io/davidgodefroid/lockhub:e2e-local)
 ref=ghcr.io/davidgodefroid/lockhub@$id
-case "$id" in sha256:*) ;; *) echo "local-hub: image id $id is not a digest (containerd image store off?)" >&2; exit 1 ;; esac
+docker info -f '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter || { echo "local-hub: Docker's containerd image store is off" >&2; exit 1; }
 docker image inspect "$ref" >/dev/null || { echo "local-hub: $ref does not resolve (containerd image store off?)" >&2; exit 1; }
 real=$(command -v cosign)
+[ "$real" != "$shim/cosign" ] || { echo "local-hub: cosign resolves to the shim itself" >&2; exit 1; }
 mkdir -p "$shim"
 cat >"$shim/cosign" <<SHIM
 #!/bin/sh
