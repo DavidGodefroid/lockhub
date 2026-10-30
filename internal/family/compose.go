@@ -222,7 +222,7 @@ func Compose(c *Config, p Paths) string {
 		w("    image: %s", q(firstImage(c, t)))
 		w("    profiles: [setup]")
 		w("    user: \"0:0\"")
-		w("    entrypoint: [\"/bin/sh\", \"-c\", %s, \"profile\"]", q(`find /p -mindepth 1 -delete && printf '%s' "$1" | base64 -d | tar -x -C /p`))
+		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p", maxTar)))
 		w("    network_mode: none")
 		hardening(w)
 		w("    volumes:")

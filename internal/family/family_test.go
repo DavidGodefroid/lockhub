@@ -35,6 +35,7 @@ hub:
 }
 
 type fake struct {
+	stdins    map[string][]byte
 	upCompose string
 	calls     []string
 	keys      map[string]string
@@ -49,6 +50,10 @@ func pubKey() string {
 func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	line := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, line)
+	if f.stdins == nil {
+		f.stdins = map[string][]byte{}
+	}
+	f.stdins[line] = stdin
 	if strings.Contains(line, " up -d") {
 		f.upCompose = string(stdin)
 	}

@@ -285,10 +285,11 @@ func (u *Up) Do(ctx context.Context) error {
 		paths.Profiles[t] = pr.Fingerprint
 	}
 	composeYAML = []byte(Compose(c, paths))
-	for _, t := range types(c) {
-		if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "profile-"+t, profiles[t].B64())...); err != nil {
-			return fmt.Errorf("profile of the %s locks: %w", t, err)
-		}
+	// The profiles go on the setup service's stdin (they can hold
+	// secrets; a process's arguments are public): compose reads this
+	// confirmed file from the private state directory meanwhile.
+	if err := u.copyProfiles(ctx, c, project, composeYAML, profiles); err != nil {
+		return err
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
 		return fmt.Errorf("hub key for the locks: %w", err)
@@ -335,4 +336,29 @@ func privateDir(d string) error {
 func validPub(s string) bool {
 	b, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && len(b) == 32 && keys.Public(b) == s
+}
+
+// copyProfiles copies each reviewed profile into its volume, the archive
+// on the stdin of the setup service profile-<type>.
+func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, composeYAML []byte, profiles map[string]*Profile) error {
+	f, err := os.CreateTemp(u.State, ".compose-*.yaml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(composeYAML)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	for _, t := range types(c) {
+		args := []string{"compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
+			"run", "--rm", "-T", "--no-deps", "profile-" + t}
+		if _, err := u.Run.Run(ctx, profiles[t].Tar, "docker", args...); err != nil {
+			return fmt.Errorf("profile of the %s locks: %w", t, err)
+		}
+	}
+	return nil
 }

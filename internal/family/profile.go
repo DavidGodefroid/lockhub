@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -19,11 +18,11 @@ import (
 // followed, only the user's own regular files and directories), shows its
 // fingerprint in the review, and after the human's yes copies exactly
 // what was reviewed into the volume profile-<type> (written by root,
-// read-only in the lock).
+// read-only in the lock), on the setup service's stdin, never in an
+// argument (profiles can hold secrets; arguments are public).
 
-// maxProfile bounds a profile directory's content (it reaches the setup
-// service as one argument).
-const maxProfile = 64 << 10
+// maxProfile bounds a profile directory's content.
+const maxProfile = 256 << 10
 
 // Profile is the reviewed copy of a lock's profile directory.
 type Profile struct {
@@ -33,67 +32,139 @@ type Profile struct {
 	Fingerprint string
 }
 
-// ReadProfile snapshots the directory dir.
+// maxEntries bounds a profile directory's files and directories.
+const maxEntries = 256
+
+// ReadProfile snapshots the directory dir. It opens dir once, without
+// following a link, and reads below it through that handle only
+// (os.Root: no path, even one swapped for a link while it is read,
+// leads outside dir); every file and directory is checked on the handle
+// it was read through.
 func ReadProfile(dir string) (*Profile, error) {
-	if err := ownDir(dir); err != nil {
-		return nil, err
-	}
-	var paths []string
-	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if p != dir {
-			paths = append(paths, p)
-		}
-		return nil
-	})
+	fi, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(paths)
+	if !fi.IsDir() {
+		return nil, fmt.Errorf("%s: not a directory (a link?)", dir)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	total := 0
-	for _, p := range paths {
-		rel, _ := filepath.Rel(dir, p)
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return nil, err
-		}
-		switch {
-		case fi.IsDir():
-			if err := ownDir(p); err != nil {
-				return nil, err
-			}
-			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: filepath.ToSlash(rel) + "/", Mode: 0o755}); err != nil {
-				return nil, err
-			}
-		case fi.Mode().IsRegular():
-			b, err := readOwnFile(p, fi)
-			if err != nil {
-				return nil, err
-			}
-			if total += len(b); total > maxProfile {
-				return nil, fmt.Errorf("%s: more than %d bytes", dir, maxProfile)
-			}
-			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: 0o644, Size: int64(len(b))}); err != nil {
-				return nil, err
-			}
-			tw.Write(b)
-		default:
-			return nil, fmt.Errorf("%s: not a regular file or a directory (a link?): lock up copies none", p)
-		}
+	r := &profileReader{root: root, dir: dir, tw: tw}
+	// The root itself: still the directory checked above.
+	if err := r.walk(".", fi); err != nil {
+		return nil, err
 	}
 	if err := tw.Close(); err != nil {
 		return nil, err
+	}
+	if buf.Len() > maxTar {
+		return nil, fmt.Errorf("%s: more than %d bytes", dir, maxProfile)
 	}
 	s := sha256.Sum256(buf.Bytes())
 	return &Profile{Tar: buf.Bytes(), Fingerprint: "sha256:" + hex.EncodeToString(s[:])}, nil
 }
 
-// B64 is the archive as the setup service takes it.
-func (p *Profile) B64() string { return base64.StdEncoding.EncodeToString(p.Tar) }
+// maxTar bounds the archive (maxProfile of content plus the headers).
+const maxTar = maxProfile + (maxEntries+2)*1024
+
+type profileReader struct {
+	root    *os.Root
+	dir     string
+	tw      *tar.Writer
+	total   int
+	entries int
+}
+
+// walk adds the directory rel, which lstat described as want.
+func (r *profileReader) walk(rel string, want os.FileInfo) error {
+	d, err := r.root.Open(rel)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	fi, err := d.Stat()
+	if err != nil {
+		return err
+	}
+	name := filepath.Join(r.dir, rel)
+	if !fi.IsDir() || !os.SameFile(fi, want) {
+		return fmt.Errorf("%s changed while lock up read it", name)
+	}
+	if err := ownedNotShared(name, fi); err != nil {
+		return err
+	}
+	if rel != "." {
+		if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: filepath.ToSlash(rel) + "/", Mode: 0o755}); err != nil {
+			return err
+		}
+	}
+	ents, err := d.ReadDir(-1)
+	if err != nil {
+		return err
+	}
+	sort.Slice(ents, func(i, j int) bool { return ents[i].Name() < ents[j].Name() })
+	for _, e := range ents {
+		if r.entries++; r.entries > maxEntries {
+			return fmt.Errorf("%s: more than %d entries", r.dir, maxEntries)
+		}
+		crel := filepath.Join(rel, e.Name())
+		cfi, err := r.root.Lstat(crel)
+		if err != nil {
+			return err
+		}
+		switch {
+		case cfi.IsDir():
+			if err := r.walk(crel, cfi); err != nil {
+				return err
+			}
+		case cfi.Mode().IsRegular():
+			if err := r.file(crel, cfi); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%s: not a regular file or a directory (a link?): lock up copies none", filepath.Join(r.dir, crel))
+		}
+	}
+	return nil
+}
+
+// file adds the regular file rel, which lstat described as want.
+func (r *profileReader) file(rel string, want os.FileInfo) error {
+	name := filepath.Join(r.dir, rel)
+	f, err := r.root.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() || !os.SameFile(fi, want) {
+		return fmt.Errorf("%s changed while lock up read it", name)
+	}
+	if err := ownedNotShared(name, fi); err != nil {
+		return err
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxProfile+1))
+	if err != nil {
+		return err
+	}
+	if r.total += len(b); r.total > maxProfile {
+		return fmt.Errorf("%s: more than %d bytes", r.dir, maxProfile)
+	}
+	if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: 0o644, Size: int64(len(b))}); err != nil {
+		return err
+	}
+	_, err = r.tw.Write(b)
+	return err
+}
 
 // ownDir refuses d unless it is a directory (not a link) of this user
 // that no one else can write.
@@ -116,25 +187,4 @@ func ownedNotShared(p string, fi os.FileInfo) error {
 		return fmt.Errorf("%s: mode %v: writable by others than you", p, fi.Mode().Perm())
 	}
 	return nil
-}
-
-// readOwnFile reads the regular file p without following a link, and
-// only if it is still the file fi described.
-func readOwnFile(p string, fi os.FileInfo) ([]byte, error) {
-	if err := ownedNotShared(p, fi); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	got, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(fi, got) || !got.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s changed while lock up read it", p)
-	}
-	return io.ReadAll(io.LimitReader(f, maxProfile+1))
 }

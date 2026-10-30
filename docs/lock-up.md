@@ -71,10 +71,10 @@ container joins `hub_network`.
 
 A lock's profile directory is in the workspace, which agents may write. lock
 up never mounts it. It reads it once, following no link, taking only the
-user's own regular files and directories that no one else can write (64 KiB
-at most), shows its fingerprint in the review (`profile <type> <dir>
+user's own regular files and directories that no one else can write (256 KiB and 256 entries
+at most, read through one handle on the directory: no swapped link leads out), shows its fingerprint in the review (`profile <type> <dir>
 sha256:…`; a change is a change to confirm), and after the yes copies
-exactly that archive into the volume `profile-<type>` (written by root,
+exactly that archive, on the setup service's stdin (never an argument), into the volume `profile-<type>` (written by root,
 read-only in the lock). A new copy recreates the lock's console.
 
 ## Consoles under compose

@@ -1,8 +1,13 @@
 package family
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -235,8 +240,21 @@ func TestProfileReviewedAndCopied(t *testing.T) {
 	if !strings.Contains(out, "profile locksql "+filepath.Join(ws, ".locksql")+" "+pr.Fingerprint) {
 		t.Errorf("review lacks the profile:\n%s", out)
 	}
-	if !f.ran("--no-deps profile-locksql "+pr.B64()) || !strings.Contains(f.upCompose, "lockfamily.profile: \""+pr.Fingerprint) {
+	copied := false
+	for line, in := range f.stdins {
+		if strings.HasSuffix(line, "-T --no-deps profile-locksql") && bytes.Equal(in, pr.Tar) {
+			copied = true
+		}
+		// Never in an argument: profiles can hold secrets.
+		if strings.Contains(line, "profiles.crm") || strings.Contains(line, base64.StdEncoding.EncodeToString(pr.Tar)) {
+			t.Errorf("profile in argv: %s", line)
+		}
+	}
+	if !copied || !strings.Contains(f.upCompose, "lockfamily.profile: \""+pr.Fingerprint) {
 		t.Errorf("copy: %v", f.calls)
+	}
+	if m, _ := filepath.Glob(filepath.Join(w.dir, "state", ".compose-*")); len(m) != 0 {
+		t.Errorf("temporary compose file left: %v", m)
 	}
 	// A changed profile is a change to review.
 	os.WriteFile(filepath.Join(ws, ".locksql", "config.toml"), []byte("[profiles.crm]\nproduction = false\n"), 0o644)
@@ -258,9 +276,16 @@ func TestProfileRefusals(t *testing.T) {
 			os.WriteFile(p, nil, 0o644)
 			os.Chmod(p, 0o666)
 		},
-		"fifo":     func(d string) { syscall.Mkfifo(filepath.Join(d, "x"), 0o644) },
-		"too big":  func(d string) { os.WriteFile(filepath.Join(d, "big"), make([]byte, maxProfile+1), 0o644) },
-		"sub link": func(d string) { os.Mkdir(filepath.Join(d, "s"), 0o755); os.Symlink("/", filepath.Join(d, "s", "r")) },
+		"fifo":                  func(d string) { syscall.Mkfifo(filepath.Join(d, "x"), 0o644) },
+		"too big":               func(d string) { os.WriteFile(filepath.Join(d, "big"), make([]byte, maxProfile+1), 0o644) },
+		"sub link":              func(d string) { os.Mkdir(filepath.Join(d, "s"), 0o755); os.Symlink("/", filepath.Join(d, "s", "r")) },
+		"sub dir is a link out": func(d string) { os.Symlink(t.TempDir(), filepath.Join(d, "s")) },
+		"sub dir is a link in":  func(d string) { os.Mkdir(filepath.Join(d, "a"), 0o755); os.Symlink("a", filepath.Join(d, "s")) },
+		"too many entries": func(d string) {
+			for i := 0; i <= maxEntries; i++ {
+				os.WriteFile(filepath.Join(d, fmt.Sprint(i)), nil, 0o644)
+			}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := filepath.Join(t.TempDir(), ".locksql")
@@ -306,5 +331,28 @@ func TestUpStateLinkReplaced(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Join(w.dir, "state", UpFile)); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("state copy: %v", err)
+	}
+}
+
+// Reading goes through a handle on the profile directory: a directory
+// swapped for a link to elsewhere while lock up reads cannot lead out.
+func TestProfileSwapCannotEscape(t *testing.T) {
+	d := filepath.Join(t.TempDir(), ".locksql")
+	os.MkdirAll(filepath.Join(d, "s"), 0o755)
+	os.WriteFile(filepath.Join(d, "s", "config.toml"), []byte("x"), 0o644)
+	secret := t.TempDir()
+	os.WriteFile(filepath.Join(secret, "config.toml"), []byte("SECRET"), 0o644)
+	root, err := os.OpenRoot(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	r := &profileReader{root: root, dir: d, tw: tar.NewWriter(io.Discard)}
+	fi, _ := root.Lstat("s/config.toml")
+	// Swap s for a link out, between the walk's lstat and the read.
+	os.RemoveAll(filepath.Join(d, "s"))
+	os.Symlink(secret, filepath.Join(d, "s"))
+	if err := r.file("s/config.toml", fi); err == nil {
+		t.Error("read through a swapped directory")
 	}
 }
