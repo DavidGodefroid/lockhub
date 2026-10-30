@@ -14,6 +14,18 @@ only then does `lock up` pass `--facade-keys-file`, which older images
 refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
+- `lock up` no longer overwrites the per-user `facades/locks.json` with the
+  current workspace's lock keys: each workspace's keys go to
+  `facades/locks.d/<project>.json` (with the workspace's path) and
+  `locks.json` is their union (one hub per user, many workspaces),
+  rewritten under a lock. An instance name two workspaces pin with
+  different keys, one key on two instances, or another workspace's file or
+  key that does not parse is left out, and `lock up` warns, naming the
+  workspaces and files: clear values of those tickets cannot be shown
+  until one is renamed, or the file of a workspace that no longer exists
+  (moved or deleted) is deleted. After the upgrade, run `lock up` once in
+  each workspace; a `lock` binary of an earlier release still overwrites
+  `locks.json` without the lock.
 - A lockkit compatibility check (`scripts/compat.sh`, CI job `compat`):
   lockhub built on the pinned lockkit, its ticket codec checked against
   the signed ticket fixtures of the pinned lockkit, of the release before

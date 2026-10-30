@@ -394,8 +394,12 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	// The lock keys, for host facades to check what a lock sealed to
 	// them (a revealed clear screen).
-	if err := writeAtomic(filepath.Join(facadeKeys, LockKeysFile), append(lb, '\n'), 0o600); err != nil {
+	warns, err := pinLockKeys(facadeKeys, project, ws, lockPubs)
+	if err != nil {
 		return err
+	}
+	for _, w := range warns {
+		fmt.Fprintln(u.Out, "warning: lock keys:", w)
 	}
 	if snapPath != "" {
 		// 0644: the locks read it through a read-only bind mount.

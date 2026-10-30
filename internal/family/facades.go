@@ -30,6 +30,11 @@ const (
 	// lock up pinned ({"locks": {"<instance>": {"public_key": "…"}}}),
 	// for host facades to verify a lock's signed answers.
 	LockKeysFile = "locks.json"
+	// LockKeysDir, in the facade keys directory, holds the lock keys
+	// each workspace's lock up pinned (<project>.json, same format):
+	// LockKeysFile is their union, so a lock up in one workspace keeps the
+	// keys of the others (one hub per user, many workspaces).
+	LockKeysDir = "locks.d"
 )
 
 // FacadeKeysDir is the host-only directory of the host facades' keys
