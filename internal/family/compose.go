@@ -3,6 +3,7 @@ package family
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -27,6 +28,9 @@ type Paths struct {
 	// routing). As a label of the hub service, a change of it makes
 	// compose recreate the hub, which reads its config at start.
 	Config string
+	// Profiles are the fingerprints of the reviewed profile copies, by
+	// type: a lock's label, so that a new copy recreates its console.
+	Profiles map[string]string
 }
 
 // Kind is what lock up knows of a lock type's image: the console's
@@ -161,19 +165,22 @@ func Compose(c *Config, p Paths) string {
 			w("    working_dir: %s", q(p.Workspace))
 		}
 		w("    command: [%s]", quoteAll(cmd))
+		if fp := p.Profiles[l.Type]; fp != "" {
+			w("    labels:")
+			w("      lockfamily.profile: %s", q(fp))
+		}
 		hardening(w)
 		w("    volumes:")
 		w("      - %s:/run/%s", q(name+"-run"), l.Type)
 		w("      - %s:%s", q(name+"-home"), home)
 		w("      - hubkey:%s:ro", HubKeyDir)
-		w("      - type: bind")
-		w("        source: %s", q(profileDir(p.Workspace, l.Type)))
+		// The reviewed copy of the lock's profile, never the workspace's
+		// directory itself (agents can write it).
 		if k.Project {
-			w("        target: %s", q(profileDir(p.Workspace, l.Type)))
+			w("      - %s:%s:ro", q("profile-"+l.Type), profileDir(p.Workspace, l.Type))
 		} else {
-			w("        target: %s", q(home+"/.config/"+l.Type))
+			w("      - %s:%s:ro", q("profile-"+l.Type), home+"/.config/"+l.Type)
 		}
-		w("        read_only: true")
 		if k.Gate {
 			// The gate asks the hub, from lea's proxy: the console only
 			// serves the policy and has no hub network.
@@ -208,6 +215,19 @@ func Compose(c *Config, p Paths) string {
 			w("      - %s:/g", q(name+"-gate"))
 		}
 	}
+	// profile-<type> copies the reviewed profile into its volume (lock
+	// up runs it after the human's yes), as root: the lock reads it only.
+	for _, t := range types(c) {
+		w("  %s:", q("profile-"+t))
+		w("    image: %s", q(firstImage(c, t)))
+		w("    profiles: [setup]")
+		w("    user: \"0:0\"")
+		w("    entrypoint: [\"/bin/sh\", \"-c\", %s, \"profile\"]", q(`find /p -mindepth 1 -delete && printf '%s' "$1" | base64 -d | tar -x -C /p`))
+		w("    network_mode: none")
+		hardening(w)
+		w("    volumes:")
+		w("      - %s:/p", q("profile-"+t))
+	}
 	w("networks:")
 	w("  lockhub:")
 	w("    internal: true")
@@ -220,6 +240,9 @@ func Compose(c *Config, p Paths) string {
 	}
 	w("volumes:")
 	w("  hubkey: {}")
+	for _, t := range types(c) {
+		w("  %s: {}", q("profile-"+t))
+	}
 	for _, name := range c.Instances() {
 		l := c.Locks[name]
 		w("  %s:", q(name+"-run"))
@@ -231,6 +254,28 @@ func Compose(c *Config, p Paths) string {
 		}
 	}
 	return b.String()
+}
+
+// types are the lock types c runs, sorted.
+func types(c *Config) []string {
+	var out []string
+	for _, n := range c.Instances() {
+		if t := c.Locks[n].Type; !slices.Contains(out, t) {
+			out = append(out, t)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// firstImage is the image of the first instance of type t.
+func firstImage(c *Config, t string) string {
+	for _, n := range c.Instances() {
+		if c.Locks[n].Type == t {
+			return c.Locks[n].Image
+		}
+	}
+	return ""
 }
 
 // profileDir is the lock's own configuration in the workspace.

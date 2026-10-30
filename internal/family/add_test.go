@@ -81,7 +81,7 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 	}
 	// Then lock up starts it, once the lock's profile exists.
 	f0 := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
-	if _, err := upFor(t, file)("y\n", f0); err == nil || !strings.Contains(err.Error(), ".locksql is not a directory") {
+	if _, err := upFor(t, file)("y\n", f0); err == nil || !strings.Contains(err.Error(), "profile of the locksql locks") {
 		t.Fatalf("lock up without the lock's profile: %v", err)
 	}
 	os.Mkdir(filepath.Join(ws, ".locksql"), 0o755)

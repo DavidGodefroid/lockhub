@@ -129,18 +129,15 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	ws, _ := filepath.Abs(Workspace(u.File))
 	project := Project(ws)
-	// Each lock's console reads its own profile in the workspace.
-	seen := map[string]bool{}
-	for _, n := range c.Instances() {
-		t := c.Locks[n].Type
-		if seen[t] {
-			continue
+	// Each lock's console reads its own profile, from the workspace: a
+	// copy, reviewed below (profile.go).
+	profiles := map[string]*Profile{}
+	for _, t := range types(c) {
+		pr, err := ReadProfile(profileDir(ws, t))
+		if err != nil {
+			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lock up)", t, err, t)
 		}
-		seen[t] = true
-		d := profileDir(ws, t)
-		if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
-			return fmt.Errorf("lock %s: %s is not a directory: make the %s profile first (%s's docs), then lock up", n, d, t, t)
-		}
+		profiles[t] = pr
 	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
@@ -222,6 +219,9 @@ func (u *Up) Do(ctx context.Context) error {
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := Summary(c, hp, lockPubs)
+	for _, t := range types(c) {
+		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
+	}
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")
 	var prev Applied
@@ -280,7 +280,16 @@ func (u *Up) Do(ctx context.Context) error {
 		return err
 	}
 	paths.Config = fp
+	paths.Profiles = map[string]string{}
+	for t, pr := range profiles {
+		paths.Profiles[t] = pr.Fingerprint
+	}
 	composeYAML = []byte(Compose(c, paths))
+	for _, t := range types(c) {
+		if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "profile-"+t, profiles[t].B64())...); err != nil {
+			return fmt.Errorf("profile of the %s locks: %w", t, err)
+		}
+	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
 		return fmt.Errorf("hub key for the locks: %w", err)
 	}
@@ -294,7 +303,15 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := writeUpState(ws, NewUpState(c, project, ws, hp)); err != nil {
+	st := NewUpState(c, project, ws, hp)
+	// The authoritative copy is lock up's own (host only); lea reads the
+	// workspace's, checks it is the user's and that no one else can write
+	// it, and checks every volume's labels with docker before mounting it.
+	sb, _ := json.MarshalIndent(st, "", "  ")
+	if err := os.WriteFile(filepath.Join(u.State, UpFile), append(sb, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := writeUpState(ws, st); err != nil {
 		return err
 	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))

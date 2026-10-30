@@ -192,7 +192,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		return
 	}
 	noKeys := func(s []string) []string {
-		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") })
+		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") })
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil))); len(ch) > 0 {
 		warn("lockfamily.yaml changed since the last lock up (run lock up to review it): %s", strings.Join(ch, "; "))
@@ -201,7 +201,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 
 // stack checks the compose project's containers and its internal network.
 func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...any)) {
-	ws, _ := filepath.Abs(filepath.Dir(d.File))
+	ws, _ := filepath.Abs(Workspace(d.File))
 	project := Project(ws)
 	compose := filepath.Join(d.State, "compose.yaml")
 	out, err := d.Run.Run(ctx, nil, "docker", "compose", "-p", project, "--project-directory", d.State, "--env-file", os.DevNull, "-f", compose, "ps", "--all", "--format", "json")

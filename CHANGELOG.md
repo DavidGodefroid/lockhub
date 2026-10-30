@@ -18,9 +18,11 @@ digest).
   - Each console runs as its image's console account, with a terminal
     (`tty`, `stdin_open`): it asks its policy and the credentials it does
     not take from Vault there; `lock attach INSTANCE` answers it. Its own
-    profile directory (`<workspace>/.<type>`) is mounted read-only (at the
-    same path for locksql and lockmq, whose socket name derives from the
-    project path); lock up stops if it is missing. `profile:` (optional)
+    profile directory (`<workspace>/.<type>`) is never mounted: lock up
+    snapshots it (no links, the user's own files only), shows its
+    fingerprint in the review, and copies the reviewed archive into a
+    root-written volume, read-only in the lock (at the same path for
+    locksql and lockmq, whose socket name derives from the project path). `profile:` (optional)
     names the profile; lockfile's defaults to `default`.
   - The hub's public key reaches the locks in the `hubkey` volume, written
     by root, read-only in the locks (locksql refuses a key file another

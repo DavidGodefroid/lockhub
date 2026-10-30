@@ -72,7 +72,8 @@ func ensureDir(file string) error {
 	if fi, err := os.Lstat(d); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%s is not a directory (a symbolic link or a file): remove it and retry", d)
 	}
-	return nil
+	// Only the user writes what the hub and lea trust.
+	return ownDir(d)
 }
 
 // SubProjects are the lockfamily.yaml files of the sub-projects of the

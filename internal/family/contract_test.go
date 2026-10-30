@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -82,7 +83,10 @@ func TestComposeNeverStartsSetupServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := Compose(c, Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0"})
-	for _, svc := range []string{"hubkey", "gatehome-web", "gatekey-web"} {
+	if strings.Contains(out, "type: bind\n        source: \"/w") {
+		t.Error("a workspace directory is bind-mounted")
+	}
+	for _, svc := range []string{"hubkey", "gatehome-web", "gatekey-web", "profile-lockfile", "profile-lockhttp"} {
 		blk := block(out, svc)
 		if !strings.Contains(blk, "    image: ") {
 			t.Fatalf("no service %s", svc)
@@ -93,7 +97,7 @@ func TestComposeNeverStartsSetupServices(t *testing.T) {
 	}
 	// lockfile reads ~/.config/lockfile only: the workspace's .lockfile is
 	// mounted there, and its console gets a profile.
-	if !strings.Contains(out, `target: "/home/lockfile/.config/lockfile"`) || !strings.Contains(out, `"console", "--profile", "default", "--hub"`) {
+	if !strings.Contains(out, `      - "profile-lockfile":/home/lockfile/.config/lockfile:ro`) || !strings.Contains(out, `"console", "--profile", "default", "--hub"`) {
 		t.Errorf("lockfile service:\n%s", out)
 	}
 }
@@ -202,7 +206,7 @@ func block(out, name string) string {
 	in := false
 	for _, l := range strings.Split(out, "\n") {
 		if strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   ") {
-			in = l == "  "+name+":"
+			in = l == "  "+name+":" || l == "  \""+name+"\":"
 		} else if !strings.HasPrefix(l, " ") {
 			in = false
 		}
@@ -211,4 +215,96 @@ func block(out, name string) string {
 		}
 	}
 	return b.String()
+}
+
+// The profile is a reviewed copy: its fingerprint is in the review, and
+// lock up copies exactly what it read into the profile volume.
+func TestProfileReviewedAndCopied(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	ws := filepath.Dir(filepath.Dir(w.file))
+	os.WriteFile(filepath.Join(ws, ".locksql", "config.toml"), []byte("[profiles.crm]\n"), 0o644)
+	f := newFake()
+	out, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, err := ReadProfile(filepath.Join(ws, ".locksql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "profile locksql "+filepath.Join(ws, ".locksql")+" "+pr.Fingerprint) {
+		t.Errorf("review lacks the profile:\n%s", out)
+	}
+	if !f.ran("--no-deps profile-locksql "+pr.B64()) || !strings.Contains(f.upCompose, "lockfamily.profile: \""+pr.Fingerprint) {
+		t.Errorf("copy: %v", f.calls)
+	}
+	// A changed profile is a change to review.
+	os.WriteFile(filepath.Join(ws, ".locksql", "config.toml"), []byte("[profiles.crm]\nproduction = false\n"), 0o644)
+	if out, err := w.up("n\n", newFake()); err == nil || !strings.Contains(out, "- profile locksql") {
+		t.Errorf("changed profile applied without review: %v\n%s", err, out)
+	}
+}
+
+func TestProfileRefusals(t *testing.T) {
+	for name, mk := range map[string]func(d string){
+		"link dir": func(d string) {
+			os.Remove(d)
+			os.Symlink(t.TempDir(), d)
+		},
+		"link file":          func(d string) { os.Symlink("/etc/passwd", filepath.Join(d, "config.toml")) },
+		"group-writable dir": func(d string) { os.Chmod(d, 0o775) },
+		"world-writable file": func(d string) {
+			p := filepath.Join(d, "config.toml")
+			os.WriteFile(p, nil, 0o644)
+			os.Chmod(p, 0o666)
+		},
+		"fifo":     func(d string) { syscall.Mkfifo(filepath.Join(d, "x"), 0o644) },
+		"too big":  func(d string) { os.WriteFile(filepath.Join(d, "big"), make([]byte, maxProfile+1), 0o644) },
+		"sub link": func(d string) { os.Mkdir(filepath.Join(d, "s"), 0o755); os.Symlink("/", filepath.Join(d, "s", "r")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := filepath.Join(t.TempDir(), ".locksql")
+			os.Mkdir(d, 0o755)
+			mk(d)
+			if _, err := ReadProfile(d); err == nil {
+				t.Error("accepted")
+			}
+		})
+	}
+}
+
+// .lockfamily must be the user's own directory that no one else writes.
+func TestLockfamilyDirRefusals(t *testing.T) {
+	ws := t.TempDir()
+	os.Mkdir(filepath.Join(ws, Dir), 0o777)
+	os.Chmod(filepath.Join(ws, Dir), 0o777)
+	if err := Add(filepath.Join(ws, Dir, FileName), AddOptions{Type: "locksql", Name: "crm", Image: sqlImg, HubImage: hubImg}); err == nil {
+		t.Error("lock add wrote in a world-writable .lockfamily")
+	}
+	if err := writeUpState(ws, UpState{Version: 1}); err == nil {
+		t.Error("up.json written in a world-writable .lockfamily")
+	}
+}
+
+// A link planted as .lockfamily/up.json is replaced, never written
+// through; lock up keeps its own copy in its state directory.
+func TestUpStateLinkReplaced(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	ws := filepath.Dir(filepath.Dir(w.file))
+	victim := filepath.Join(t.TempDir(), "victim")
+	os.WriteFile(victim, []byte("keep"), 0o644)
+	os.Symlink(victim, filepath.Join(ws, Dir, UpFile))
+	if _, err := w.up("y\n", newFake()); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Error("up.json written through a link")
+	}
+	fi, err := os.Lstat(filepath.Join(ws, Dir, UpFile))
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o644 {
+		t.Errorf("up.json: %v %v", fi, err)
+	}
+	if fi, err := os.Stat(filepath.Join(w.dir, "state", UpFile)); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("state copy: %v", err)
+	}
 }

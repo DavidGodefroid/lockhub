@@ -117,9 +117,14 @@ func encodeValid(doc *yaml.Node) ([]byte, *Config, error) {
 // a lockfamily.yaml.
 func writeFile(path string, b []byte) error {
 	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+		mode = fi.Mode().Perm() &^ 0o022
 	}
+	return writeFileMode(path, b, mode)
+}
+
+// writeFileMode is writeFile with the mode given.
+func writeFileMode(path string, b []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".lockfamily-*.yaml")
 	if err != nil {
 		return err

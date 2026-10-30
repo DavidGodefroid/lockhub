@@ -10,9 +10,14 @@ between the two.
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lock add`, `lock import`) | `lock` |
 | `<workspace>/.lockfamily/up.json` | `lock up`, after a confirmed apply | lea |
-| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | the lock's console, read-only |
+| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lock up`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lock up` | `lock` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lock approve`, lea's deck |
+
+`lock up` refuses a `.lockfamily/` that is a link, not the user's, or
+writable by group or others, and keeps its own copy of up.json in its state
+directory. It writes up.json through a fresh file renamed into place (a
+planted link is replaced, never followed).
 
 lea creates `.lockfamily/` (owned by the host user, 0755) before it mounts
 it read-only in its agents' containers: no agent can change
@@ -39,7 +44,9 @@ and state.
 }
 ```
 
-lea, for each lock of a type it has switched on:
+lea reads up.json only if it is a regular file of the user's that no one
+else can write, in a `.lockfamily/` of the same kind. Then, for each lock of
+a type it has switched on:
 
 - checks that the volume exists with the labels
   `com.docker.compose.project=<project>`, `dev.lockfamily.role=socket`,
@@ -59,6 +66,16 @@ proxy** to `hub_network`, and runs `lockhttp gate --hub <hub_url>
 <the network's subnet>`. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
+
+## Profiles: a reviewed copy
+
+A lock's profile directory is in the workspace, which agents may write. lock
+up never mounts it. It reads it once, following no link, taking only the
+user's own regular files and directories that no one else can write (64 KiB
+at most), shows its fingerprint in the review (`profile <type> <dir>
+sha256:…`; a change is a change to confirm), and after the yes copies
+exactly that archive into the volume `profile-<type>` (written by root,
+read-only in the lock). A new copy recreates the lock's console.
 
 ## Consoles under compose
 
