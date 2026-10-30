@@ -193,8 +193,10 @@ type closing struct {
 	outcome    string
 	tries      int
 	last, next time.Time
-	// clicked: this try was brought forward by a click.
+	// clicked: this try was brought forward by a click from the timer's
+	// due time, timer (kept: clicks never postpone the counted tries).
 	clicked bool
+	timer   time.Time
 }
 
 // Run serves until ctx ends or the transport fails for good.
@@ -258,8 +260,8 @@ func (f *Facade) Run(ctx context.Context) error {
 // kept for a retry.
 func (f *Facade) close(ctx context.Context, r store.Ref, p *posted, outcome string) {
 	err := f.closeOnce(ctx, p.ref, p.card, outcome)
-	if err == nil {
-		return
+	if err == nil || ctx.Err() != nil {
+		return // done, or shutting down
 	}
 	c := &closing{posted: *p, outcome: outcome}
 	f.failed(retryKey{r, p.ref}, c, err, time.Now())
@@ -289,7 +291,8 @@ func (f *Facade) failed(k retryKey, c *closing, err error, now time.Time) {
 	if f.retries == nil {
 		f.retries = map[retryKey]*closing{}
 	}
-	if !c.clicked {
+	clicked := c.clicked
+	if !clicked {
 		c.tries++ // a try a click brought forward does not count
 	}
 	c.clicked = false
@@ -309,6 +312,14 @@ func (f *Facade) failed(k retryKey, c *closing, err error, now time.Time) {
 	case c.tries >= tries:
 		f.logf("close %s/%s (message %s): %v (gave up after %d tries: its buttons stay, and are refused)", k.Instance, k.ID, k.msg, err, c.tries)
 		delete(f.retries, k)
+		return
+	}
+	if clicked {
+		// Back to the timer's schedule, so RetryTries still bounds the
+		// close however often someone clicks.
+		c.next = c.timer
+		f.retries[k] = c
+		f.logf("close %s/%s (message %s): %v (clicked try; next at the timer's)", k.Instance, k.ID, k.msg, err)
 		return
 	}
 	d := base << (c.tries - 1)
@@ -343,6 +354,9 @@ func (f *Facade) retryCloses(ctx context.Context, now time.Time) {
 			return
 		}
 		if err := f.closeOnce(ctx, c.ref, c.card, c.outcome); err != nil {
+			if ctx.Err() != nil {
+				return // shutting down
+			}
 			f.failed(k, c, err, time.Now())
 			continue
 		}
@@ -357,7 +371,7 @@ func (f *Facade) retryCloses(ctx context.Context, now time.Time) {
 func (f *Facade) retrySoon(r store.Ref, now time.Time) {
 	for k, c := range f.retries {
 		if k.Ref == r && now.Sub(c.last) >= f.retryBase() && c.next.After(now) {
-			c.next, c.clicked = now, true
+			c.timer, c.next, c.clicked = c.next, now, true
 		}
 	}
 }

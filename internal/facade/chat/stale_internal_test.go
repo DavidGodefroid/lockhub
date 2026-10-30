@@ -66,3 +66,47 @@ func TestStaleSnapshotNotReposted(t *testing.T) {
 		t.Fatalf("answered kept %v", f.answered)
 	}
 }
+
+type failClose struct {
+	countPosts
+	calls int
+}
+
+func (f *failClose) Close(context.Context, string, Card, string) error {
+	f.calls++
+	return context.DeadlineExceeded
+}
+
+// A pass makes at most retriesPerPass retries; the rest wait for the next.
+func TestRetriesPerPass(t *testing.T) {
+	tr := &failClose{}
+	f := &Facade{T: tr}
+	now := time.Now()
+	f.retries = map[retryKey]*closing{}
+	for i := 0; i < retriesPerPass+3; i++ {
+		f.retries[retryKey{store.Ref{Instance: "crm", ID: string(rune('a' + i))}, "m"}] = &closing{tries: 1, next: now}
+	}
+	f.retryCloses(context.Background(), now)
+	if tr.calls != retriesPerPass {
+		t.Fatalf("%d closes in one pass, want %d", tr.calls, retriesPerPass)
+	}
+}
+
+// Clicks never postpone the timer's counted tries: a clicked try that
+// fails keeps the timer's due time, and the backoff is capped at RetryMax.
+func TestClickedFailureKeepsTheTimer(t *testing.T) {
+	f := &Facade{T: &failClose{}, RetryBase: time.Second, RetryMax: 4 * time.Second}
+	now := time.Now()
+	k := retryKey{store.Ref{Instance: "crm", ID: "a"}, "m"}
+	c := &closing{tries: 3, last: now.Add(-time.Minute), next: now.Add(4 * time.Second)}
+	f.retries = map[retryKey]*closing{k: c}
+	f.retrySoon(k.Ref, now)
+	f.retryCloses(context.Background(), now)
+	if c.tries != 3 || !c.next.Equal(now.Add(4*time.Second)) {
+		t.Fatalf("after a clicked failure: tries %d, next in %s", c.tries, c.next.Sub(now))
+	}
+	f.failed(k, c, context.DeadlineExceeded, now)
+	if d := c.next.Sub(now); d != 4*time.Second {
+		t.Fatalf("backoff %s, want RetryMax", d)
+	}
+}
