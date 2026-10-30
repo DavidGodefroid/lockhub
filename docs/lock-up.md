@@ -63,7 +63,9 @@ these members are written, and lea runs its gate in hub mode only then):
 - per lock, `devices: true` when the lock pins them (lockfamily.yaml
   `locks.<name>.devices`); then `require_device` and `seal_clear`, from
   `hub.mobile`, exactly as lock up passes `--require-device` and
-  `--seal-clear` to its consoles. Without `devices`, neither is written.
+  `--seal-clear` to its consoles once a device is paired (with none
+  paired, the gate pins none, as the consoles). Without `devices`, neither
+  is written.
 - per lock, `profile`: the console's profile (absent: `default`), which
   the gate takes as `--profile`.
 - per lock, `reveal` (below).

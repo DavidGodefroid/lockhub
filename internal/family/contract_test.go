@@ -57,7 +57,9 @@ func TestUpWritesLeaContract(t *testing.T) {
 	// What a lockhttp gate pins is said (lea's hub mode needs 1); no
 	// device paired: no devices member.
 	var raw map[string]json.RawMessage
-	json.Unmarshal(b, &raw)
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
 	if s.LockHTTPGate != 1 || raw["devices"] != nil {
 		t.Errorf("up.json lockhttp_gate %d, devices %s", s.LockHTTPGate, raw["devices"])
 	}
