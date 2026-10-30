@@ -7,6 +7,46 @@ digest).
 
 - A `lock import` or `lock add` refused for a new workspace no longer
   leaves an empty `.lockfamily/` behind.
+
+## v0.2.0 (2026-10-30)
+
+### Supported locks
+
+Builds on lockkit v0.6.0. `lock add` pins only releases that run under
+`lock up` (hub mode, lockkit v0.3.1 or later); the optional features need
+newer locks:
+
+| Lock | Runs under lock up (lockkit ≥ v0.3.1) | `devices: true` (lockkit ≥ v0.4.0) | Reveals (`reveal: true`) and renewals (lockkit ≥ v0.5.0) |
+|---|---|---|---|
+| locksql | v0.10.0 (lockkit v0.3.1) | no release yet | no release yet |
+| lockmq | v0.3.0 (lockkit v0.3.1) | v0.4.0 (lockkit v0.6.0) | v0.4.0 |
+| lockfile | v0.4.0 (lockkit v0.3.1) | v0.5.0 (lockkit v0.6.0) | v0.5.0 |
+| lockhttp (pre-releases) | v0.3.0 (lockkit v0.3.1) | not wired by lock up yet (the gate takes `--devices-file` from v0.4.0, but up.json does not carry the devices): leave `devices` off | v0.5.0 (lockkit v0.6.0) |
+
+lock up passes `--devices-file` and `--facade-keys-file` to the locksql,
+lockmq and lockfile consoles only. The lockhttp console serves the policy;
+the hub is asked by a hub-mode gate beside lea's proxy, which takes the
+facade keys (not the devices) from up.json; that gate is not in lea yet
+(docs/lock-up.md). A lock older than a feature it is asked for refuses the
+flag and does not start: leave `devices`/`reveal` off for it. A lock on
+lockkit older than v0.5.0 ignores the `requests` member of the decisions
+poll: a reveal or renewal asked of it times out. lockssh has no release yet
+and is not a lock up type.
+
+Upgrade notes: `lock up --rotate hub` needs a hub image of this release
+or later (`lockhub rotate-key`); once a hub key is rotated, an older hub
+or `lock audit verify` refuses the log (`key_rotated` record), as an older
+`lock audit verify` refuses one with `outbox` fields: upgrade the `lock`
+CLI with the hub.
+
+### Changes
+
+- First release of the `lock` CLI with lock up's `.lockfamily/` layout,
+  console accounts and `up.json` for lea (#23: the `lock up runs consoles
+  lea's agents can reach` entry below): lockfamily's
+  install.sh installs the latest release, which was v0.1.1 without them.
+- The paired devices' snapshot lock up mounts in the locks is 0644
+  whatever the umask (#39): under umask 077 the consoles could not read it.
 - CI: workflow e2e-lock-up runs the hub plan's phase 1 (locksql's
   TestHubPhase1 against this tree), phase 2 (lock up, lock attach, a
   ticket approved through the facade socket, I2 directly and through a
@@ -16,15 +56,8 @@ digest).
   workspace opened through a symbolic link gets a new project (and state):
   its first lock up is a full review again.
 
-Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
-start with the generated commands. Reveals and renewals need locks built on
-lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
-decisions poll: the facade's request times out). A reveal also needs
-`reveal: true` on the lock in `lockfamily.yaml` (opt-in, like `devices`:
-only then does `lock up` pass `--facade-keys-file`, which older images
-refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
-could not check them now) are shown as such, and never allow one click.
-
+- A renewal's `unchecked` inputs (lockkit v0.6.0: the lock could not
+  check them now) are shown as such, and never allow one click.
 - Hub requests (reveal, renew) and two pollers of one instance (a lock
   restarted while its old process still polls): a request now ends every
   long poll that began before it was first given to a lock, not only the
@@ -121,8 +154,8 @@ could not check them now) are shown as such, and never allow one click.
   answers every risk class but `unlock`. Audit records carry the device;
   device pairings and revocations are audited. `lock mobile list|revoke`;
   `lock doctor` reports devices paired since the last `lock up`.
-- Requires lockkit v0.4.0 or later (this release builds on v0.6.0; compatible: tickets and decisions without
-  devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+- Tickets and decisions without devices are unchanged: locks on lockkit
+  v0.3.1 still work; pinning devices needs lockkit v0.4.0 in the lock.
 - `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
   lock-side audit logs (lockkit's `audit.log`, or its directory): the
   chain (lockkit `audit.Verify`), and every record of a hub decision
