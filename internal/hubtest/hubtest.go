@@ -53,6 +53,8 @@ type Codec struct{}
 
 const reqContext = "lockhub-request-v1\x00"
 
+func (Codec) TicketVersions() []int { return []int{1} }
+
 func (Codec) KeyID(k ed25519.PublicKey) string { return "ed25519:" + hex.EncodeToString(k[:16]) }
 
 func requestMessage(method, pq, instance string, at time.Time, nonce string, body []byte) []byte {
