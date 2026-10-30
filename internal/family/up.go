@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
@@ -33,6 +34,10 @@ type Exec struct{ Stderr io.Writer }
 // Run implements Runner.
 func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Nothing of the user's compose settings (COMPOSE_PROFILES would
+	// start the setup services, COMPOSE_FILE add a file): lock up passes
+	// everything compose needs.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(e string) bool { return strings.HasPrefix(e, "COMPOSE_") })
 	if stdin != nil {
 		cmd.Stdin = strings.NewReader(string(stdin))
 	}
@@ -90,6 +95,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
 			fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
+		if l.Profile != "" {
+			s = append(s, fmt.Sprintf("lock %s profile %s", n, l.Profile))
+		}
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
 		}
@@ -139,7 +147,10 @@ func (u *Up) Do(ctx context.Context) error {
 	// copy, reviewed below (profile.go).
 	profiles := map[string]*Profile{}
 	for _, t := range types(c) {
-		pr, err := ReadProfile(profileDir(ws, t))
+		k := Kinds[t]
+		uid, _ := strconv.Atoi(k.UID)
+		gid, _ := strconv.Atoi(k.GID)
+		pr, err := ReadProfile(profileDir(ws, t), uid, gid)
 		if err != nil {
 			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lock up)", t, err, t)
 		}
@@ -227,6 +238,9 @@ func (u *Up) Do(ctx context.Context) error {
 	sum := Summary(c, hp, lockPubs)
 	for _, t := range types(c) {
 		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
+		for _, l := range profiles[t].Lines {
+			sum = append(sum, fmt.Sprintf("profile %s %s", t, l))
+		}
 	}
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")

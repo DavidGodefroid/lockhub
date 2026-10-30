@@ -48,14 +48,18 @@ type Kind struct {
 	// Gate is lockhttp: the hub is asked by the gate (lea runs it beside
 	// its proxy), not by the console, which only serves the policy.
 	Gate bool
+	// Mem and Pids are the console's limits, as the lock's own launcher
+	// sets them.
+	Mem  string
+	Pids int
 }
 
 // Kinds are the lock types' images (their Dockerfiles).
 var Kinds = map[string]Kind{
-	"locksql":  {UID: "10001", GID: "10000", Project: true},
-	"lockmq":   {UID: "10011", GID: "10010", Project: true},
-	"lockfile": {UID: "10031", GID: "10030"},
-	"lockhttp": {UID: "10021", GID: "10020", Gate: true},
+	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256},
+	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256},
+	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512},
+	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 }
 
 // The lockhttp gate's account in lockhttp's image (lockhttp-clients).
@@ -165,11 +169,16 @@ func Compose(c *Config, p Paths) string {
 			w("    working_dir: %s", q(p.Workspace))
 		}
 		w("    command: [%s]", quoteAll(cmd))
+		// Docker's log of a console's terminal would keep every screen
+		// (statements, results, personal data) for anyone who runs docker
+		// logs: none, as the locks' own launchers.
+		w("    logging:")
+		w("      driver: none")
 		if fp := p.Profiles[l.Type]; fp != "" {
 			w("    labels:")
 			w("      lockfamily.profile: %s", q(fp))
 		}
-		hardening(w)
+		limits(w, k.Mem, k.Pids)
 		w("    volumes:")
 		w("      - %s", q(name+"-run:/run/"+l.Type))
 		w("      - %s", q(name+"-home:"+home))
@@ -222,9 +231,11 @@ func Compose(c *Config, p Paths) string {
 		w("    image: %s", q(firstImage(c, t)))
 		w("    profiles: [setup]")
 		w("    user: \"0:0\"")
-		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p", maxTar)))
+		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p && chown %s:%s /p && chmod 0700 /p", maxTar, Kinds[t].UID, Kinds[t].GID)))
 		w("    network_mode: none")
 		hardening(w)
+		// The archive's owner (the console) and modes, kept by root.
+		w("    cap_add: [CHOWN, FOWNER]")
 		w("    volumes:")
 		w("      - %s", q("profile-"+t+":/p"))
 	}
@@ -289,11 +300,13 @@ func quoteAll(a []string) string {
 	return strings.Join(s, ", ")
 }
 
-func hardening(w func(string, ...any)) {
+func hardening(w func(string, ...any)) { limits(w, "512m", 256) }
+
+func limits(w func(string, ...any), mem string, pids int) {
 	w("    read_only: true")
 	w("    cap_drop: [ALL]")
 	w("    security_opt: [\"no-new-privileges:true\"]")
 	w("    tmpfs: [\"/tmp:size=16m\"]")
-	w("    pids_limit: 256")
-	w("    mem_limit: 512m")
+	w("    pids_limit: %d", pids)
+	w("    mem_limit: %s", mem)
 }

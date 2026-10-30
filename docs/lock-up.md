@@ -77,6 +77,19 @@ sha256:…`; a change is a change to confirm), and after the yes copies
 exactly that archive, on the setup service's stdin (never an argument), into the volume `profile-<type>` (written by root,
 read-only in the lock). A new copy recreates the lock's console.
 
+The review lists every file of the copy (name, size, sha256) and each line
+of its TOML files (lockkit's configuration refuses secrets there; control
+characters are shown escaped), so a change of target or of the production
+flag is a line you read, not only a new hash. The copy belongs to the
+console's account and keeps owner-only modes (a 0600 key stays 0600). A
+directory or file your umask made group-writable is refused: `chmod -R
+go-w <workspace>/.<type>`.
+
+One profile directory per workspace and type: the console runs in the
+workspace, and the socket name of locksql and lockmq derives from the
+project path, so an agent in a sub-project with its own `.locksql` would
+look for another socket.
+
 ## Consoles under compose
 
 Every lock's console asks a human at its terminal: its policy on the first
@@ -84,14 +97,24 @@ start and after a loosening, the typed profile name of a production
 profile, the credentials its profile does not take from Vault. lock up runs
 each console with a terminal (`tty: true`, `stdin_open: true`) as its
 image's console account, and prints `lock attach <instance>` for each; that
-command shows the console's last lines (its pending question) and attaches
-the terminal (detach: Ctrl-P Ctrl-Q). A console that restarts asks again:
-attach again. Locks are pending (agents get no answer) until answered.
+command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
+Docker log (`logging: none`, as with their own launchers: the log would keep
+every screen), so attaching does not replay the pending question; on a
+first start it is the policy review, `Apply these changes? [y/N]`. A console
+that restarts asks again: attach again. Locks are pending (agents get no
+answer) until answered. Memory and process limits are the ones each lock's
+own launcher sets.
 
-Profiles with `credentials = "vault"` or `"none"` ask nothing but the
-policy.
+Not yet: Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
+`-vault` image variant, which lock up does not pass or pin), and lockfile's
+shipped seccomp profile (lock up uses Docker's default).
 
 ## Why lockhttp is different
+
+(lea's side of this, the gate in hub mode, is not in lea yet: until it is,
+a lockhttp lock under lock up runs a console that only a gate you start
+yourself reaches.)
+
 
 lockhttp's hub mode is in the gate (`lockhttp gate --hub`, lockhttp#11),
 not in its console, and the gate must sit in the network namespace of

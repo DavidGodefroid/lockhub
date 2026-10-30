@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -73,6 +74,13 @@ var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-
 
 // Load reads and validates path.
 func Load(path string) (*Config, error) {
+	// .lockfamily must be the user's own directory no one else writes
+	// (not a link), before anything in it is trusted.
+	if !Legacy(path) {
+		if err := ownDir(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
