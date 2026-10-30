@@ -505,3 +505,46 @@ func TestRenewNoOneClickForAnotherRequest(t *testing.T) {
 		})
 	}
 }
+
+// Two pollers of one instance (a restarted lock whose old process still
+// polls): a new request wakes both, and both return with it, instead of
+// the second going back to sleep for the rest of its poll because the
+// first was given it. A poll that begins after the request was given
+// does not return early for it (no spin).
+func TestTwoPollersBothGetANewRequest(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 50 * time.Millisecond }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	type res struct {
+		n   int
+		dur time.Duration
+	}
+	got := make(chan res, 2)
+	for range 2 {
+		go func() {
+			start := time.Now()
+			_, reqs, err := e.Hub.Poll(ctx, "crm", 0, 20*time.Second)
+			if err != nil {
+				t.Error(err)
+			}
+			got <- res{len(reqs), time.Since(start)}
+		}()
+	}
+	time.Sleep(100 * time.Millisecond) // both polls are waiting
+	go e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	for range 2 {
+		select {
+		case r := <-got:
+			if r.n != 1 || r.dur > 10*time.Second {
+				t.Errorf("a poller got %d request(s) after %v", r.n, r.dur)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a poller lost the wake-up: it is still waiting")
+		}
+	}
+	// Given to both: a new poll waits its full time (here 200 ms).
+	start := time.Now()
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 200*time.Millisecond); len(reqs) > 1 || time.Since(start) < 150*time.Millisecond {
+		t.Errorf("a request already given ended a new poll early (%v, %d)", time.Since(start), len(reqs))
+	}
+}

@@ -150,6 +150,7 @@ type Hub struct {
 	waiters   map[string]chan struct{}       // instance → closed on a new decision or request
 	queueVer  uint64                         // bumped on every change of the pending queue
 	reqs      map[string]map[string]*openReq // instance → id → open hub request
+	reqSeq    uint64                         // bumped on every hub request opened
 	onPending []func(Pending)
 }
 
@@ -532,20 +533,23 @@ func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.
 	const limit = 100
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
+	h.mu.Lock()
+	start := h.reqSeq // requests opened after this are fresh for this poll
+	h.mu.Unlock()
 	for {
 		ch := h.waiter(instance) // before the query: no lost wake-up
 		ds, err := h.c.Store.Decisions(ctx, instance, since, limit)
 		if err != nil {
 			return nil, nil, err
 		}
-		reqs, fresh := h.openRequests(instance)
+		reqs, fresh := h.openRequests(instance, start)
 		if len(ds) > 0 || fresh || wait <= 0 {
 			return ds, reqs, nil
 		}
 		select {
 		case <-ch:
 		case <-deadline.C:
-			reqs, _ := h.openRequests(instance)
+			reqs, _ := h.openRequests(instance, start)
 			return nil, reqs, nil
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
