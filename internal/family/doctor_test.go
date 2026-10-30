@@ -74,6 +74,13 @@ func healthy(t *testing.T) (*Doctor, *answers) {
 		w.Write([]byte(a))
 	}))
 	os.Chmod(filepath.Join(sd, "s"), 0o660)
+	// Doctor dials the socket: its full path must be short too (104 bytes
+	// on macOS), so the runtime dir moves next to it.
+	short := filepath.Join(sd, "run")
+	if err := os.Rename(run, short); err != nil {
+		t.Fatal(err)
+	}
+	run = short
 	if err := os.Rename(filepath.Join(sd, "s"), filepath.Join(run, "lockhub", "facade.sock")); err != nil {
 		t.Fatal(err)
 	}
