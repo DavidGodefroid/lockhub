@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -125,6 +126,85 @@ type Lock struct {
 	// the terminal or the deck can reveal its clear screen. Without it the
 	// lock refuses reveals; renewals need no facade key.
 	Reveal bool `yaml:"reveal,omitempty"`
+	// AllowedUIDs may reach the lock's console besides the members of its
+	// clients group (`console --allowed-uids`, lockmq v0.4.1 and lockfile
+	// v0.5.1 or later): the uid lea's agents run as (the host user's),
+	// which names no account in the lock's image. lockmq and lockfile
+	// only: locksql's console takes no such flag yet, and a lockhttp lock
+	// is reached by lea's gate, an account of its image.
+	AllowedUIDs UIDList `yaml:"allowed_uids,omitempty"`
+}
+
+// UIDList is allowed_uids: a YAML list of plain decimal integers, as the
+// consoles' --allowed-uids takes them. yaml.v3 alone would also take
+// 1000.9, 0x3e8 or 1_000 for an int.
+type UIDList []int
+
+var plainUID = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
+
+// UnmarshalYAML takes a sequence of untagged or !!int decimal scalars.
+func (u *UIDList) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.SequenceNode {
+		return fmt.Errorf("line %d: allowed_uids: want a list of uids, [1000]", n.Line)
+	}
+	var out UIDList
+	for _, e := range n.Content {
+		if e.Kind != yaml.ScalarNode || e.Tag != "!!int" || !plainUID.MatchString(e.Value) {
+			return fmt.Errorf("line %d: allowed_uids: %q is not a uid (decimal, no sign, no leading zero)", e.Line, e.Value)
+		}
+		v, err := strconv.ParseInt(e.Value, 10, 64)
+		if err != nil {
+			return fmt.Errorf("line %d: allowed_uids: %q is not a uid", e.Line, e.Value)
+		}
+		out = append(out, int(v))
+	}
+	*u = out
+	return nil
+}
+
+// MarshalYAML writes the list in flow style, [1000, 1001].
+func (u UIDList) MarshalYAML() (any, error) {
+	n := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
+	for _, v := range u {
+		n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(v)})
+	}
+	return n, nil
+}
+
+// AllowedUIDTypes are the lock types whose console takes --allowed-uids.
+var AllowedUIDTypes = []string{"lockmq", "lockfile"}
+
+// validAllowedUIDs checks a lock's allowed_uids: uids (not root, not the
+// console's own, not -1), each once, for a type that takes them.
+func validAllowedUIDs(name string, l Lock) error {
+	if len(l.AllowedUIDs) == 0 {
+		return nil
+	}
+	if !slices.Contains(AllowedUIDTypes, l.Type) {
+		return fmt.Errorf("locks.%s.allowed_uids: a %s console takes none (only %s)", name, l.Type, strings.Join(AllowedUIDTypes, ", "))
+	}
+	for i, u := range l.AllowedUIDs {
+		switch {
+		case u <= 0 || int64(u) >= 1<<32-1: // 2^32-1 is (uid_t)-1
+			return fmt.Errorf("locks.%s.allowed_uids: %d is root or not a uid", name, u)
+		case u == 65534:
+			return fmt.Errorf("locks.%s.allowed_uids: 65534 is nobody, the kernel's overflow uid", name)
+		case strconv.Itoa(u) == Kinds[l.Type].UID:
+			return fmt.Errorf("locks.%s.allowed_uids: %d is the console's own uid", name, u)
+		case slices.Contains(l.AllowedUIDs[:i], u):
+			return fmt.Errorf("locks.%s.allowed_uids: %d is listed twice", name, u)
+		}
+	}
+	return nil
+}
+
+// AllowedUIDsFlag is the console's --allowed-uids value for l ("" when none).
+func (l Lock) AllowedUIDsFlag() string {
+	s := make([]string, len(l.AllowedUIDs))
+	for i, u := range l.AllowedUIDs {
+		s[i] = strconv.Itoa(u)
+	}
+	return strings.Join(s, ",")
 }
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
@@ -235,6 +315,9 @@ func (c *Config) validate(needLocks bool) error {
 		}
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
+		}
+		if err := validAllowedUIDs(name, l); err != nil {
+			return err
 		}
 		if l.Devices && c.Hub.Mobile == nil {
 			return fmt.Errorf("locks.%s.devices: set, but the mobile facade is not configured (hub.mobile)", name)

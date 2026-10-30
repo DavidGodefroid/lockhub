@@ -37,6 +37,9 @@ func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []s
 				out.Locks[name] = l
 				fs := intersect(o.facadesOf(name), out.Hub.Facades)
 				note := fmt.Sprintf("%s: adds lock %s (%s)", src, name, l.Type)
+				if len(l.AllowedUIDs) > 0 {
+					note += ", serving uids " + l.AllowedUIDsFlag() + " (allowed_uids)"
+				}
 				if !sameSet(fs, out.Hub.Facades) {
 					out.Hub.Routing[name] = fs
 					note += ", routed only to " + strings.Join(fs, ",")
@@ -50,6 +53,16 @@ func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []s
 			}
 			if cur.Image != l.Image {
 				notes = append(notes, fmt.Sprintf("%s: lock %s pins another image (%s): kept %s", src, name, l.Image, cur.Image))
+			}
+			var keep UIDList
+			for _, u := range cur.AllowedUIDs {
+				if slices.Contains(l.AllowedUIDs, u) {
+					keep = append(keep, u)
+				}
+			}
+			if len(keep) != len(cur.AllowedUIDs) {
+				cur.AllowedUIDs = keep
+				notes = append(notes, fmt.Sprintf("%s: lock %s allowed_uids narrowed to those every declaration lists: [%s]", src, name, cur.AllowedUIDsFlag()))
 			}
 			before := out.facadesOf(name)
 			after := intersect(before, o.facadesOf(name))

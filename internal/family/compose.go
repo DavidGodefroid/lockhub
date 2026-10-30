@@ -200,6 +200,9 @@ func Compose(c *Config, p Paths) string {
 			}
 			cmd = append(cmd, "--profile", prof)
 		}
+		if len(l.AllowedUIDs) > 0 {
+			cmd = append(cmd, "--allowed-uids", l.AllowedUIDsFlag())
+		}
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)
 			cmd = append(cmd, deviceArgs(c, l, p)...)

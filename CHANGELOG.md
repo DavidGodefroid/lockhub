@@ -5,6 +5,14 @@ digest).
 
 ## Unreleased
 
+- lockfamily.yaml `allowed_uids` per lockmq or lockfile lock (lea#226):
+  lock up passes it as the console's `--allowed-uids` (lockmq v0.4.1,
+  lockfile v0.5.1 or later), so that lea's agents, which run as the host
+  user's uid with no account in the lock's image, reach it. Reviewed like
+  any change; uids only, each once, never root nor the console's own uid;
+  never 65534 (nobody); refused on locksql (no such flag yet) and lockhttp locks. `lock import`
+  keeps the uids every declaration lists.
+
 ## v0.2.3 (2026-10-30)
 
 Supported locks: as v0.2.2, plus locksql v0.11.1 (lockkit v0.7.1), the
