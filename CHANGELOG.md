@@ -17,10 +17,14 @@ record denials or renewals, which show as decisions not in the log).
 Upgrade notes (behaviour changes):
 
 - Production tickets: approving one now needs its instance name typed on
-  every facade (#64). An older lea deck (a lea daemon v0.3.1 or older)
-  can no longer approve production tickets through this hub: use `lock
-  approve` or the phone, or a lea release with DavidGodefroid/lea#222
-  (planned for lea v0.3.2).
+  every facade (#64). Upgrade the `lock` CLI with the hub: an older `lock
+  approve` (v0.2.2 or older) is refused on production tickets by this
+  hub, and this `lock approve` is refused by an older hub on a ticket
+  whose `flags.retype` is set. An older lea deck (a lea daemon v0.3.1 or
+  older) can no longer approve production tickets through this hub: use
+  this release's `lock approve` or the phone, or a lea release with
+  DavidGodefroid/lea#222 (planned for lea v0.3.2). A phone page left open
+  needs a reload to show the field.
 - Routing: a hub without `routing.json`, or with one that lists no
   `facades`, no longer routes anything to Slack or Telegram (#61). Under
   `lock up` nothing changes (it always writes `facades`); a hand-run hub
@@ -56,7 +60,7 @@ Changes:
   longer posted again from a queue snapshot taken before the decision.
 - CI: phase 5 fails on a `lock doctor` failure (#63); phase 2 drops the
   database and role it made and checks the screen's literal (#62); tests
-  for I9 (#58); deflaked chat-close and queue-order tests (#57).
+  for I9 (#58); deflaked chat-close and queue-order tests (#55, #57).
 - docs: design notes, the accepted deviations from the hub plan (#59).
 
 ## v0.2.2 (2026-10-30)
@@ -373,14 +377,17 @@ Correction (v0.2.3): the note above overstates what v0.1.1's `lock up`
 runs. It passes no `--profile`, mounts no profile and gives the consoles
 no terminal: lockfile (v0.4.0 requires `--profile`) and lockhttp (its
 console takes no `--hub`) refuse the generated command, and locksql
-v0.10.0 and lockmq v0.3.0 find no profile in their empty home volume. Use
-`lock up` from v0.2.0 on with any lock (see the v0.2.0 table).
+v0.10.0 and lockmq v0.3.0 refuse to run without a terminal (and would
+find no profile in their empty home volume). Use `lock up` from v0.2.0
+on with any lock (see the v0.2.0 table).
 
 ## v0.1.0 (2026-10-30)
 
 First release. Supported locks: images built on lockkit v0.3.0 (hub
 mode). lockkit v0.3.1 and later refuse the generated `http://lockhub:8443`
 hub URL without `--hub-plain-http`: use lockhub v0.1.1 with them.
+(v0.2.3: v0.1.1's `lock up` runs no lock as generated either, see its
+correction; use v0.2.0 or later.)
 
 - Telegram facade (#8): same rules as Slack, over long-polled
   `getUpdates` (outbound only). Answers count only from the (chat,
