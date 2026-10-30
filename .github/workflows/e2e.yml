@@ -3,7 +3,9 @@ name: e2e-lock-up
 # The hub plan's exit demos, end to end, with real images and Docker:
 # phase 1 (locksql's TestHubPhase1 against this lockhub), phase 2 (lock up
 # stack, a ticket approved through the facade socket, I2, I11) and
-# phase 5 (install.sh, lock add, lock up, lock import).
+# phase 5 (install.sh, lock add, lock up, lock import). Phases 2 and 5
+# run this commit's hub image (ci/e2e/local-hub.sh), not the latest
+# release that lock add pins.
 on:
   push:
     branches: [main]
@@ -60,6 +62,15 @@ jobs:
         with:
           cosign-release: v2.6.1
       - run: go build -o "$RUNNER_TEMP/bin/lock" ./cmd/lock
+      - name: this commit's hub image (containerd image store, cosign shim)
+        run: |
+          f=/etc/docker/daemon.json
+          { sudo cat "$f" 2>/dev/null || echo '{}'; } | jq '. + {features: ((.features // {}) + {"containerd-snapshotter": true})}' >"$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$f" && sudo systemctl restart docker
+          docker info -f '{{json .DriverStatus}}'
+          ref=$(sh ci/e2e/local-hub.sh "$RUNNER_TEMP/shim")
+          echo "E2E_HUB_IMAGE=$ref" >>"$GITHUB_ENV"
+          echo "$RUNNER_TEMP/shim" >>"$GITHUB_PATH"
       - name: phase 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,6 +97,15 @@ jobs:
         with:
           cosign-release: v2.6.1
       - run: sh scripts/release-cli.sh 0.0.0-e2e "$RUNNER_TEMP/dist"
+      - name: this commit's hub image (containerd image store, cosign shim)
+        run: |
+          f=/etc/docker/daemon.json
+          { sudo cat "$f" 2>/dev/null || echo '{}'; } | jq '. + {features: ((.features // {}) + {"containerd-snapshotter": true})}' >"$RUNNER_TEMP/daemon.json"
+          sudo cp "$RUNNER_TEMP/daemon.json" "$f" && sudo systemctl restart docker
+          docker info -f '{{json .DriverStatus}}'
+          ref=$(sh ci/e2e/local-hub.sh "$RUNNER_TEMP/shim")
+          echo "E2E_HUB_IMAGE=$ref" >>"$GITHUB_ENV"
+          echo "$RUNNER_TEMP/shim" >>"$GITHUB_PATH"
       - name: phase 5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
