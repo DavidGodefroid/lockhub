@@ -5,6 +5,33 @@ digest).
 
 ## Unreleased
 
+## v0.2.2 (2026-10-30)
+
+Supported locks: as v0.2.1. `lock add` now pins locksql v0.11.0 or later
+(it was v0.10.0): a locksql lock under `lock up` needs `LOCKSQL_PII_DIR`.
+lockhttp's `devices: true` is now wired, through lea's gate (lockhttp
+v0.4.0 or later, lea v0.3.0 or later); the v0.2.0 and v0.2.1 notes saying
+to leave it off no longer apply.
+
+- A locksql console keeps its PII rule sets in its own home volume
+  (`LOCKSQL_PII_DIR`, locksql v0.11.0): `lock up` no longer refuses a
+  `.locksql/` without a rule set, and the console writes its first set,
+  `pii add` and later proposals there, seeded once from the profile's
+  `.locksql/pii/` (#53, #41). `lock add` pins locksql v0.11.0 or later.
+- up.json says what lea's lockhttp gate pins (`"lockhttp_gate": 1`): the
+  paired devices (top-level `devices`) and, per lock, `devices`,
+  `require_device` and `seal_clear` as lock up passes them to its
+  consoles, beside `profile` and `reveal` (#51, #40). lea's gate asks the
+  hub only from `lockhttp_gate` 1 on (lea#209).
+- `devices: true` on a lockhttp lock goes to its gate (its console only
+  serves the policy), consistently in validation, docs and tests; when the
+  devices or what a gate pins change, `lock up` says to restart lea's gate
+  (#54, #46).
+- CI: e2e phase 2 runs a locksql lock against Postgres next to the two
+  LockHTTP locks: its first PII rule set is written in the console's
+  volume, and an approved query reaches the agent with the email masked
+  (#53).
+
 ## v0.2.1 (2026-10-30)
 
 Supported locks: as v0.2.0 (builds on lockkit v0.6.0), plus locksql
