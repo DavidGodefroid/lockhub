@@ -64,14 +64,15 @@ hub=$(sed -n 's/^  image: *//p' .lockfamily/lockfamily.yaml | head -1)
 img=$(sed -n '/^  first:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 # sub DIR ROUTING: a sub-project declaring the lock shared (and DIR-only),
 # with ROUTING ("" or "shared: [tty]") under hub.routing.
+# b is a legacy sub-project (lockfamily.yaml at its root, no .lockfamily).
 sub() {
-	mkdir -p "$1/.lockfamily"
+	if [ "$(basename "$1")" = b ]; then mkdir -p "$1"; out=$1/lockfamily.yaml; else mkdir -p "$1/.lockfamily"; out=$1/.lockfamily/lockfamily.yaml; fi
 	{
 		printf 'version: 1\nhub:\n  image: %s\n  facades: [tty, deck]\n' "$hub"
 		[ -z "$2" ] || printf '  routing:\n    %s\n' "$2"
 		printf 'locks:\n  shared:\n    type: %s\n    image: %s\n  %s-only:\n    type: %s\n    image: %s\n' \
 			"$LOCK_TYPE" "$img" "$(basename "$1")" "$LOCK_TYPE" "$img"
-	} >"$1/.lockfamily/lockfamily.yaml"
+	} >"$out"
 }
 for order in strict-first strict-last; do
 	imp=$(mktemp -d)/ws
