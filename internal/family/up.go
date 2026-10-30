@@ -685,7 +685,10 @@ func Routes(c *Config) route.Rules {
 	return r
 }
 
-// anyDevices reports whether a lock pins the paired devices.
+// anyDevices reports whether a lock pins the paired devices: a console
+// lock up runs (--devices-file), or a lockhttp lock, whose gate (lea's,
+// from up.json's devices; lockhttp v0.4.0 or later) pins them, since its
+// console only serves the policy.
 func (c *Config) anyDevices() bool {
 	for _, l := range c.Locks {
 		if l.Devices {

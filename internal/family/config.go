@@ -117,7 +117,8 @@ type Lock struct {
 	Profile string `yaml:"profile,omitempty"`
 	// Devices: the lock pins the paired phones (its image is on lockkit
 	// v0.4.0 or later and takes --devices-file). Without it, the lock
-	// refuses every decision taken on a phone.
+	// refuses every decision taken on a phone. For lockhttp, the pins are
+	// lea's gate's (up.json devices, lockhttp v0.4.0 or later, lea#209).
 	Devices bool `yaml:"devices,omitempty"`
 	// Reveal: the lock pins the host facades' keys (its image is on
 	// lockkit v0.5.0 or later and takes --facade-keys-file), so Ctrl-O on

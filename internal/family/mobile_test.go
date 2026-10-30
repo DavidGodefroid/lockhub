@@ -281,3 +281,38 @@ func TestUpJSONSaysWhatTheGatePins(t *testing.T) {
 		t.Errorf("events: %+v", ev)
 	}
 }
+
+// devices: true on a lockhttp lock alone is not ignored (lockhub#46): its
+// console gets no devices (it only serves the policy), its gate does,
+// through up.json, so hub.mobile's seal_clear and require_device are valid
+// for it and reach the gate.
+func TestLockhttpDevicesGoToTheGate(t *testing.T) {
+	conf := "version: 1\nhub:\n  image: " + hubImg + "\n" + mobileConf + "locks:\n  web:\n    type: lockhttp\n    image: " + httpImg + "\n    devices: true\n"
+	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	os.WriteFile(p, []byte(conf), 0o644)
+	if _, err := Load(p); err != nil {
+		t.Fatalf("a lockhttp lock alone pinning the devices: %v", err)
+	}
+	w := newWS(t, conf)
+	state := filepath.Join(w.dir, "state")
+	if err := PinDevice(state, devicetest.New("hub.example.net", "https://hub.example.net", "phone").Device()); err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	f.keys["web"] = pubKey()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if web := block(f.upCompose, "lock-web"); !strings.Contains(web, "console") || strings.Contains(web, "devices") {
+		t.Errorf("the lockhttp console got the devices:\n%s", web)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(w.file), UpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s UpState
+	json.Unmarshal(b, &s)
+	if l := s.Locks["web"]; !l.Devices || !l.SealClear || len(l.RequireDevice) != 2 || s.Devices == nil || len(s.Devices.Devices) != 1 {
+		t.Errorf("up.json does not give the gate its devices: %+v %+v", l, s.Devices)
+	}
+}

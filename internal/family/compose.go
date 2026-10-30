@@ -212,6 +212,8 @@ func Compose(c *Config, p Paths) string {
 		// logs: none, as the locks' own launchers.
 		w("    logging:")
 		w("      driver: none")
+		// A gate kind's console only serves the policy: its devices go to
+		// the gate (lea's), through up.json, not to the console.
 		fp, dev := p.Profiles[l.Type], p.DevicesID != "" && l.Devices && !k.Gate
 		if fp != "" || dev {
 			w("    labels:")
