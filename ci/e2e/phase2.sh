@@ -95,11 +95,16 @@ say "I2: no route from an agent to the hub"
 agent "http://lockhub:8443/v1/hello" && die "an agent reached the hub by name"
 agent "http://$hubip:8443/v1/hello" && die "an agent reached the hub by address"
 say "I2: not through the gate either"
-for u in "http://lockhub:8443/v1/hello" "http://$hubip:8443/v1/hello"; do
+# On the hub's port the gate's floor already refuses; on 80/443 it is the
+# hub's own name and network that the gate refuses (lockhttp#11).
+for u in "http://lockhub:8443/v1/hello" "http://$hubip:8443/v1/hello" "http://lockhub/v1/hello" "https://lockhub/v1/hello"; do
 	code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "$u" || true)
 	echo "$u via the gate: $code"
 	case "$code" in 2??) die "an agent reached the hub through the gate ($u)" ;; esac
 done
+
+docker logs "$gate" 2>&1 | grep '"host":"lockhub"' | grep '"port":80,' | grep -q '"decision":"refused"' ||
+	{ docker logs "$gate" 2>&1 | tail; die "the gate did not refuse the hub on port 80"; }
 
 say "a ticket, approved through the facade socket"
 # A write (a body the agent chose): the gate holds it and asks the hub.
@@ -109,7 +114,7 @@ ok=""
 for i in $(seq 1 30); do
 	sleep 2
 	tty 'y\n' "$lock" approve --once >approve.out 2>&1 || true
-	if tr -d '\r' <approve.out | grep -q '^approved'; then ok=1; break; fi
+	if tr -d '\r' <approve.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
 done
 cat approve.out
 if [ -z "$ok" ]; then
