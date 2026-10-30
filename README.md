@@ -81,7 +81,7 @@ mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
 hub's approvals from the other facades as before). The review names what each
 lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
 For a lockhttp lock, lea's gate pins the devices, which `lock up` hands it in
-`.lockfamily/up.json` (lockhttp v0.4.0 or later, a lea with lea#209); lea
+`.lockfamily/up.json` (lockhttp v0.4.0 or later, lea v0.3.0 or later); lea
 runs its standalone gate instead, and says why, when it cannot.
 Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
 lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lock

@@ -627,6 +627,22 @@ func (u *Up) Do(ctx context.Context) error {
 	// workspace's, checks it is the user's and that no one else can write
 	// it, and checks every volume's labels with docker before mounting it.
 	sb, _ := json.MarshalIndent(st, "", "  ")
+	// A gate kind's devices are lea's gate's, read at its start: a phone
+	// paired or revoked reaches it only once lea restarts it (lock up
+	// recreates only its own consoles).
+	var devNotes []string
+	var prevUp UpState
+	if pb, err := os.ReadFile(filepath.Join(u.State, UpFile)); err == nil && json.Unmarshal(pb, &prevUp) == nil {
+		ob, _ := json.Marshal(prevUp.Devices)
+		nb, _ := json.Marshal(st.Devices)
+		if string(ob) != string(nb) {
+			for _, n := range c.Instances() {
+				if l := c.Locks[n]; Kinds[l.Type].Gate && l.Devices {
+					devNotes = append(devNotes, fmt.Sprintf("lea's gate for %s reads the paired devices at its start: restart it (lea) to take the change", n))
+				}
+			}
+		}
+	}
 	if err := os.WriteFile(filepath.Join(u.State, UpFile), append(sb, '\n'), 0o600); err != nil {
 		return err
 	}
@@ -641,6 +657,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if Kinds[c.Locks[n].Type].Gate && (rot.hub || slices.Contains(rot.locks, n)) {
 			fmt.Fprintf(u.Out, "lea's gate for %s reads its keys at its start: restart it (lea) to take the new key\n", n)
 		}
+	}
+	for _, l := range devNotes {
+		fmt.Fprintln(u.Out, l)
 	}
 	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
 	for _, n := range c.Instances() {

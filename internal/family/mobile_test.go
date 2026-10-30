@@ -289,7 +289,9 @@ func TestUpJSONSaysWhatTheGatePins(t *testing.T) {
 func TestLockhttpDevicesGoToTheGate(t *testing.T) {
 	conf := "version: 1\nhub:\n  image: " + hubImg + "\n" + mobileConf + "locks:\n  web:\n    type: lockhttp\n    image: " + httpImg + "\n    devices: true\n"
 	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
-	os.WriteFile(p, []byte(conf), 0o644)
+	if err := os.WriteFile(p, []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Load(p); err != nil {
 		t.Fatalf("a lockhttp lock alone pinning the devices: %v", err)
 	}
@@ -311,8 +313,31 @@ func TestLockhttpDevicesGoToTheGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var s UpState
-	json.Unmarshal(b, &s)
-	if l := s.Locks["web"]; !l.Devices || !l.SealClear || len(l.RequireDevice) != 2 || s.Devices == nil || len(s.Devices.Devices) != 1 {
+	if err := json.Unmarshal(b, &s); err != nil {
+		t.Fatal(err)
+	}
+	if l := s.Locks["web"]; s.LockHTTPGate != 1 || !l.Devices || !l.SealClear || len(l.RequireDevice) != 2 || s.Devices == nil || len(s.Devices.Devices) != 1 {
 		t.Errorf("up.json does not give the gate its devices: %+v %+v", l, s.Devices)
 	}
+	// lea's gate reads them at its start: a second phone needs its
+	// restart, which lock up says; an unchanged set says nothing.
+	if err := PinDevice(state, devicetest.New("hub.example.net", "https://hub.example.net", "tablet").Device()); err != nil {
+		t.Fatal(err)
+	}
+	const restart = "lea's gate for web reads the paired devices at its start: restart it (lea)"
+	if out, err := w.up("y\n", refake(f)); err != nil || !strings.Contains(out, restart) {
+		t.Fatalf("a device paired, no restart notice: %v\n%s", err, out)
+	}
+	if out, err := w.up("y\n", refake(f)); err != nil || strings.Contains(out, restart) {
+		t.Fatalf("nothing changed, yet a restart notice: %v\n%s", err, out)
+	}
+}
+
+// refake is a new fake for a second lock up, with f's keys.
+func refake(f *fake) *fake {
+	g := newFake()
+	for k, v := range f.keys {
+		g.keys[k] = v
+	}
+	return g
 }
