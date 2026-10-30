@@ -20,11 +20,13 @@ Upgrade notes (behaviour changes):
   every facade (#64). Upgrade the `lock` CLI with the hub: an older `lock
   approve` (v0.2.2 or older) is refused on production tickets by this
   hub, and this `lock approve` is refused by an older hub on a ticket
-  whose `flags.retype` is set. An older lea deck (a lea daemon v0.3.1 or
-  older) can no longer approve production tickets through this hub: use
-  this release's `lock approve` or the phone, or a lea release with
-  DavidGodefroid/lea#222 (planned for lea v0.3.2). A phone page left open
-  needs a reload to show the field.
+  whose `flags.retype` is set. An older lea deck (lea v0.3.1 or older)
+  asks for `flags.retype`, which this hub refuses, so it no longer
+  approves production tickets as it prompts: use this release's `lock
+  approve` or the phone (where it is routed), or a lea release with
+  DavidGodefroid/lea#222 (planned for lea v0.3.2); likewise, a lea with
+  lea#222 needs this hub for tickets whose `flags.retype` is set. A phone
+  page left open needs a reload to show the field.
 - Routing: a hub without `routing.json`, or with one that lists no
   `facades`, no longer routes anything to Slack or Telegram (#61). Under
   `lock up` nothing changes (it always writes `facades`); a hand-run hub
@@ -386,8 +388,8 @@ on with any lock (see the v0.2.0 table).
 First release. Supported locks: images built on lockkit v0.3.0 (hub
 mode). lockkit v0.3.1 and later refuse the generated `http://lockhub:8443`
 hub URL without `--hub-plain-http`: use lockhub v0.1.1 with them.
-(v0.2.3: v0.1.1's `lock up` runs no lock as generated either, see its
-correction; use v0.2.0 or later.)
+(v0.2.3: neither this release's nor v0.1.1's `lock up` runs a released
+lock as generated, see the v0.1.1 correction; use v0.2.0 or later.)
 
 - Telegram facade (#8): same rules as Slack, over long-polled
   `getUpdates` (outbound only). Answers count only from the (chat,
