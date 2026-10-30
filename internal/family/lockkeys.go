@@ -124,13 +124,17 @@ func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, err
 		}
 	}
 	for _, ps := range byKey {
-		for _, p := range ps[1:] {
-			if p.inst != ps[0].inst {
-				bad[p.inst], bad[ps[0].inst] = true, true
-				warns = append(warns, fmt.Sprintf("lock instances %s (%s) and %s (%s) share a key: clear values of their tickets cannot be shown; give each its own lock home, or delete the file of a workspace that no longer exists", ps[0].inst, ps[0].where(), p.inst, p.where()))
-				break
-			}
+		if !slices.ContainsFunc(ps[1:], func(p pinned) bool { return p.inst != ps[0].inst }) {
+			continue
 		}
+		// Every instance on the key is left out, however many share it.
+		var names []string
+		for _, p := range ps {
+			bad[p.inst] = true
+			names = append(names, p.inst+" in "+p.where())
+		}
+		slices.Sort(names)
+		warns = append(warns, fmt.Sprintf("lock instances %s share a key: clear values of their tickets cannot be shown; give each its own lock home, or delete the file of a workspace that no longer exists", strings.Join(names, ", ")))
 	}
 	union := lockKeysFile{Locks: map[string]lockKey{}}
 	for n, ps := range byName {

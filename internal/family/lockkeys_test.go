@@ -62,6 +62,16 @@ func TestPinLockKeysUnion(t *testing.T) {
 	if lk, err := keys.LoadLocks(filepath.Join(dir, LockKeysFile)); err == nil {
 		t.Fatalf("a shared key reached the union: %v", lk)
 	}
+	// Three instances on one key: all three left out.
+	if _, err := pinLockKeys(dir, "lockfamily-cccc", "/ws/c", map[string]string{"web": a}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, LockKeysFile)); strings.Contains(string(b), a) {
+		t.Fatalf("a key three instances share reached the union: %s", b)
+	}
+	if _, err := pinLockKeys(dir, "lockfamily-cccc", "/ws/c", nil); err != nil {
+		t.Fatal(err)
+	}
 	// Workspace b re-applied without locks: its file goes, a's keys stay.
 	if w, err := pinLockKeys(dir, "lockfamily-bbbb", "/ws/b", nil); err != nil || len(w) != 0 {
 		t.Fatal(w, err)
