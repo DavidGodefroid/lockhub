@@ -27,8 +27,9 @@ type LockReport struct {
 	Instance string
 	// Records and Legacy are lockkit's Summary (Legacy: lines from before
 	// the chain); HubDecisions the records of a hub decision, Unsigned
-	// those of them without the hub's signature (locksql does not record
-	// it yet: checked on ticket, outcome, approver and facade only);
+	// those of them without the hub's signature (locksql before v0.11.1
+	// does not record it: checked on ticket, outcome, approver and facade
+	// only);
 	// Unrecorded the hub's decisions for the instance the log has no
 	// record of (decided, not yet acted on, or cut from the log).
 	Records, Legacy, HubDecisions, Unsigned, Unrecorded int
