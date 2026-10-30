@@ -18,6 +18,8 @@ type AddOptions struct {
 	Image string
 	// HubImage starts a fresh lockfamily.yaml; ignored when one exists.
 	HubImage string
+	// Profile is the lock's profile (optional, see Lock.Profile).
+	Profile string
 }
 
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
@@ -29,6 +31,9 @@ func Add(path string, o AddOptions) error {
 	if errors.Is(err, os.ErrNotExist) {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
+		}
+		if err := ensureDir(path); err != nil {
+			return err
 		}
 		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
@@ -54,6 +59,9 @@ func Add(path string, o AddOptions) error {
 	}
 	kv("type", o.Type, "!!str")
 	kv("image", o.Image, "!!str")
+	if o.Profile != "" {
+		kv("profile", o.Profile, "!!str")
+	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)
 	if err != nil {
@@ -109,9 +117,14 @@ func encodeValid(doc *yaml.Node) ([]byte, *Config, error) {
 // a lockfamily.yaml.
 func writeFile(path string, b []byte) error {
 	mode := os.FileMode(0o644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
+		mode = fi.Mode().Perm() &^ 0o022
 	}
+	return writeFileMode(path, b, mode)
+}
+
+// writeFileMode is writeFile with the mode given.
+func writeFileMode(path string, b []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".lockfamily-*.yaml")
 	if err != nil {
 		return err
