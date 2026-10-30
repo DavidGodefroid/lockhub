@@ -45,6 +45,7 @@ jobs:
           set -o pipefail
           go test -tags integration -count=1 -timeout 20m -run '^TestHubPhase1$' -v ./test/integration | tee phase1.out
           ! grep -q -- '--- SKIP' phase1.out
+          grep -q '^--- PASS: TestHubPhase1 ' phase1.out
 
   phase2:
     name: e2e phase 2 (lock up, facade approval, I2, I11)

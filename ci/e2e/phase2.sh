@@ -25,7 +25,7 @@ cleanup() {
 	fi
 	docker network rm "$agents" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 say "lock add: each lock pinned to its latest signed release"
 for l in $LOCKS; do
@@ -53,6 +53,13 @@ deny = []
 host = "lockhub"
 ports = [80, 443, 8443]
 read = true
+
+# Another name of the hub on its network (an alias lock up never made):
+# only the hub-network rule (--hub-net) can refuse it.
+[[profiles.default.internal_hosts]]
+host = "e2ehubalias"
+ports = [8443]
+read = true
 TOML
 chmod 0644 .lockhttp/config.toml
 # A subdirectory and an owner-only file: the copy keeps both.
@@ -72,7 +79,8 @@ say "each console asks its policy at its terminal: lock attach"
 for l in $LOCKS; do
 	n=${l%%:*}
 	# y to the policy, then detach (Ctrl-P Ctrl-Q).
-	(sleep 3; printf 'y\n'; sleep 8; printf '\020\021') | timeout 60 script -qefc "$lock attach $n" /dev/null || true
+	(sleep 3; printf 'y\n'; sleep 8; printf '\020\021') | timeout 60 script -qefc "$lock attach $n" /dev/null >attach.out 2>&1 || true
+	grep -q 'approved policy' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 done
 sleep 5
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps
@@ -117,6 +125,15 @@ for u in "http://lockhub:8443/v1/hello" "http://lockhub/v1/hello"; do
 	echo "$u via the gate: $code"
 	[ "$code" = 403 ] || die "the gate did not refuse $u ($code)"
 done
+# By another name resolving into the hub's network: the --hub-net rule.
+docker network disconnect "$hubnet" "${p}-lockhub-1"
+docker network connect --alias e2ehubalias "$hubnet" "${p}-lockhub-1"
+docker run --rm --network "$hubnet" curlimages/curl:8.11.1 -sS -m 10 -o /dev/null -w '%{http_code}\n' "http://e2ehubalias:8443/v1/hello" | grep -qx 200 ||
+	die "the alias does not reach the hub on its network"
+code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "http://e2ehubalias:8443/v1/hello" || true)
+echo "http://e2ehubalias:8443/v1/hello via the gate: $code"
+[ "$code" = 403 ] || die "the gate did not refuse the hub's alias ($code)"
+docker logs "$gate" 2>&1 | grep '"host":"e2ehubalias"' | grep -q '"rule":"floor:hub"' || die "the alias was not refused by the hub rule"
 code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "https://lockhub:8443/v1/hello" 2>&1 || true)
 echo "CONNECT lockhub:8443 via the gate: $code"
 case "$code" in *200*) die "the gate opened a tunnel to the hub" ;; esac
@@ -149,7 +166,8 @@ cat curl.out
 # is that the gate let it out (not 403/E_DENIED or 5xx of the gate).
 code=$(tr -d '\r' <curl.out | tail -1)
 case "$code" in 2??|3??|404|405|411) ;; *) docker logs "$gate" 2>&1 | tail -20; die "the approved request did not pass ($code)" ;; esac
-"$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub"
+"$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" | tee audit.out
+grep -q ' 1 decisions signed' audit.out || die "the approval is not in the hub's audit"
 
 say "I11 (the mount lea makes): .lockfamily read-only in a container"
 docker run --rm --user "$(id -u):$(id -g)" -v "$ws:$ws" -v "$ws/.lockfamily:$ws/.lockfamily:ro" alpine:3.22 \
@@ -162,9 +180,10 @@ cat up2.out | tr -d '\r' | grep -v 'Pull\|Running\|Creat' | tail -20
 grep -q "+ lock extra" up2.out || die "the change was not shown"
 grep -q 'not applied' up2.out || die "the change was applied without a yes"
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --services | grep -qx lock-extra && die "lock-extra runs without a yes"
-say "lock up again, confirmed: the setup services run again on volumes that are the console's now"
+say "lock up again, confirmed: the setup services run again on volumes that are the console's now (copy re-owned by the console, modes kept)"
 tty 'y\n' "$lock" up >up3.out 2>&1 || { tail -20 up3.out; die "a second lock up failed"; }
 grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lock up did not finish"; }
 docker run --rm --network none -v "${p}_profile-lockhttp:/p:ro" alpine:3.22 stat -c '%n %u:%g %a' /p/notes /p/notes/n.txt | tee st.out
-grep -q '/p/notes/n.txt 10021:10020 600' st.out || die "the profile copy lost its owner or mode"
+grep -q '/p/notes 10021:10020 700' st.out && grep -q '/p/notes/n.txt 10021:10020 600' st.out ||
+	die "the profile copy is not the console's, or lost its owner-only modes"
 echo "phase 2: OK"

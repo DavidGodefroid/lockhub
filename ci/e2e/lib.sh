@@ -1,5 +1,5 @@
-# Helpers of the lock up end-to-end scripts (sourced). Every resource they
-# create is named after E2E_ID, and only those are removed.
+# Helpers of the lock up end-to-end scripts (sourced). The scripts remove
+# only what they create: their compose project, gate and network.
 set -eu
 E2E_ID=${E2E_ID:-e2e$$}
 say() { printf '\n=== %s\n' "$*"; }

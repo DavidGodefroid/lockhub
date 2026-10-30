@@ -38,7 +38,7 @@ cleanup() {
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 say "lock add ${LOCK_TYPE:=lockhttp} (latest signed release)"
 "$lock" add "$LOCK_TYPE" first | tee add.out
