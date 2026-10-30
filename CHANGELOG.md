@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+- CI: workflow e2e-lock-up runs the hub plan's phase 1 (locksql's
+  TestHubPhase1 against this tree), phase 2 (lock up, lock attach, a
+  ticket approved through the facade socket, I2 directly and through a
+  LockHTTP gate, I11, a second lock up) and phase 5 (install.sh, lock add,
+  lock up, lock import) end to end with released images.
+- Note for upgrades: lock up now resolves the workspace's links, so a
+  workspace opened through a symbolic link gets a new project (and state):
+  its first lock up is a full review again.
+
 Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
 start with the generated commands. Reveals and renewals need locks built on
 lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
