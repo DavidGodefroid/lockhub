@@ -189,7 +189,9 @@ async function login() {
       // Not (yet) confirmed at the host: kept until it is, or until a new
       // pairing replaces it.
       if (!(await getKey("device"))) throw new Error(e.kind === "assertion" ? "This phone is not confirmed on the host yet: answer y there, or pair again." : e.message);
-      note = "A newer pairing of this phone is not confirmed on the host yet.";
+      // Only the hub's refusal says the host did not confirm it; another
+      // failure (the authenticator's, the network's) says nothing of that.
+      note = e.kind === "assertion" ? "A newer pairing of this phone is not confirmed on the host yet." : "The newer pairing of this phone did not sign in: " + e.message;
     }
   }
   if (!r) {
