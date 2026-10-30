@@ -199,7 +199,7 @@ func (u *Up) Do(ctx context.Context) error {
 
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
-	sum := Summary(c, hp, lockPubs)
+	sum := append(Summary(c, hp, lockPubs), chatTokens(c, hubData)...)
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")
 	var prev Applied
