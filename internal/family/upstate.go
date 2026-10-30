@@ -3,6 +3,8 @@ package family
 import (
 	"encoding/json"
 	"path/filepath"
+
+	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
 // UpFile is the name of what lock up tells lea, in the workspace's
@@ -18,12 +20,18 @@ const UpFile = "up.json"
 // asks the hub at HubURL with HubKey pinned, and only lea's proxy joins
 // HubNetwork.
 type UpState struct {
-	Version    int               `json:"version"`
-	Project    string            `json:"project"`
-	Workspace  string            `json:"workspace"`
-	HubNetwork string            `json:"hub_network"`
-	HubURL     string            `json:"hub_url"`
-	HubKey     string            `json:"hub_key"`
+	Version    int    `json:"version"`
+	Project    string `json:"project"`
+	Workspace  string `json:"workspace"`
+	HubNetwork string `json:"hub_network"`
+	HubURL     string `json:"hub_url"`
+	HubKey     string `json:"hub_key"`
+	// FacadeKeys are the host facades' keys the locks pin (lockkit
+	// ticket.FacadeSet, public keys only): lea's lockhttp gate writes
+	// them to a read-only file of its own and passes --facade-keys-file,
+	// as lock up does for the consoles it runs. Absent before the first
+	// apply.
+	FacadeKeys *ticket.FacadeSet `json:"facade_keys,omitempty"`
 	Locks      map[string]UpLock `json:"locks"`
 }
 

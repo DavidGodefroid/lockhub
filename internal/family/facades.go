@@ -60,16 +60,22 @@ func EnsureFacadeKeys(dir string) (map[string]string, error) {
 	return out, nil
 }
 
-// writeFacadeSet writes the facade keys locks pin. It holds public keys
-// only and is mounted in the locks, so it is world-readable, like the
-// hub's public key.
-func writeFacadeSet(path string, pubs map[string]string) error {
+// facadeSet is the FacadeSet of pubs, in HostFacades order.
+func facadeSet(pubs map[string]string) ticket.FacadeSet {
 	fs := ticket.FacadeSet{V: ticket.Version, Facades: []ticket.FacadeKey{}}
 	for _, f := range HostFacades {
 		if k, ok := pubs[f]; ok {
 			fs.Facades = append(fs.Facades, ticket.FacadeKey{Facade: f, Key: k})
 		}
 	}
+	return fs
+}
+
+// writeFacadeSet writes the facade keys locks pin. It holds public keys
+// only and is mounted in the locks, so it is world-readable, like the
+// hub's public key.
+func writeFacadeSet(path string, pubs map[string]string) error {
+	fs := facadeSet(pubs)
 	b, err := json.MarshalIndent(fs, "", "  ")
 	if err != nil {
 		return err

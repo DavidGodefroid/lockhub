@@ -39,6 +39,7 @@ project and state.
   "hub_network": "lockfamily-1a2b3c4d_lockhub",
   "hub_url": "http://lockhub:8443",
   "hub_key": "<base64 Ed25519 public key>",
+  "facade_keys": {"v": 1, "facades": [{"facade": "tty", "key": "<base64>"}, {"facade": "deck", "key": "<base64>"}]},
   "locks": {
     "crm": {"type": "locksql", "socket_volume": "lockfamily-1a2b3c4d_crm-run", "client_gid": "10000"},
     "web": {"type": "lockhttp", "socket_volume": "lockfamily-1a2b3c4d_web-run",
@@ -63,10 +64,13 @@ a type it has switched on:
 
 For a lockhttp instance, lea's gate (beside lea's proxy) mounts the socket
 volume on `/run/lockhttp` and the volume of role `gate-home` as its
-`--home`, writes `hub_key` to its own read-only input, joins **only the
-proxy** to `hub_network`, and runs `lockhttp gate --hub <hub_url>
---hub-plain-http --hub-key-file … --instance <name> --home … --hub-net
-<the network's subnet>`. The gate refuses the hub's addresses as targets,
+`--home`, writes `hub_key` and `facade_keys` (the host facades' public keys,
+which every console lock up runs pins at `/run/lockfamily-facades/facades.json`)
+to its own read-only inputs, joins **only the proxy** to `hub_network`, and runs
+`lockhttp gate --hub <hub_url> --hub-plain-http --hub-key-file …
+--facade-keys-file … --instance <name> --home … --hub-net <the network's
+subnet>` (or `LOCKHTTP_FACADE_KEYS_FILE`): a reveal (Ctrl-O) is sealed only to
+an ephemeral key one of those facade keys signed. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
 

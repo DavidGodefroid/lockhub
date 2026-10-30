@@ -442,6 +442,8 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	st := NewUpState(c, project, ws, hp)
+	fs := facadeSet(facadePubs)
+	st.FacadeKeys = &fs
 	// The authoritative copy is lock up's own (host only); lea reads the
 	// workspace's, checks it is the user's and that no one else can write
 	// it, and checks every volume's labels with docker before mounting it.

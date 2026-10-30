@@ -153,7 +153,9 @@ could not check them now) are shown as such, and never allow one click.
     (`facade tty key …`), mounts their public halves read-only in every lock
     at `/run/lockfamily-facades/facades.json` with `--facade-keys-file`, and keeps a
     host-only copy of the pinned lock keys there for facades to verify a
-    lock's answers.
+    lock's answers. up.json carries the same set (`facade_keys`) for lea's
+    lockhttp gate (`--facade-keys-file`, lockhttp#16), which lock up does
+    not run.
   - `lock approve`: `o` reveals (Ctrl-O too where the terminal passes it;
     macOS keeps ^O), clearly marked and escaped; `r` on an expired ticket
     approves it again; a renewal shows what changed.
