@@ -5,12 +5,28 @@ digest).
 
 ## Unreleased
 
+## v0.2.3 (2026-10-30)
+
 Supported locks: as v0.2.2, plus locksql v0.11.1 (lockkit v0.7.1), the
 first locksql whose audit records of hub decisions carry `hub_sig`
 (locksql#118, locksql#133, locksql#137): `lock audit verify --lock` checks
 its approvals, denials and renewals of approved tickets against the hub's
 signed decisions (older locksql records approvals unsigned, and does not
 record denials or renewals, which show as decisions not in the log).
+
+Upgrade notes (behaviour changes):
+
+- Production tickets: approving one now needs its instance name typed on
+  every facade (#64). An older lea deck (a lea daemon v0.3.1 or older)
+  can no longer approve production tickets through this hub: use `lock
+  approve` or the phone, or a lea release with DavidGodefroid/lea#222
+  (planned for lea v0.3.2).
+- Routing: a hub without `routing.json`, or with one that lists no
+  `facades`, no longer routes anything to Slack or Telegram (#61). Under
+  `lock up` nothing changes (it always writes `facades`); a hand-run hub
+  must list its chat facades.
+
+Changes:
 
 - Every production ticket needs its instance name typed to be approved,
   on every facade that may answer it: `lock approve`, the deck and the
@@ -349,6 +365,13 @@ Supported locks: images built on lockkit v0.3.1 (tested), such as the
 first locksql, lockfile, lockmq and lockhttp releases with hub mode. Locks built
 on lockkit v0.3.0 do not know `--hub-plain-http` and refuse the generated
 command.
+
+Correction (v0.2.3): this overstated lockfile and lockmq. v0.1.1's `lock
+up` passes no `--profile` and mounts no profile, so a lockfile console
+(v0.4.0 requires `--profile`) refuses the generated command, and a lockmq
+console (v0.3.0) finds no profile to serve in its empty home volume. `lock
+up` runs lockfile and lockmq from v0.2.0 on (lockfile v0.4.0, lockmq
+v0.3.0 or later; see the v0.2.0 table).
 
 - The generated lock command passes `--hub-plain-http` (#20): lockkit
   refuses an http:// hub without it (DavidGodefroid/lockkit#72), and the
