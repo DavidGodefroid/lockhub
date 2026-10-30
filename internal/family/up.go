@@ -635,11 +635,14 @@ func (u *Up) Do(ctx context.Context) error {
 	if pb, err := os.ReadFile(filepath.Join(u.State, UpFile)); err == nil && json.Unmarshal(pb, &prevUp) == nil {
 		ob, _ := json.Marshal(prevUp.Devices)
 		nb, _ := json.Marshal(st.Devices)
-		if string(ob) != string(nb) {
-			for _, n := range c.Instances() {
-				if l := c.Locks[n]; Kinds[l.Type].Gate && l.Devices {
-					devNotes = append(devNotes, fmt.Sprintf("lea's gate for %s reads the paired devices at its start: restart it (lea) to take the change", n))
-				}
+		for _, n := range c.Instances() {
+			l, o, nl := c.Locks[n], prevUp.Locks[n], st.Locks[n]
+			if !Kinds[l.Type].Gate {
+				continue
+			}
+			pins := o.Devices != nl.Devices || o.SealClear != nl.SealClear || !slices.Equal(o.RequireDevice, nl.RequireDevice)
+			if pins || (l.Devices && string(ob) != string(nb)) {
+				devNotes = append(devNotes, fmt.Sprintf("lea's gate for %s reads the paired devices and what it pins at its start: restart it (lea) to take the change", n))
 			}
 		}
 	}

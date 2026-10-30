@@ -324,7 +324,7 @@ func TestLockhttpDevicesGoToTheGate(t *testing.T) {
 	if err := PinDevice(state, devicetest.New("hub.example.net", "https://hub.example.net", "tablet").Device()); err != nil {
 		t.Fatal(err)
 	}
-	const restart = "lea's gate for web reads the paired devices at its start: restart it (lea)"
+	const restart = "lea's gate for web reads the paired devices and what it pins at its start: restart it (lea)"
 	if out, err := w.up("y\n", refake(f)); err != nil || !strings.Contains(out, restart) {
 		t.Fatalf("a device paired, no restart notice: %v\n%s", err, out)
 	}
