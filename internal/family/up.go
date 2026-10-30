@@ -329,6 +329,17 @@ func (u *Up) Do(ctx context.Context) error {
 			u.Run.Run(context.WithoutCancel(ctx), composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "rotkey-"+n, "clear")...)
 		}
 	}()
+	// A hub image without rotate-key cannot rotate, and refuses a log
+	// whose key was rotated: found out now, not with the hub stopped.
+	if hk, _ := readHubKeys(u.State); rot.hub || (pinned && len(hk) > 1) {
+		help, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "help")...)
+		if err != nil || !strings.Contains(string(help), "rotate-key") {
+			if rot.hub {
+				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key (%v): lock up --pin a newer lockhub first", c.Hub.Image, err)
+			}
+			return fmt.Errorf("--pin: %s predates hub key rotation and would refuse this hub's audit log (its key was rotated)", c.Hub.Image)
+		}
+	}
 	hubRotated := false // a rotation that stopped after the hub took the key
 	if rot.hub {
 		nk, done, err := u.stageHubKey(ctx, composeYAML, compose, stage)
@@ -337,6 +348,17 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 		if nk == hp && !done {
 			return errors.New("new hub key: lockhub keygen made the current key")
+		}
+		if done {
+			// Ask the hub which key it holds, rather than trust the
+			// stage's markers.
+			out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "pubkey", "--data", "/var/lib/lockhub")...)
+			if err != nil {
+				return fmt.Errorf("hub key rotation: reading the hub's key: %w", err)
+			}
+			if got := strings.TrimSpace(string(out)); got != nk {
+				return fmt.Errorf("hub key rotation: the hub holds %q, not the staged key %s (the hub stays stopped; look at %s)", got, nk, stage)
+			}
 		}
 		hp, hubRotated = nk, done
 	}

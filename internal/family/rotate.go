@@ -268,7 +268,9 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 			if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("stop", "lockhub")...); err != nil {
 				return fmt.Errorf("hub key rotation: stopping the hub: %w", err)
 			}
-			if err := os.WriteFile(attempted, nil, 0o600); err != nil {
+			// Durable before the hub's key can change: a lock up after a
+			// crash then knows a rotation is under way.
+			if err := writeDurable(attempted, nil); err != nil {
 				return err
 			}
 			out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "rotate-key", "--data", "/var/lib/lockhub", "--new", "/var/lib/lockhub/rotate/hub.key")...)
@@ -279,7 +281,7 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 				return fmt.Errorf("hub key rotation: the hub took %q, not the reviewed key (the hub stays stopped)", strings.TrimSpace(string(out)))
 			}
 		}
-		if err := os.WriteFile(filepath.Join(u.State, "hub.pub"), []byte(hp+"\n"), 0o644); err != nil {
+		if err := writeFileMode(filepath.Join(u.State, "hub.pub"), []byte(hp+"\n"), 0o644); err != nil {
 			return err
 		}
 		if err := writeHubKeys(u.State, hp); err != nil {
@@ -295,4 +297,28 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 		}
 	}
 	return nil
+}
+
+// writeDurable creates path with b, synced with its directory.
+func writeDurable(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

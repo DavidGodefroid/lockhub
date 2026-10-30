@@ -163,10 +163,14 @@ before the review, which shows each key line that changes; declined (or
 - A restarted console asks again for what it does not take from Vault
   (`lock attach`).
 
+Before the review, lock up checks the hub image has `rotate-key` (and
+refuses a `--pin` to an image without it once the hub key was rotated: it
+would refuse the log). `rotate-key` takes the data directory's lock
+(`hub.lock`, which a running hub holds), so it never runs beside a hub.
 If the hub's rotation stops halfway, the hub stays stopped (no lock
 executes anything) and lock up refuses to start it until `lock up
 --rotate hub` is run again, which finishes the same rotation with the same
-new key.
+new key, after asking the hub which key it holds (`lockhub pubkey`).
 
 `hub-keys.pub` in the state directory lists every hub key, oldest first,
 the current one last. `lock audit verify --hub-key-file` takes it (a file

@@ -335,3 +335,45 @@ func TestRotateKey(t *testing.T) {
 		t.Errorf("same key: %v", err)
 	}
 }
+
+func TestRotateKeyRefusesLiveHub(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	out.Reset()
+	if code := run(context.Background(), []string{"pubkey", "--data", data}, &out, &errb); code != 0 || strings.TrimSpace(out.String()) == "" {
+		t.Fatalf("pubkey = %d %q", code, out.String())
+	}
+	cur := strings.TrimSpace(out.String())
+	os.Mkdir(filepath.Join(data, "rotate"), 0o700)
+	if _, err := keys.Generate(filepath.Join(data, "rotate", "hub.key")); err != nil {
+		t.Fatal(err)
+	}
+	_, closeHub, err := openHub(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotateKey(data, filepath.Join(data, "rotate", "hub.key")); err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Errorf("rotated next to a live hub: %v", err)
+	}
+	if _, _, err := openHub(data); err == nil {
+		t.Error("two hubs on one data directory")
+	}
+	closeHub()
+	out.Reset()
+	run(context.Background(), []string{"pubkey", "--data", data}, &out, &errb)
+	if strings.TrimSpace(out.String()) != cur {
+		t.Error("key changed by a refused rotation")
+	}
+	if _, err := rotateKey(data, filepath.Join(data, "rotate", "hub.key")); err != nil {
+		t.Errorf("rotation once stopped: %v", err)
+	}
+	// Run again once done: the staged key is gone.
+	if _, err := rotateKey(data, filepath.Join(data, "rotate", "hub.key")); err == nil {
+		t.Error("second rotation without a staged key")
+	}
+}

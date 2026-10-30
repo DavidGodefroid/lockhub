@@ -51,6 +51,7 @@ Usage:
                                                and the mobile web app on its own listener, reached through
                                                the human's TLS reverse proxy or tunnel at URL
   lockhub keygen [--data DIR]                  create the hub's signing key, print its public half
+  lockhub pubkey [--data DIR]                  print the public half of the hub's signing key
   lockhub rotate-key --new FILE [--data DIR]   hand the stopped hub over to the key FILE (made by keygen):
                                                logged, signed by both keys; print the new public half
   lockhub version                              print the version
@@ -79,6 +80,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return keygen(args[1:], stdout, stderr)
 	case "rotate-key":
 		return rotateKeyCmd(args[1:], stdout, stderr)
+	case "pubkey":
+		return pubkeyCmd(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lockhub: unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -102,6 +105,47 @@ func keygen(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, keys.Public(pub))
 	return 0
+}
+
+func pubkeyCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("pubkey", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	data := fs.String("data", "/var/lib/lockhub", "the hub's data directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	k, err := keys.Load(filepath.Join(*data, "hub.key"))
+	if err != nil {
+		fmt.Fprintln(stderr, "lockhub pubkey:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, keys.Public(k.Public().(ed25519.PublicKey)))
+	return 0
+}
+
+// lockData takes the data directory's lock (hub.lock): one hub, or one
+// rotate-key, at a time on a data directory. It is released when the
+// process exits, or by the function returned.
+func lockData(data string) (func(), error) {
+	f, err := os.OpenFile(filepath.Join(data, "hub.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("%s is in use by another hub or rotate-key (%v): stop it first", data, err)
+	}
+	return func() { f.Close() }, nil
+}
+
+// syncDir makes the renames in dir durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func rotateKeyCmd(args []string, stdout, stderr io.Writer) int {
@@ -133,6 +177,11 @@ func rotateKeyCmd(args []string, stdout, stderr io.Writer) int {
 // again after a crash, it finishes the same rotation: a rotation the log
 // already has is not appended twice.
 func rotateKey(data, next string) (ed25519.PublicKey, error) {
+	unlock, err := lockData(data)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	keyPath := filepath.Join(data, "hub.key")
 	cur, err := keys.Load(keyPath)
 	if err != nil {
@@ -166,7 +215,7 @@ func rotateKey(data, next string) (ed25519.PublicKey, error) {
 	if !done {
 		// The outbox is flushed under the current key (openHubLog), so
 		// that no row signed by it is left for the new one to refuse.
-		_, al, closeHub, err := openHubLog(data)
+		_, al, closeHub, err := openHubLocked(data)
 		if err != nil {
 			return nil, err
 		}
@@ -176,15 +225,19 @@ func rotateKey(data, next string) (ed25519.PublicKey, error) {
 			return nil, fmt.Errorf("audit log: %w", err)
 		}
 	}
+	// The old key is listed (durably) before hub.key changes: the hub
+	// never holds a key whose log it cannot verify.
 	if err := writeSynced(filepath.Join(data, keys.RetiredFile), keys.FormatPublics(append(slices.Clip(retired), curPub)), 0o644); err != nil {
+		return nil, err
+	}
+	if err := syncDir(data); err != nil {
 		return nil, err
 	}
 	if err := os.Rename(next, keyPath); err != nil {
 		return nil, err
 	}
-	if d, err := os.Open(data); err == nil {
-		d.Sync()
-		d.Close()
+	if err := syncDir(data); err != nil {
+		return nil, err
 	}
 	return nextPub, nil
 }
@@ -222,8 +275,23 @@ func openHub(data string) (*hub.Hub, func(), error) {
 	return h, closeHub, err
 }
 
-// openHubLog is openHub that also returns the audit log.
+// openHubLog is openHub that also returns the audit log. It holds the
+// data directory's lock until closed.
 func openHubLog(data string) (*hub.Hub, *audit.Log, func(), error) {
+	unlock, err := lockData(data)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	h, al, closeHub, err := openHubLocked(data)
+	if err != nil {
+		unlock()
+		return nil, nil, nil, err
+	}
+	return h, al, func() { closeHub(); unlock() }, nil
+}
+
+// openHubLocked is openHubLog with the lock already held.
+func openHubLocked(data string) (*hub.Hub, *audit.Log, func(), error) {
 	if codec == nil {
 		return nil, nil, nil, errors.New("built without a ticket codec")
 	}

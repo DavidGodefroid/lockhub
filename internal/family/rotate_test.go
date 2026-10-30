@@ -249,3 +249,62 @@ func TestParseRotate(t *testing.T) {
 		t.Error("ambiguous hub accepted")
 	}
 }
+
+// A rotation whose hub took the key before lock up stopped: finished
+// once the hub says it holds the staged key, refused otherwise.
+func TestRotateHubResumeAsksTheHub(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(w.dir, "state")
+	f.keys["hub/new"] = pubKey()
+	if _, err := upWith(w, "y\n", &fake{keys: f.keys, failing: "rotate-key"}, "", "hub"); err == nil {
+		t.Fatal("rotation did not fail")
+	}
+	// The hub's rename happened (no staged key left), lock up did not see it.
+	f.keys["hub/held"] = pubKey()
+	f2 := &fake{keys: f.keys}
+	if _, err := upWith(w, "y\n", f2, "", "hub"); err == nil || !strings.Contains(err.Error(), "not the staged key") || f2.ran("up -d") {
+		t.Errorf("hub holding another key: %v", err)
+	}
+	f.keys["hub/held"] = f.keys["hub/new"]
+	f3 := &fake{keys: f.keys}
+	out, err := upWith(w, "y\n", f3, "", "hub")
+	if err != nil || f3.ran("rotate-key") || f3.ran("stop lockhub") {
+		t.Fatalf("resume: %v %v\n%s", err, f3.calls, out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(state, "hub.pub")); strings.TrimSpace(string(b)) != f.keys["hub/new"] {
+		t.Errorf("hub.pub %s", b)
+	}
+}
+
+// A hub image without rotate-key is found out before anything stops; a
+// pin to such an image is refused once the hub key was rotated.
+func TestRotateNeedsRotateKeyImage(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	f.keys["hub/new"] = pubKey()
+	f.keys["nohelp"] = "1"
+	f2 := &fake{keys: f.keys}
+	if _, err := upWith(w, "y\n", f2, "", "hub"); err == nil || !strings.Contains(err.Error(), "no lockhub rotate-key") || f2.ran("keygen") || f2.ran("stop") {
+		t.Errorf("old image: %v %v", err, f2.calls)
+	}
+	// Pinning is fine before any rotation.
+	if _, err := upWith(w, "y\n", &fake{keys: f.keys}, hubImg2); err != nil {
+		t.Errorf("pin before a rotation: %v", err)
+	}
+	delete(f.keys, "nohelp")
+	if _, err := upWith(w, "y\n", &fake{keys: f.keys}, "", "hub"); err != nil {
+		t.Fatal(err)
+	}
+	f.keys["hub"] = f.keys["hub/new"]
+	f.keys["nohelp"] = "1"
+	if _, err := upWith(w, "y\n", &fake{keys: f.keys}, hubImg); err == nil || !strings.Contains(err.Error(), "predates hub key rotation") {
+		t.Errorf("pin to an old image after a rotation: %v", err)
+	}
+}
