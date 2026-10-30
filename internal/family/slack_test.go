@@ -153,7 +153,7 @@ func TestI9NoChatNoSecretNoRouteNoEgress(t *testing.T) {
 		t.Fatalf("routing.json: %v %s", err, b)
 	}
 	if len(r.Enabled) == 0 || slices.Contains(r.Enabled, route.Slack) || slices.Contains(r.Enabled, route.Telegram) {
-		t.Errorf("routing.json enables %v (empty would mean every facade)", r.Enabled)
+		t.Errorf("routing.json enables %v (empty means the local facades only)", r.Enabled)
 	}
 	for _, f := range []string{route.Slack, route.Telegram} {
 		if r.Allowed("crm-prod", f, route.Read) == nil {
