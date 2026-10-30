@@ -99,6 +99,7 @@ type openReq struct {
 	raw              []byte
 	expires          time.Time
 	delivered        bool
+	given            uint64      // Hub.giveSeq when first given to a lock
 	done             chan Answer // buffered: one answer
 }
 
@@ -122,8 +123,15 @@ func (a Asker) check() error {
 }
 
 // openRequests lists instance's open requests, oldest first, and reports
-// whether one had not been given to the lock yet; all are given now.
-func (h *Hub) openRequests(instance string) ([][]byte, bool) {
+// whether one is fresh for a poll that began at give sequence start:
+// never given to a lock yet, or first given after that poll began. All
+// are given now. The second rule is for two pollers of one instance (a lock
+// restarted while its old process still polls, a product with two
+// clients): the first to return takes the request, and the other, woken
+// by the same notify, must return too rather than wait out its poll with
+// it (a lost wake-up). A poll that begins after a request was given does
+// not return early for it, so a lock that does not answer cannot spin.
+func (h *Hub) openRequests(instance string, start uint64) ([][]byte, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.c.Now()
@@ -137,8 +145,12 @@ func (h *Hub) openRequests(instance string) ([][]byte, bool) {
 	var out [][]byte
 	fresh := false
 	for _, r := range rs {
-		fresh = fresh || !r.delivered
-		r.delivered = true
+		if !r.delivered {
+			h.giveSeq++
+			r.given, r.delivered = h.giveSeq, true
+			fresh = true
+		}
+		fresh = fresh || r.given > start
 		out = append(out, r.raw)
 	}
 	return out, fresh

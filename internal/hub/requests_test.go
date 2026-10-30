@@ -505,3 +505,68 @@ func TestRenewNoOneClickForAnotherRequest(t *testing.T) {
 		})
 	}
 }
+
+// Two pollers of one instance (a restarted lock whose old process still
+// polls): a new request wakes both, and both return with it, instead of
+// the second going back to sleep for the rest of its poll because the
+// first was given it. A poll that begins after the request was given
+// waits with it open (no spin).
+func TestTwoPollersBothGetANewRequest(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	got := make(chan int, 2)
+	for range 2 {
+		go func() {
+			_, reqs, err := e.Hub.Poll(ctx, "crm", 0, 20*time.Second)
+			if err != nil {
+				t.Error(err)
+			}
+			got <- len(reqs)
+		}()
+	}
+	time.Sleep(100 * time.Millisecond) // both polls are waiting
+	go e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	for range 2 {
+		select {
+		case n := <-got:
+			if n != 1 {
+				t.Errorf("a poller got %d request(s)", n)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a poller lost the wake-up: it is still waiting")
+		}
+	}
+	// Given to both, still open: a new poll waits its full time with it.
+	start := time.Now()
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 300*time.Millisecond); len(reqs) != 1 || time.Since(start) < 250*time.Millisecond {
+		t.Errorf("a request already given ended a new poll early, or is gone (%v, %d)", time.Since(start), len(reqs))
+	}
+}
+
+// The window between a poll's start and its first look: a request opened
+// before poller B began, but first given to poller A after B began, is
+// fresh for B (freshness counts from the first give, not the opening).
+func TestRequestGivenAfterAPollBeganIsFreshForIt(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	go e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	for deadline := time.Now().Add(5 * time.Second); e.Hub.OpenCount("crm") == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("no request opened")
+		}
+	}
+	startA := e.Hub.GiveStart()
+	startB := e.Hub.GiveStart() // B begins after the opening, before A looks
+	if reqs, fresh := e.Hub.OpenRequestsFor("crm", startA); len(reqs) != 1 || !fresh {
+		t.Fatalf("poller A: %d %v", len(reqs), fresh)
+	}
+	if reqs, fresh := e.Hub.OpenRequestsFor("crm", startB); len(reqs) != 1 || !fresh {
+		t.Fatalf("poller B lost the request A was given after B began: %d %v", len(reqs), fresh)
+	}
+	// A poll that begins after the give: not fresh.
+	if _, fresh := e.Hub.OpenRequestsFor("crm", e.Hub.GiveStart()); fresh {
+		t.Fatal("a request given before the poll began is fresh: a lock could spin")
+	}
+}
