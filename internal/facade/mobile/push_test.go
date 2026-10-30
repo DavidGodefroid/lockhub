@@ -195,6 +195,12 @@ func (ps *pushServer) quiet(t *testing.T, want int) {
 // in and subscribed.
 func pushEnv(t *testing.T, routes route.Rules) (*env, *pushServer, *mobiletest.Phone, ticket.Device, string) {
 	t.Helper()
+	return pushEnvEvery(t, routes, 0)
+}
+
+// pushEnvEvery is pushEnv with interval between rounds.
+func pushEnvEvery(t *testing.T, routes route.Rules, interval time.Duration) (*env, *pushServer, *mobiletest.Phone, ticket.Device, string) {
+	t.Helper()
 	e := newEnvWith(t, routes, newVAPID(t))
 	ps := newPushServer(t)
 	mobile.SetPushTransport(e.svc, ps.Client(), func(raw string) (*url.URL, error) {
@@ -202,7 +208,7 @@ func pushEnv(t *testing.T, routes route.Rules) (*env, *pushServer, *mobiletest.P
 			return nil, errors.New("not the test push service")
 		}
 		return url.Parse(raw)
-	}, 0)
+	}, interval)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go e.svc.RunPush(ctx)
@@ -391,5 +397,27 @@ func TestSubscriptionsPerDeviceAreCapped(t *testing.T) {
 	}
 	if subs, _ := e.hub.Store().PushSubscriptions(context.Background(), ""); len(subs) != mobile.MaxPushSubscriptions {
 		t.Fatalf("%d subscriptions, want %d", len(subs), mobile.MaxPushSubscriptions)
+	}
+}
+
+// Tickets arriving within the interval after a round are coalesced into
+// one more round.
+func TestPushesAreCoalesced(t *testing.T) {
+	const interval = time.Second
+	e, ps, _, dev, _ := pushEnvEvery(t, route.Rules{}, interval)
+	l := e.lock(dev)
+	l.submit(t, ticket.RiskWrite, false, "UPDATE a")
+	ps.wait(t)
+	start := time.Now()
+	for _, q := range []string{"UPDATE b", "UPDATE c", "UPDATE d"} {
+		l.submit(t, ticket.RiskWrite, false, q)
+	}
+	ps.wait(t)
+	if d := time.Since(start); d < interval/2 {
+		t.Fatalf("second round after %v, want about %v", d, interval)
+	}
+	time.Sleep(interval + 300*time.Millisecond)
+	if n := ps.count(); n != 2 {
+		t.Fatalf("%d pushes for 4 tickets in 2 bursts, want 2", n)
 	}
 }

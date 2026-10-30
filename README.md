@@ -111,14 +111,19 @@ and the app reads the ticket from the hub as usual. The hub signs each push
 with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
 data directory, 0600) and POSTs only to the known push services
 (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`,
-`wns2-*.notify.windows.com`, https on the default port, public addresses, no
+`wns2-*.notify.windows.com`, https on the default port, public addresses only
+(no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
 redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
 offline phone, `TTL` 30 min). The hub logs only the push service's host, never
 an endpoint. `lock up` reviews the change and gives the hub its `egress-hub`
-network for it (the hub then has a route out, as with the chat facades; the
-allowlist is enforced by the hub, not by the network). What remains exposed:
-the push service (Google, Mozilla, Apple, Microsoft) learns when a ticket
-waits and which subscription is woken, though nothing of the ticket.
+network for it. That network gives the hub general outbound access, as with
+the chat facades: the restriction to the push services above is enforced by
+the hub's code, not by the network. Signing out of the app keeps the device's
+push subscription (it belongs to the device, not to the session): tap "Disable
+notifications" before signing out to stop them on that phone, or revoke the
+device. What remains exposed: the push service (Google, Mozilla, Apple,
+Microsoft) learns when a ticket waits and which subscription is woken, though
+nothing of the ticket.
 
 ```yaml
 hub:

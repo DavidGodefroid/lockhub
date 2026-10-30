@@ -123,16 +123,15 @@ func newPusher(key *ecdsa.PrivateKey, subject string) (*pusher, error) {
 
 // pushClient reaches the push services only: no proxy, no redirect
 // followed, public addresses only (an allowed name that resolves to a
-// private address is refused), short timeouts.
+// non-public address is refused at dial time), short timeouts.
 func pushClient() *http.Client {
 	d := &net.Dialer{Timeout: 5 * time.Second, Control: func(_, address string, _ syscall.RawConn) error {
 		ap, err := netip.ParseAddrPort(address)
 		if err != nil {
 			return err
 		}
-		a := ap.Addr().Unmap()
-		if !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() {
-			return fmt.Errorf("push: %s is not a public address", a)
+		if !publicAddr(ap.Addr()) {
+			return fmt.Errorf("push: %s is not a public address", ap.Addr())
 		}
 		return nil
 	}}
@@ -140,6 +139,50 @@ func pushClient() *http.Client {
 		ResponseHeaderTimeout: pushTimeout, MaxIdleConns: 4, IdleConnTimeout: 90 * time.Second}
 	return &http.Client{Transport: tr, Timeout: pushTimeout + 5*time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// specialRanges are special-purpose ranges (IANA registries) that
+// netip's IsGlobalUnicast lets through: no push service lives there.
+var specialRanges = func() []netip.Prefix {
+	var out []netip.Prefix
+	for _, s := range []string{
+		"0.0.0.0/8",       // this network
+		"100.64.0.0/10",   // shared address space (CGNAT)
+		"192.0.0.0/24",    // IETF protocol assignments
+		"192.0.2.0/24",    // documentation
+		"192.88.99.0/24",  // 6to4 relay anycast
+		"198.18.0.0/15",   // benchmarking
+		"198.51.100.0/24", // documentation
+		"203.0.113.0/24",  // documentation
+		"240.0.0.0/4",     // reserved
+		"64:ff9b::/96",    // NAT64 (embeds any IPv4)
+		"64:ff9b:1::/48",  // local-use NAT64
+		"100::/64",        // discard-only
+		"2001::/23",       // IETF protocol assignments (Teredo, ORCHID, …)
+		"2001:db8::/32",   // documentation
+		"2002::/16",       // 6to4 (embeds any IPv4)
+		"3fff::/20",       // documentation
+		"fec0::/10",       // site-local (deprecated)
+		"::ffff:0:0:0/96", // IPv4-translated
+		"5f00::/16",       // SRv6 SIDs
+	} {
+		out = append(out, netip.MustParsePrefix(s))
+	}
+	return out
+}()
+
+// publicAddr reports whether a is a public unicast address.
+func publicAddr(a netip.Addr) bool {
+	a = a.Unmap()
+	if !a.IsGlobalUnicast() || a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast() {
+		return false
+	}
+	for _, p := range specialRanges {
+		if p.Contains(a) {
+			return false
+		}
+	}
+	return true
 }
 
 // vapidToken is the VAPID JWT (RFC 8292) for aud, a push service origin.
