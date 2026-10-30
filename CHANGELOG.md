@@ -5,11 +5,34 @@ digest).
 
 ## Unreleased
 
-- Builds on lockkit v0.3.1 (was a pre-release commit, 1d085bb).
+- A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
+  is now a change `lock up` reviews and applies: the summary carries
+  each chat secret's identity (a short hash, never the token), so the
+  hub's config label changes and compose recreates the hub, which reads
+  its tokens at start. Before, the hub kept the old token until it
+  restarted. `lock doctor` warns about a token rotated since the last
+  `lock up`. The first `lock up` after upgrading with a chat facade
+  shows the new `hub secret` lines once, asks for a yes, and recreates
+  the hub.
 
-- The generated lock command passes `--hub-plain-http`: lockkit refuses
-  an http:// hub without it (DavidGodefroid/lockkit#72), and the hub is
-  reached by its service name on the internal `lockhub` network.
+## v0.1.1 (2026-10-30)
+
+Supported locks: images built on lockkit v0.3.1 (tested), such as the
+first locksql, lockfile, lockmq and lockhttp releases with hub mode. Locks built
+on lockkit v0.3.0 do not know `--hub-plain-http` and refuse the generated
+command.
+
+- The generated lock command passes `--hub-plain-http` (#20): lockkit
+  refuses an http:// hub without it (DavidGodefroid/lockkit#72), and the
+  hub is reached by its service name on the internal `lockhub` network.
+
+- Builds on lockkit v0.3.1 (was a pre-release commit, 1d085bb) (#21).
+
+## v0.1.0 (2026-10-30)
+
+First release. Supported locks: images built on lockkit v0.3.0 (hub
+mode). lockkit v0.3.1 and later refuse the generated `http://lockhub:8443`
+hub URL without `--hub-plain-http`: use lockhub v0.1.1 with them.
 
 - Telegram facade (#8): same rules as Slack, over long-polled
   `getUpdates` (outbound only). Answers count only from the (chat,
