@@ -43,6 +43,12 @@ type Hello struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	API     int    `json:"api"`
+	// TicketVersions are the ticket schema versions the hub accepts;
+	// HubKeyID names the key its decisions are signed with (lockkit
+	// ticket.KeyID). Both are absent when no hub is configured. Unsigned,
+	// like the whole hello: a lock trusts only the hub key it pinned.
+	TicketVersions []int  `json:"ticket_versions,omitempty"`
+	HubKeyID       string `json:"hub_key_id,omitempty"`
 }
 
 // Error is every error body.
@@ -57,8 +63,12 @@ func Handler(version string) http.Handler { return LockHandler(nil, version) }
 // LockHandler returns the routes for locks. h nil serves hello only.
 func LockHandler(h *hub.Hub, version string) http.Handler {
 	mux := http.NewServeMux()
+	hello := Hello{Name: "lockhub", Version: version, API: Version}
+	if h != nil {
+		hello.TicketVersions, hello.HubKeyID = h.Codec().TicketVersions(), h.KeyID()
+	}
 	mux.HandleFunc("GET /v1/hello", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, Hello{Name: "lockhub", Version: version, API: Version})
+		writeJSON(w, http.StatusOK, hello)
 	})
 	if h == nil {
 		return mux

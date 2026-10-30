@@ -60,6 +60,9 @@ type Codec interface {
 	SignDecision(hub ed25519.PrivateKey, t Info, v Verdict, at time.Time) ([]byte, error)
 	// KeyID names a lock key as tickets do.
 	KeyID(ed25519.PublicKey) string
+	// TicketVersions are the ticket schema versions VerifyTicket
+	// accepts, ascending.
+	TicketVersions() []int
 	// VerifyRequest checks a lock's request signature (Lock-Sig) over
 	// the request's method, path and query, instance, time, nonce and body.
 	VerifyRequest(lock ed25519.PublicKey, method, pathQuery, instance string, at time.Time, nonce string, body []byte, sig string) bool
@@ -132,6 +135,9 @@ func (h *Hub) Codec() Codec { return h.c.Codec }
 
 // Now is the hub's clock.
 func (h *Hub) Now() time.Time { return h.c.Now() }
+
+// KeyID names the hub's key as decisions and tickets name keys.
+func (h *Hub) KeyID() string { return h.c.Codec.KeyID(h.c.Key.Public().(ed25519.PublicKey)) }
 
 // Store is the hub's store.
 func (h *Hub) Store() *store.Store { return h.c.Store }

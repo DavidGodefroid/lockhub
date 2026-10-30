@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+- `GET /v1/hello` also answers `ticket_versions` (the ticket schema
+  versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
+  (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the
+  hello: a lock still trusts only the hub key it pinned.
+
 ## v0.1.1 (2026-10-30)
 
 Supported locks: images built on lockkit v0.3.1 (tested), such as the
