@@ -41,8 +41,11 @@ dir=$(go list -m -f '{{.Dir}}' "$mod@$fixtures")
 go vet ./...
 # The tests that read the fixtures; -v lists them, so a rename that
 # matches none shows in the log.
-LOCKKIT_FIXTURES=$dir go test -count=1 -run 'LockkitFixtures|RequestSignature|TTLClampedToRisk' -v ./internal/ticketcodec/ >compat.out || { cat compat.out; exit 1; }
-cat compat.out
-grep -q -- '--- PASS: TestLockkitFixtures' compat.out || { echo "compat: TestLockkitFixtures did not run" >&2; exit 1; }
-rm -f compat.out
+out=$(mktemp)
+trap 'rm -f "$out"' EXIT
+LOCKKIT_FIXTURES=$dir go test -count=1 -run 'LockkitFixtures|RequestSignature|TTLClampedToRisk' -v ./internal/ticketcodec/ >"$out" || { cat "$out"; exit 1; }
+cat "$out"
+for t in TestLockkitFixtures TestRequestSignature TestTTLClampedToRisk; do
+	grep -q -- "--- PASS: $t" "$out" || { echo "compat: $t did not run" >&2; exit 1; }
+done
 go test ./...

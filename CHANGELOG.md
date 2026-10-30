@@ -14,10 +14,12 @@ only then does `lock up` pass `--facade-keys-file`, which older images
 refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
-- A lockkit compatibility check for CI (`scripts/compat.sh`): lockhub
-  built on the pinned lockkit or on the release before it, its ticket
-  codec checked against the signed ticket fixtures of either, or of the
-  newest lockkit release (`LOCKKIT_FIXTURES`).
+- A lockkit compatibility check (`scripts/compat.sh`, CI job `compat`):
+  lockhub built on the pinned lockkit, its ticket codec checked against
+  the signed ticket fixtures of the pinned lockkit, of the release before
+  it and of the newest release (`LOCKKIT_FIXTURES`). A build on the
+  release before the pin (`compat.sh prev …`) is manual: lockhub uses
+  lockkit v0.6.0's API.
 
 - Mobile facade: optional Web Push (`hub.mobile.push: true` →
   `lockhub serve --mobile-push`; off by default). When a ticket the phone
