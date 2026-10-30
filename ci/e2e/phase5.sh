@@ -16,6 +16,7 @@ mirror=$(mktemp -d)
 mkdir -p "$mirror/v$v"
 cp "$dist"/* "$mirror/v$v/"
 sum=$(sed -n "s/  lock_${v}_linux_amd64.tar.gz\$//p" "$dist/checksums.txt")
+[ -n "$sum" ] || die "no checksum for the linux/amd64 archive"
 
 say "install.sh, this commit, from a mirror"
 HOME=$home LOCK_RELEASE_BASE=$mirror sh "$install" --version "v$v" --sha256 "$sum"
@@ -24,14 +25,15 @@ lock=$home/.local/bin/lock
 
 say "install.sh, the latest release, cosign-verified"
 home2=$(mktemp -d)
-HOME=$home2 sh "$install"
+HOME=$home2 sh "$install" 2>&1 | tee install2.out
+grep -q 'cosign: checksums.txt signed by the lockhub release workflow' install2.out || die "install.sh did not report a cosign check"
 "$home2/.local/bin/lock" version
 
 ws=$(mktemp -d)/projects
 mkdir -p "$ws"
 cd "$ws"
 cleanup() {
-	if [ -f .lockfamily/up.json ]; then
+	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
@@ -47,7 +49,8 @@ grep -q "ghcr.io/davidgodefroid/lockhub@sha256:" .lockfamily/lockfamily.yaml || 
 say "lock up"
 mkdir -p ".$LOCK_TYPE"
 printf '[profiles.default]\nmode = "enforce"\nheuristics = "off"\nbuffer_limit = "1MiB"\nhold = "60s"\nconnect_grant = "1m"\ntrusted = []\nsplice = []\ndeny = []\n' >".$LOCK_TYPE/config.toml"
-tty 'y\n' "$lock" up | tee up.out
+tty 'y\n' "$lock" up >up.out 2>&1 || { cat up.out; die "lock up failed"; }
+cat up.out
 grep -q "up: project " up.out || die "lock up did not finish"
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"

@@ -19,7 +19,7 @@ agents="$E2E_ID-agents"
 gate="$E2E_ID-gate"
 cleanup() {
 	docker rm -f "$gate" "$E2E_ID-agent" >/dev/null 2>&1 || true
-	if [ -f .lockfamily/up.json ]; then
+	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
@@ -45,13 +45,23 @@ connect_grant = "1m"
 trusted = []
 splice = []
 deny = []
+
+# The worst case for I2: the policy itself lets the agents reach a host
+# named lockhub, on the hub's port, read freely. Only the gate's hub rule
+# (lockhttp#11) stands between them and the hub.
+[[profiles.default.internal_hosts]]
+host = "lockhub"
+ports = [80, 443, 8443]
+read = true
 TOML
 chmod 0644 .lockhttp/config.toml
 # A subdirectory and an owner-only file: the copy keeps both.
 mkdir -p .lockhttp/notes && chmod 0700 .lockhttp/notes && echo note >.lockhttp/notes/n.txt && chmod 0600 .lockhttp/notes/n.txt
 
 say "lock up (review at a terminal)"
-tty 'y\n' "$lock" up | tee up.out
+tty 'y\n' "$lock" up >up.out 2>&1 || { cat up.out; die "lock up failed"; }
+cat up.out
+grep -q "up: project " up.out || die "lock up did not finish"
 grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
 p=$(ws_project "$ws")
@@ -93,20 +103,28 @@ docker logs "$gate" 2>&1 | tail -5
 hubip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$hubnet\").IPAddress}}" "${p}-lockhub-1")
 agent() { docker run --rm --network "$agents" curlimages/curl:8.11.1 -sS -m 10 "$@"; }
 
+say "I2: the hub answers on its own network (positive control)"
+docker run --rm --network "$hubnet" curlimages/curl:8.11.1 -sS -m 10 -o /dev/null -w '%{http_code}\n' "http://lockhub:8443/v1/hello" | grep -qx 200 ||
+	die "the hub does not answer on its network: the checks below would prove nothing"
 say "I2: no route from an agent to the hub"
-agent "http://lockhub:8443/v1/hello" && die "an agent reached the hub by name"
-agent "http://$hubip:8443/v1/hello" && die "an agent reached the hub by address"
-say "I2: not through the gate either"
-# On the hub's port the gate's floor already refuses; on 80/443 it is the
-# hub's own name and network that the gate refuses (lockhttp#11).
-for u in "http://lockhub:8443/v1/hello" "http://$hubip:8443/v1/hello" "http://lockhub/v1/hello" "https://lockhub/v1/hello"; do
+rc=0; agent "http://lockhub:8443/v1/hello" || rc=$?
+[ "$rc" = 6 ] || die "an agent resolved the hub's name (curl exit $rc, want 6)"
+rc=0; agent "http://$hubip:8443/v1/hello" || rc=$?
+case "$rc" in 7|28) ;; *) die "an agent reached the hub's address (curl exit $rc, want 7 or 28)" ;; esac
+say "I2: not through the gate either, though the policy allows the name"
+for u in "http://lockhub:8443/v1/hello" "http://lockhub/v1/hello"; do
 	code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "$u" || true)
 	echo "$u via the gate: $code"
-	case "$code" in 2??) die "an agent reached the hub through the gate ($u)" ;; esac
+	[ "$code" = 403 ] || die "the gate did not refuse $u ($code)"
 done
-
-docker logs "$gate" 2>&1 | grep '"host":"lockhub"' | grep '"port":80,' | grep -q '"decision":"refused"' ||
-	{ docker logs "$gate" 2>&1 | tail; die "the gate did not refuse the hub on port 80"; }
+code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "https://lockhub:8443/v1/hello" 2>&1 || true)
+echo "CONNECT lockhub:8443 via the gate: $code"
+case "$code" in *200*) die "the gate opened a tunnel to the hub" ;; esac
+docker logs "$gate" 2>&1 | grep '"host":"lockhub"' >gate-hub.log || true
+n=$(grep -c '"rule":"floor:hub"' gate-hub.log || true)
+cat gate-hub.log
+[ "$n" -ge 3 ] || die "the gate's hub rule (floor:hub) refused $n of 3 requests to the hub"
+grep -v '"rule":"floor:hub"' gate-hub.log | grep -q '"decision":"approved"' && die "a request to the hub was approved"
 
 say "a ticket, approved through the facade socket"
 # A write (a body the agent chose): the gate holds it and asks the hub.
@@ -133,7 +151,7 @@ code=$(tr -d '\r' <curl.out | tail -1)
 case "$code" in 2??|3??|404|405|411) ;; *) docker logs "$gate" 2>&1 | tail -20; die "the approved request did not pass ($code)" ;; esac
 "$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub"
 
-say "I11: .lockfamily is read-only for an agent (mounted as lea mounts it)"
+say "I11 (the mount lea makes): .lockfamily read-only in a container"
 docker run --rm --user "$(id -u):$(id -g)" -v "$ws:$ws" -v "$ws/.lockfamily:$ws/.lockfamily:ro" alpine:3.22 \
 	sh -c "echo x >>'$ws/.lockfamily/lockfamily.yaml'" 2>err.out && die "an agent wrote lockfamily.yaml"
 grep -qi 'read-only' err.out || die "not EROFS: $(cat err.out)"
@@ -143,6 +161,7 @@ tty 'n\n' "$lock" up >up2.out 2>&1 || true
 cat up2.out | tr -d '\r' | grep -v 'Pull\|Running\|Creat' | tail -20
 grep -q "+ lock extra" up2.out || die "the change was not shown"
 grep -q 'not applied' up2.out || die "the change was applied without a yes"
+docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --services | grep -qx lock-extra && die "lock-extra runs without a yes"
 say "lock up again, confirmed: the setup services run again on volumes that are the console's now"
 tty 'y\n' "$lock" up >up3.out 2>&1 || { tail -20 up3.out; die "a second lock up failed"; }
 grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lock up did not finish"; }
