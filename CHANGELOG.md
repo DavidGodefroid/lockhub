@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+## v0.2.4 (2026-10-30)
+
+Supported locks: as v0.2.3, plus lockmq v0.4.1 and lockfile v0.5.1
+(lockkit v0.6.0), the first whose consoles take `--allowed-uids`: with a
+lock's `allowed_uids`, lea's agents reach a lockmq or lockfile lock (lea#226).
+An older lockmq or lockfile image with `allowed_uids` set refuses the flag
+and does not start: leave the key off for it. A locksql lock still refuses
+lea's agents under lock up (locksql#139).
+
 - lockfamily.yaml `allowed_uids` per lockmq or lockfile lock (lea#226):
   lock up passes it as the console's `--allowed-uids` (lockmq v0.4.1,
   lockfile v0.5.1 or later), so that lea's agents, which run as the host
