@@ -232,6 +232,16 @@ func TestConfigRefusals(t *testing.T) {
 		"allowed_uids too big":      strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [4294967295]", 1),
 		"allowed_uids console's":    strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [10011]", 1),
 		"allowed_uids nobody":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [65534]", 1),
+		"allowed_uids float":        strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1000.9]", 1),
+		"allowed_uids float zero":   strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1000.0]", 1),
+		"allowed_uids exponent":     strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1e3]", 1),
+		"allowed_uids hex":          strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [0x3e8]", 1),
+		"allowed_uids octal":        strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [0o1750]", 1),
+		"allowed_uids underscore":   strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1_000]", 1),
+		"allowed_uids plus":         strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [+1000]", 1),
+		"allowed_uids quoted":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [\"1000\"]", 1),
+		"allowed_uids leading zero": strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [01000]", 1),
+		"allowed_uids on lockhttp":  yamlConf("") + "  web:\n    type: lockhttp\n    image: " + httpImg + "\n    allowed_uids: [1000]\n",
 		"allowed_uids twice":        strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1000, 1000]", 1),
 		"allowed_uids not a number": strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [me]", 1),
 		"allowed_uids scalar":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: 1000", 1),
@@ -308,6 +318,13 @@ func TestAllowedUIDs(t *testing.T) {
 	got, _ = w.up("", &fake{keys: f.keys})
 	if !strings.Contains(got, "lock events serves uids 1000 besides") || strings.Contains(got, "unchanged") {
 		t.Errorf("a changed allowed_uids is not reviewed:\n%s", got)
+	}
+	got, _ = w.up("y\n", &fake{keys: f.keys})
+	// Removing the list is a reviewed change too.
+	os.WriteFile(w.file, []byte(strings.Replace(conf, "    allowed_uids: [1000, 4242]\n", "", 1)), 0o644)
+	got, _ = w.up("", &fake{keys: f.keys})
+	if !strings.Contains(got, "- lock events serves uids 1000 besides") || strings.Contains(got, "+ lock events serves") {
+		t.Errorf("a removed allowed_uids is not reviewed:\n%s", got)
 	}
 }
 

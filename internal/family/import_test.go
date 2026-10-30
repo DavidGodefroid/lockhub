@@ -102,6 +102,30 @@ func TestImportNarrowsAllowedUIDs(t *testing.T) {
 	}
 }
 
+// Merge leaves its inputs alone; the same uids in another order narrow
+// nothing; a declaration without the key leaves none.
+func TestMergeAllowedUIDs(t *testing.T) {
+	mk := func(uids ...int) *Config {
+		return &Config{Locks: map[string]Lock{"events": {Type: "lockmq", Image: mqImg, AllowedUIDs: uids}}}
+	}
+	base, a, b := &Config{}, mk(1000, 1001), mk(1001, 1000)
+	out, notes := Merge(base, []string{"a", "b"}, map[string]*Config{"a": a, "b": b})
+	if got := out.Locks["events"].AllowedUIDsFlag(); got != "1000,1001" || strings.Contains(strings.Join(notes, "\n"), "narrowed") {
+		t.Errorf("same set: %q %v", got, notes)
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "adds lock events (lockmq), serving uids 1000,1001 (allowed_uids)") {
+		t.Errorf("the adds note does not name the uids: %v", notes)
+	}
+	c := mk()
+	out, notes = Merge(base, []string{"a", "c"}, map[string]*Config{"a": a, "c": c})
+	if got := out.Locks["events"].AllowedUIDs; len(got) != 0 || !strings.Contains(strings.Join(notes, "\n"), "narrowed to those every declaration lists: []") {
+		t.Errorf("one without the key: %v %v", got, notes)
+	}
+	if a.Locks["events"].AllowedUIDsFlag() != "1000,1001" || b.Locks["events"].AllowedUIDsFlag() != "1001,1000" {
+		t.Errorf("Merge changed its inputs: %v %v", a.Locks, b.Locks)
+	}
+}
+
 func TestImportNarrowsNewLockToItsFacades(t *testing.T) {
 	root := t.TempDir()
 	base := write(t, filepath.Join(root, "lockfamily.yaml"), yamlConf(""))

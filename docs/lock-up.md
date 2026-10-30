@@ -179,8 +179,9 @@ lock up passes it as the console's `--allowed-uids 1000` (lockmq v0.4.1,
 lockfile v0.5.1 or later; an older image refuses to start), and the review
 shows it (`lock events serves uids 1000 besides its clients group`): a
 change of it is a change to confirm. Only uids, each once: never root, 65534
-(nobody), nor the console's own uid. lockfamily.yaml is read-only in lea's containers, so
-no agent can add one. A locksql lock takes none yet (its console has no such
+(nobody), nor the console's own uid. `.lockfamily/` is read-only in lea's containers,
+and every `allowed_uids` (from a legacy root file or a sub-project `lock
+import` reads, which agents may write, too) is in the review you confirm. A locksql lock takes none yet (its console has no such
 flag; lock up refuses the key there), and a lockhttp lock is reached by
 lea's gate, an account of its image. `lock import` keeps the uids every
 declaration of an instance lists.
