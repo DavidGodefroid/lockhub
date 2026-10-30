@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const httpImg = "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -102,7 +104,7 @@ func TestComposeNeverStartsSetupServices(t *testing.T) {
 	}
 	// lockfile reads ~/.config/lockfile only: the workspace's .lockfile is
 	// mounted there, and its console gets a profile.
-	if !strings.Contains(out, `      - "profile-lockfile":/home/lockfile/.config/lockfile:ro`) || !strings.Contains(out, `"console", "--profile", "default", "--hub"`) {
+	if !strings.Contains(out, `      - "profile-lockfile:/home/lockfile/.config/lockfile:ro"`) || !strings.Contains(out, `"console", "--profile", "default", "--hub"`) {
 		t.Errorf("lockfile service:\n%s", out)
 	}
 }
@@ -354,5 +356,21 @@ func TestProfileSwapCannotEscape(t *testing.T) {
 	os.Symlink(secret, filepath.Join(d, "s"))
 	if err := r.file("s/config.toml", fi); err == nil {
 		t.Error("read through a swapped directory")
+	}
+}
+
+// The compose file is YAML compose can read, for every lock type.
+func TestComposeParses(t *testing.T) {
+	c := &Config{Version: 1, Hub: Hub{Image: hubImg}, Locks: map[string]Lock{}}
+	for _, typ := range Types {
+		c.Locks["x-"+typ] = Lock{Type: typ, Image: strings.Replace(sqlImg, "locksql", typ, 1)}
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	out := Compose(c, Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0", Config: "sha256:x", Profiles: map[string]string{"locksql": "sha256:p"}})
+	var v map[string]any
+	if err := yaml.Unmarshal([]byte(out), &v); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 }
