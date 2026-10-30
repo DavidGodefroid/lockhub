@@ -34,20 +34,14 @@ Changes:
   for lockkit's `flags.retype` instead, and only when it was set: lockkit
   sets it to the console's "retype values" answer (such as `r`), never to
   the instance name, so most production tickets were approved with a
-  plain `y`. Chat facades still never answer production. Upgrade note: a
-  deck that sends `flags.retype` (lea v0.3.1 or older) can no longer
-  approve production tickets through this hub; use `lock approve` or the
-  phone, or upgrade lea to a release with DavidGodefroid/lea#222 (planned
-  for lea v0.3.2).
+  plain `y`. Chat facades still never answer production.
 - A hub started without `routing.json` (or with one that lists no
   `facades`) now routes tickets to the local facades only (terminal,
   deck, phone), never to Slack or Telegram (#61, invariant I9). It used
   to route and notify read, read-pii and write tickets to both chat
   facades, though none ran. A chat facade is routed only when
   `routing.json` lists it, as `lock up` writes it; the phone stays
-  implicit (it serves nothing without `--mobile-listen`). Upgrade note: a hub
-  run by hand (not by `lock up`) with a routing.json that omits
-  `facades` no longer offers tickets on chat; list the facades in it.
+  implicit (it serves nothing without `--mobile-listen`).
 - Slack and Telegram: a message close (`chat.update`, `editMessageText`)
   that fails (a rate limit, a network error, a 5xx) is retried with
   backoff (2 s doubling to 5 min, 15 tries, about 40 min), so a decided,
@@ -60,7 +54,10 @@ Changes:
   the hub); on Slack it also tries the close again at once, at most once
   per 2 s, without using up a try. A ticket decided on a chat is no
   longer posted again from a queue snapshot taken before the decision.
-- CI: phase 5 fails on a `lock doctor` failure (#63).
+- CI: phase 5 fails on a `lock doctor` failure (#63); phase 2 drops the
+  database and role it made and checks the screen's literal (#62); tests
+  for I9 (#58); deflaked chat-close and queue-order tests (#57).
+- docs: design notes, the accepted deviations from the hub plan (#59).
 
 ## v0.2.2 (2026-10-30)
 
@@ -366,18 +363,18 @@ first locksql, lockfile, lockmq and lockhttp releases with hub mode. Locks built
 on lockkit v0.3.0 do not know `--hub-plain-http` and refuse the generated
 command.
 
-Correction (v0.2.3): this overstated lockfile and lockmq. v0.1.1's `lock
-up` passes no `--profile` and mounts no profile, so a lockfile console
-(v0.4.0 requires `--profile`) refuses the generated command, and a lockmq
-console (v0.3.0) finds no profile to serve in its empty home volume. `lock
-up` runs lockfile and lockmq from v0.2.0 on (lockfile v0.4.0, lockmq
-v0.3.0 or later; see the v0.2.0 table).
-
 - The generated lock command passes `--hub-plain-http` (#20): lockkit
   refuses an http:// hub without it (DavidGodefroid/lockkit#72), and the
   hub is reached by its service name on the internal `lockhub` network.
 
 - Builds on lockkit v0.3.1 (was a pre-release commit, 1d085bb) (#21).
+
+Correction (v0.2.3): the note above overstates what v0.1.1's `lock up`
+runs. It passes no `--profile`, mounts no profile and gives the consoles
+no terminal: lockfile (v0.4.0 requires `--profile`) and lockhttp (its
+console takes no `--hub`) refuse the generated command, and locksql
+v0.10.0 and lockmq v0.3.0 find no profile in their empty home volume. Use
+`lock up` from v0.2.0 on with any lock (see the v0.2.0 table).
 
 ## v0.1.0 (2026-10-30)
 
