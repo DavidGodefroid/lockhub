@@ -121,11 +121,13 @@ func TestDoctorSlackSecrets(t *testing.T) {
 	}
 }
 
-// I9 (hub plan), lock up's side: a lockfamily.yaml without slack or
-// telegram reads no chat secret (none is in the review, though token
-// files are there), enables no chat facade in routing.json, writes no
-// chat settings and gives the hub no route out. The control, with slack
-// declared, shows the review would name the tokens it read.
+// I9 (hub plan), lock up's side: with a lockfamily.yaml without slack or
+// telegram, the review names no chat secret (though token files are
+// there: lock up identifies a token only for a declared facade, and the
+// control shows it would name it), routing.json enables no chat facade,
+// chat.json holds no chat settings and the hub's only network is the
+// internal lockhub one. (tokenID drops read errors, so a read that names
+// nothing would not be seen here.)
 func TestI9NoChatNoSecretNoRouteNoEgress(t *testing.T) {
 	plant := func(w ws) {
 		hub := filepath.Join(w.dir, "state", "hub")
@@ -162,9 +164,14 @@ func TestI9NoChatNoSecretNoRouteNoEgress(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(hub, chatconf.File)); err != nil || json.Unmarshal(b, &s) != nil || s.Slack != nil || s.Telegram != nil {
 		t.Errorf("chat.json: %v %+v", err, s)
 	}
-	cy, _ := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
-	if strings.Contains(string(cy), "egress-hub") {
-		t.Errorf("the hub has a route out without a chat facade:\n%s", cy)
+	cy, err := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The hub service's networks: only lockhub (internal).
+	hubSvc, _, _ := strings.Cut(string(cy)[strings.Index(string(cy), "\n  lockhub:\n")+1:], "\n  hubkey:")
+	if !strings.Contains(hubSvc, "\n    networks: [lockhub]\n") || strings.Contains(string(cy), "egress-hub") {
+		t.Errorf("the hub has a network besides lockhub without a chat facade:\n%s", cy)
 	}
 
 	// Control: with slack declared, the review reads and names its tokens.

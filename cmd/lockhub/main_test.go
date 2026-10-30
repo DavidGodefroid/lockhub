@@ -414,10 +414,13 @@ func TestRotateKeyRefusesLiveHub(t *testing.T) {
 	}
 }
 
-// I9 (hub plan): a hub whose configuration enables no chat facade reads
-// no chat secret, runs no chat facade, and routes no ticket to one. The
-// secret files are planted unreadable (directories): reading one is an
-// error, which the control shows.
+// I9 (hub plan): a hub whose configuration (routing.json, as lock up
+// writes it) enables no chat facade reads no chat secret, runs no chat
+// facade, and routes no ticket to one. The secret files are planted
+// unreadable (directories): a read whose error reaches the caller fails
+// the start, as the controls show; a read whose error were dropped would
+// not be seen. (Without any routing.json the route defaults enable every
+// facade: lockhub#61.)
 func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 	codec = hubtest.Codec{}
 	t.Cleanup(func() { codec = nil })
@@ -448,7 +451,8 @@ func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 		t.Fatalf("no chat facade configured: facades %v, err %v (a secret was read?)", fs, err)
 	}
 	for _, f := range []string{route.Slack, route.Telegram} {
-		for _, risk := range []string{route.Read, route.ReadPII, route.Write, route.ProdWrite, route.PolicyLoosen, route.Unlock} {
+		// The other classes are never routed to chat, enabled or not.
+		for _, risk := range []string{route.Read, route.ReadPII, route.Write} {
 			if h.Routes().Allowed("crm", f, risk) == nil {
 				t.Errorf("%s may answer a %s ticket of a hub without chat facades", f, risk)
 			}
@@ -462,5 +466,10 @@ func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 	os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{"slack":{"team":"T01","channel":"C02","users":["U03"]}}`), 0o600)
 	if _, _, err := open(); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("control: slack enabled did not read its planted secret: %v", err)
+	}
+	os.WriteFile(filepath.Join(data, "routing.json"), []byte(`{"facades":["tty","deck","telegram"]}`), 0o600)
+	os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{"telegram":{"chats":[{"chat":42,"from":42}]}}`), 0o600)
+	if _, _, err := open(); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("control: telegram enabled did not read its planted secret: %v", err)
 	}
 }
