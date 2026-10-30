@@ -13,6 +13,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/state"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
@@ -189,7 +190,7 @@ func TestDecideNeedsApproverAndFacade(t *testing.T) {
 
 func TestRouting(t *testing.T) {
 	a := hubtest.NewLock("a")
-	e := hubtest.New(t, 0, a)
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.Routes = route.Rules{Enabled: []string{"tty", "slack"}} }, a)
 	e.Hub.Push(ctx, "a", a.Ticket("PW", "prod-write", e.Clock.T, 4*time.Hour))
 	e.Hub.Push(ctx, "a", a.Ticket("R", "read", e.Clock.T, 0))
 	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "a", ID: "PW"}, hub.Verdict{Approved: true, ApproverID: "slack:U1", Facade: "slack"}); !errors.Is(err, hub.ErrNotRouted) {
@@ -203,6 +204,24 @@ func TestRouting(t *testing.T) {
 	}
 	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "a", ID: "R"}, hub.Verdict{ApproverID: "x", Facade: "fax"}); err == nil {
 		t.Error("unknown facade accepted")
+	}
+}
+
+// A hub with no routing (no routing.json, #61) decides nothing from a chat
+// facade, whatever the risk.
+func TestNoRoutingNoChat(t *testing.T) {
+	a := hubtest.NewLock("a")
+	e := hubtest.New(t, 0, a)
+	for _, risk := range []string{"read", "read-pii", "write"} {
+		e.Hub.Push(ctx, "a", a.Ticket(risk, risk, e.Clock.T, time.Hour))
+		for _, f := range []string{"slack", "telegram"} {
+			if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "a", ID: risk}, hub.Verdict{Approved: true, ApproverID: f + ":U1", Facade: f}); !errors.Is(err, hub.ErrNotRouted) {
+				t.Errorf("%s on %s with no routing: %v", risk, f, err)
+			}
+		}
+		if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "a", ID: risk}, hub.Verdict{Approved: true, ApproverID: "host:u", Facade: "deck"}); err != nil {
+			t.Errorf("%s on the deck: %v", risk, err)
+		}
 	}
 }
 

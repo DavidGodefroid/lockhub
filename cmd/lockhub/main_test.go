@@ -130,8 +130,8 @@ func TestLoadRoutes(t *testing.T) {
 	locks := map[string]ed25519.PublicKey{"crm": l.Pub}
 	dir := t.TempDir()
 	p := filepath.Join(dir, "routing.json")
-	if r, err := loadRoutes(p, locks); err != nil || len(r.Enabled) != 0 {
-		t.Errorf("missing file: %+v %v", r, err)
+	if r, err := loadRoutes(p, locks); err != nil || len(r.Enabled) != 0 || r.On(route.Slack) || r.On(route.Telegram) || !r.On(route.TTY) {
+		t.Errorf("missing file: %+v %v (chat facades must not be on)", r, err)
 	}
 	os.WriteFile(p, []byte(`{"facades":["tty"],"only":{"crm":["tty"]}}`), 0o600)
 	r, err := loadRoutes(p, locks)
@@ -434,9 +434,6 @@ func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// What lock up writes for a lockfamily.yaml without slack or telegram.
-	os.WriteFile(filepath.Join(data, "routing.json"), []byte(`{"facades":["tty","deck"]}`), 0o600)
-	os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{}`), 0o600)
 	open := func() (*hub.Hub, []*chat.Facade, error) {
 		h, closeHub, err := openHub(data)
 		if err != nil {
@@ -446,20 +443,37 @@ func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 		fs, err := chatFacades(h, data, io.Discard)
 		return h, fs, err
 	}
-	h, fs, err := open()
-	if err != nil || len(fs) != 0 {
-		t.Fatalf("no chat facade configured: facades %v, err %v (a secret was read?)", fs, err)
-	}
-	for _, f := range []string{route.Slack, route.Telegram} {
-		// The other classes are never routed to chat, enabled or not.
-		for _, risk := range []string{route.Read, route.ReadPII, route.Write} {
-			if h.Routes().Allowed("crm", f, risk) == nil {
-				t.Errorf("%s may answer a %s ticket of a hub without chat facades", f, risk)
+	// What lock up writes for a lockfamily.yaml without slack or telegram;
+	// then a routing.json without "facades"; then none at all (a hub
+	// started without lock up, #61): no chat route in any case.
+	for name, routing := range map[string]string{"lock up": `{"facades":["tty","deck"]}`, "no facades": `{}`, "no routing.json": ""} {
+		os.Remove(filepath.Join(data, "routing.json"))
+		if routing != "" {
+			os.WriteFile(filepath.Join(data, "routing.json"), []byte(routing), 0o600)
+		}
+		os.WriteFile(filepath.Join(data, chatconf.File), []byte(`{}`), 0o600)
+		h, fs, err := open()
+		if err != nil || len(fs) != 0 {
+			t.Fatalf("%s: no chat facade configured: facades %v, err %v (a secret was read?)", name, fs, err)
+		}
+		for _, f := range []string{route.Slack, route.Telegram} {
+			// The other classes are never routed to chat, enabled or not.
+			for _, risk := range []string{route.Read, route.ReadPII, route.Write} {
+				if h.Routes().Allowed("crm", f, risk) == nil {
+					t.Errorf("%s: %s may answer a %s ticket of a hub without chat facades", name, f, risk)
+				}
+				if got := h.Routes().Facades("crm", risk); slices.Contains(got, route.Slack) || slices.Contains(got, route.Telegram) {
+					t.Errorf("%s: %s tickets notify %v", name, risk, got)
+				}
 			}
 		}
-	}
-	if got := h.Routes().Facades("crm", route.Read); slices.Contains(got, route.Slack) || slices.Contains(got, route.Telegram) {
-		t.Errorf("read tickets notify %v", got)
+		// No chat.json either, with no routing.json: still nothing read.
+		if routing == "" {
+			os.Remove(filepath.Join(data, chatconf.File))
+			if _, fs, err := open(); err != nil || len(fs) != 0 {
+				t.Fatalf("%s, no chat.json: facades %v, err %v", name, fs, err)
+			}
+		}
 	}
 	// Control: enabled, the same planted secrets are read, and refused.
 	os.WriteFile(filepath.Join(data, "routing.json"), []byte(`{"facades":["tty","deck","slack"]}`), 0o600)

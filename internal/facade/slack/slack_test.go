@@ -252,7 +252,7 @@ func (e env) state(id string) state.State {
 func hasButtons(c call) bool { return strings.Contains(c.raw, `"type":"actions"`) }
 
 func TestApproveFromAllowedUserOnly(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Slack}})
 	id := e.push(t, ticket.RiskRead, false)
 	eventually(t, "posted", func() bool { return len(e.f.of("chat.postMessage")) == 1 })
 	pm := e.f.of("chat.postMessage")[0]
@@ -283,7 +283,7 @@ func TestApproveFromAllowedUserOnly(t *testing.T) {
 }
 
 func TestNoButtonsForProductionOrProdWrite(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Slack}})
 	prod := e.push(t, ticket.RiskRead, true)
 	pw := e.push(t, ticket.RiskProdWrite, false)
 	eventually(t, "posted", func() bool { return len(e.f.of("chat.postMessage")) == 2 })
@@ -311,8 +311,19 @@ func TestNoButtonsForProductionOrProdWrite(t *testing.T) {
 	}
 }
 
+// No routing (a hub without routing.json, #61): slack is not enabled, and
+// shows nothing.
+func TestNoRoutingNotShown(t *testing.T) {
+	e := setup(t, route.Rules{})
+	e.push(t, ticket.RiskRead, false)
+	time.Sleep(200 * time.Millisecond)
+	if n := len(e.f.of("chat.postMessage")); n != 0 {
+		t.Fatalf("%d messages with no routing", n)
+	}
+}
+
 func TestRoutedAwayNotShown(t *testing.T) {
-	e := setup(t, route.Rules{Only: map[string][]string{"crm": {route.TTY}}})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Slack}, Only: map[string][]string{"crm": {route.TTY}}})
 	e.push(t, ticket.RiskRead, false)
 	time.Sleep(200 * time.Millisecond)
 	if n := len(e.f.of("chat.postMessage")); n != 0 {
@@ -321,7 +332,7 @@ func TestRoutedAwayNotShown(t *testing.T) {
 }
 
 func TestPayloadsHoldNoClearValuesAndNoLiveMarkup(t *testing.T) {
-	e := setup(t, route.Rules{})
+	e := setup(t, route.Rules{Enabled: []string{route.TTY, route.Slack}})
 	id := e.push(t, ticket.RiskReadPII, false)
 	eventually(t, "posted", func() bool { return len(e.f.of("chat.postMessage")) == 1 })
 	// Decided elsewhere: the message is closed.

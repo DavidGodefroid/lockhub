@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+- A hub started without `routing.json` (or with one that lists no
+  `facades`) now routes tickets to the local facades only (terminal,
+  deck, phone), never to Slack or Telegram (#61, invariant I9). It used
+  to route and notify read, read-pii and write tickets to both chat
+  facades, though none ran. A chat facade is routed only when
+  `routing.json` lists it, as `lock up` writes it; the phone stays
+  implicit (it serves nothing without `--mobile-listen`). Upgrade note: a hub
+  run by hand (not by `lock up`) with a routing.json that omits
+  `facades` no longer offers tickets on chat; list the facades in it.
 - Slack and Telegram: a message close (`chat.update`, `editMessageText`)
   that fails (a rate limit, a network error, a 5xx) is retried with
   backoff (2 s doubling to 5 min, 15 tries, about 40 min), so a decided,

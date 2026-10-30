@@ -157,7 +157,7 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 	p := filepath.Join(d.State, "hub", "routing.json")
 	b, err := os.ReadFile(p)
 	if err != nil {
-		fail("hub routing: %v (without it the hub runs every facade: run lock up)", err)
+		fail("hub routing: %v (without it the hub runs the local facades only, no chat: run lock up)", err)
 		return
 	}
 	var r route.Rules
