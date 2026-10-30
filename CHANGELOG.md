@@ -14,6 +14,16 @@ only then does `lock up` pass `--facade-keys-file`, which older images
 refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
+- `lock up --pin sha256:<digest>` restores a previous hub image by digest
+  (reviewed, cosign-verified, written to lockfamily.yaml once applied;
+  `hub-images.log` keeps the history), and `lock up --rotate
+  hub|INSTANCE|all` replaces the hub's or locks' keys through the review
+  (docs/lock-up.md). The hub's rotation is `lockhub rotate-key`: a
+  `key_rotated` audit record signed by both keys, the old key in the data
+  directory's `retired-keys.pub`, which the hub reads at start. `lock
+  audit verify --hub-key-file` takes a file of keys, oldest first (lock
+  up's `hub-keys.pub`); with one key, as before. An older `lock audit
+  verify` or hub refuses a log with a `key_rotated` record.
 - `lock up` no longer overwrites the per-user `facades/locks.json` with the
   current workspace's lock keys: each workspace's keys go to
   `facades/locks.d/<project>.json` (with the workspace's path) and

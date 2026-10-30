@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -40,8 +39,10 @@ var version = "dev"
 const usage = `lock: the Lock Family CLI
 
 Usage:
-  lock up [--file lockfamily.yaml] [--dry-run]
-                                          review and start the hub and the workspace's locks
+  lock up [--file lockfamily.yaml] [--dry-run] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
+                                          review and start the hub and the workspace's locks; --pin sets
+                                          the hub image by digest (a previous version restored), --rotate
+                                          (repeatable) replaces the hub's or a lock's key
   lock add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp), pinned by
                                           digest to its latest (or the given) release, cosign-verified
@@ -128,7 +129,7 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	data := fs.String("data", "", "the hub's data directory")
-	keyFile := fs.String("hub-key-file", "", "the hub's public key (base64), as lock up pinned it")
+	keyFile := fs.String("hub-key-file", "", "the hub's public keys (base64, one per line, oldest first: the current one last), as lock up pinned them (hub-keys.pub in its state directory)")
 	var lockLogs lockLogFlag
 	fs.Var(&lockLogs, "lock", "INSTANCE=PATH: also verify that lock's audit log (its audit.log, or the directory holding it); repeatable")
 	anchorsFile := fs.String("anchors", "", "file keeping each lock log's anchor between runs (host only, 0600): a log cut or stripped since is refused")
@@ -148,12 +149,15 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lock audit verify:", err)
 		return 1
 	}
-	pub, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(b)))
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		fmt.Fprintln(stderr, "lock audit verify: the hub key file holds no base64 Ed25519 public key")
+	pubs, err := keys.ParsePublics(b)
+	if err == nil && len(pubs) == 0 {
+		err = errors.New("no key")
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, "lock audit verify: the hub key file holds no list of base64 Ed25519 public keys:", err)
 		return 1
 	}
-	r, err := verify.Hub(context.Background(), *data, ed25519.PublicKey(pub))
+	r, err := verify.Hub(context.Background(), *data, pubs)
 	if err != nil {
 		fmt.Fprintln(stderr, "lock audit verify:", err)
 		return 1
@@ -172,13 +176,13 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	if len(lockLogs) == 0 {
 		return 0
 	}
-	return verifyLocks(*data, ed25519.PublicKey(pub), lockLogs, *anchorsFile, stdout, stderr)
+	return verifyLocks(*data, pubs, lockLogs, *anchorsFile, stdout, stderr)
 }
 
 // verifyLocks is lock audit verify --lock: each lock's chain, against its
 // kept anchor when there is one, and its records of hub decisions against
 // the hub's.
-func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anchorsFile string, stdout, stderr io.Writer) int {
+func verifyLocks(data string, pub []ed25519.PublicKey, logs []verify.LockLog, anchorsFile string, stdout, stderr io.Writer) int {
 	anchors := map[string]lkaudit.Anchor{}
 	if anchorsFile != "" {
 		var err error
@@ -311,7 +315,14 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml, or a legacy ./lockfamily.yaml)")
 	dry := fs.Bool("dry-run", false, "show the review, apply nothing")
+	pin := fs.String("pin", "", "the hub image by digest (sha256:…, or the whole ghcr.io/davidgodefroid/lockhub@sha256:… reference): lockfamily.yaml takes it once applied")
+	var rotate stringsFlag
+	fs.Var(&rotate, "rotate", "replace a key: hub, a lock instance, or all (repeatable, or comma-separated)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "lock up: unexpected arguments:", strings.Join(fs.Args(), " "))
 		return 2
 	}
 	if fi, err := stdin.Stat(); !*dry && (err != nil || fi.Mode()&os.ModeCharDevice == 0) {
@@ -327,7 +338,8 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	defer stop()
 	r := family.Exec{Stderr: stderr}
 	u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
-		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry}
+		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
+		Pin: *pin, Rotate: rotate}
 	if err := u.Do(ctx); err != nil {
 		fmt.Fprintln(stderr, "lock up:", err)
 		return 1
