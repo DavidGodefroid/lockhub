@@ -570,3 +570,94 @@ func TestRequestGivenAfterAPollBeganIsFreshForIt(t *testing.T) {
 		t.Fatal("a request given before the poll began is fresh: a lock could spin")
 	}
 }
+
+// An old lock process takes a request while the live one is between
+// polls, and never answers: the live one's next poll began after the
+// give, yet it is offered the request again after ReofferAfter, well
+// before the facade gives up; a lock that does not answer is woken once
+// per ReofferAfter, not in a loop.
+func TestUnansweredRequestReofferedToTheNextPoll(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	const reoffer = 300 * time.Millisecond
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second; c.ReofferAfter = reoffer }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	const sealed = `{"box":"ciphertext"}`
+	type res struct {
+		ans []byte
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		ans, err := e.Hub.Reveal(ctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+		done <- res{ans, err}
+	}()
+	// The old process takes it, and goes away without answering.
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 5*time.Second); len(reqs) != 1 {
+		t.Fatalf("old process: %d requests", len(reqs))
+	}
+	// The live lock's poll begins after the give.
+	start := time.Now()
+	_, reqs, err := e.Hub.Poll(ctx, "crm", 0, 20*time.Second)
+	d := time.Since(start)
+	if err != nil || len(reqs) != 1 {
+		t.Fatalf("live lock: %d requests, %v", len(reqs), err)
+	}
+	if d < reoffer/2 || d > 3*time.Second {
+		t.Fatalf("the live lock got the request after %s, want about %s", d, reoffer)
+	}
+	// Not answered yet: the next poll is not woken before ReofferAfter.
+	start = time.Now()
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 20*time.Second); len(reqs) != 1 || time.Since(start) < reoffer/2 {
+		t.Fatalf("a poll woke after %s for a request it was just offered (%d)", time.Since(start), len(reqs))
+	}
+	var q hubtest.Request
+	json.Unmarshal(reqs[0], &q)
+	if err := e.Hub.AnswerRequest("crm", q.ID, []byte(`{"reveal":`+sealed+`}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-done:
+		if r.err != nil || string(r.ans) != sealed {
+			t.Fatalf("Reveal = %s, %v", r.ans, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the facade is still waiting")
+	}
+}
+
+// A re-offer wakes every waiting poller, not only the one whose timer
+// fired first.
+func TestReofferWakesEveryPoller(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	const reoffer = 300 * time.Millisecond
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.RequestWait = 5 * time.Second; c.ReofferAfter = reoffer }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("T1", "write", e.Clock.T, time.Hour))
+	rctx, cancel := context.WithCancel(ctx)
+	revealed := make(chan struct{})
+	go func() {
+		defer close(revealed)
+		e.Hub.Reveal(rctx, store.Ref{Instance: "crm", ID: "T1"}, tty, revealKey("T1", "tty"))
+	}()
+	t.Cleanup(func() { cancel(); <-revealed })
+	if _, reqs, _ := e.Hub.Poll(ctx, "crm", 0, 5*time.Second); len(reqs) != 1 {
+		t.Fatalf("first give: %d requests", len(reqs))
+	}
+	got := make(chan time.Duration, 2)
+	start := time.Now()
+	for range 2 {
+		go func() {
+			e.Hub.Poll(ctx, "crm", 0, 20*time.Second)
+			got <- time.Since(start)
+		}()
+	}
+	for range 2 {
+		select {
+		case d := <-got:
+			if d > 3*time.Second {
+				t.Errorf("a poller returned after %s", d)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a poller was not woken by the re-offer")
+		}
+	}
+}

@@ -56,6 +56,11 @@ const (
 	RequestTTL = 2 * time.Minute
 	// RequestWait is how long a facade waits for the lock's answer.
 	RequestWait = 30 * time.Second
+	// ReofferAfter is how long a request given to a lock may go
+	// unanswered before it ends every poll of its instance again: well
+	// under RequestWait, so that a request an old lock process took while
+	// the live one was between polls still reaches the live one in time.
+	ReofferAfter = 2 * time.Second
 	// MaxAnswer bounds a lock's answer (a sealed clear screen).
 	MaxAnswer = 512 << 10
 	// MaxRevealKey bounds a facade's reveal key.
@@ -99,7 +104,8 @@ type openReq struct {
 	raw              []byte
 	expires          time.Time
 	delivered        bool
-	given            uint64      // Hub.giveSeq when first given to a lock
+	given            uint64      // Hub.giveSeq when last given (or re-offered) to a lock
+	givenAt          time.Time   // when, on the monotonic clock
 	done             chan Answer // buffered: one answer
 }
 
@@ -124,17 +130,33 @@ func (a Asker) check() error {
 
 // openRequests lists instance's open requests, oldest first, and reports
 // whether one is fresh for a poll that began at give sequence start:
-// never given to a lock yet, or first given after that poll began. All
-// are given now. The second rule is for two pollers of one instance (a lock
+// never given to a lock yet, given after that poll began, or given
+// ReofferAfter ago and still unanswered (then given again now). All are
+// given now. The second rule is for two pollers of one instance (a lock
 // restarted while its old process still polls, a product with two
 // clients): the first to return takes the request, and the other, woken
 // by the same notify, must return too rather than wait out its poll with
-// it (a lost wake-up). A poll that begins after a request was given does
-// not return early for it, so a lock that does not answer cannot spin.
-func (h *Hub) openRequests(instance string, start uint64) ([][]byte, bool) {
+// it (a lost wake-up). The third is for a request the old process took
+// while the live one was between polls: the live one's next poll began
+// after the give, and would otherwise not return before the facade gives
+// up. A poll that begins after a request was given does not return early
+// for it before ReofferAfter, so a lock that does not answer cannot spin:
+// it is woken once per ReofferAfter at most. reoffer is how long until
+// the next request comes due again (0: none open).
+func (h *Hub) openRequests(instance string, start uint64) (out [][]byte, fresh bool, reoffer time.Duration) {
+	defer func() {
+		if fresh {
+			// The other pollers too (a re-offer is no new request: ask
+			// does not notify). Their own re-offer timers target the
+			// same time; this is the safety net for a poller whose timer
+			// was armed late.
+			h.notify(instance)
+		}
+	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	now := h.c.Now()
+	mono := time.Now()
 	var rs []*openReq
 	for _, r := range h.reqs[instance] {
 		if now.Before(r.expires) {
@@ -142,18 +164,19 @@ func (h *Hub) openRequests(instance string, start uint64) ([][]byte, bool) {
 		}
 	}
 	slices.SortFunc(rs, func(a, b *openReq) int { return a.expires.Compare(b.expires) })
-	var out [][]byte
-	fresh := false
 	for _, r := range rs {
-		if !r.delivered {
+		if !r.delivered || mono.Sub(r.givenAt) >= h.c.ReofferAfter {
 			h.giveSeq++
-			r.given, r.delivered = h.giveSeq, true
+			r.given, r.givenAt, r.delivered = h.giveSeq, mono, true
 			fresh = true
 		}
 		fresh = fresh || r.given > start
+		if d := h.c.ReofferAfter - mono.Sub(r.givenAt); reoffer == 0 || d < reoffer {
+			reoffer = max(d, time.Millisecond)
+		}
 		out = append(out, r.raw)
 	}
-	return out, fresh
+	return out, fresh, reoffer
 }
 
 func (h *Hub) purgeRequests(now time.Time) {
