@@ -179,7 +179,8 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 }
 
 // applied warns when lockfamily.yaml no longer matches what the last
-// confirmed lock up applied (keys aside: they are the locks' to report).
+// confirmed lock up applied (keys aside: they are the locks' to report), and when a chat token
+// was rotated since.
 func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	b, err := os.ReadFile(filepath.Join(d.State, "applied.json"))
 	if err != nil {
@@ -192,10 +193,29 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		return
 	}
 	noKeys := func(s []string) []string {
-		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") })
+		return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return strings.Contains(l, " key ") || strings.HasPrefix(l, "hub secret ") })
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {
 		warn("lockfamily.yaml changed since the last lock up (run lock up to review it): %s", strings.Join(ch, "; "))
+	}
+	// The hub reads its chat tokens at start: one rotated since is not in
+	// use until lock up recreates it. Only tokens the last lock up applied
+	// compare (a facade added since is the yaml's change; a summary from
+	// before token identities has none).
+	applied := map[string]string{}
+	for _, l := range a.Summary {
+		if f, ok := secretFile(l); ok {
+			applied[f] = l
+		}
+	}
+	var ch []string
+	for _, l := range chatTokens(c, filepath.Join(d.State, "hub")) {
+		if f, _ := secretFile(l); applied[f] != "" && applied[f] != l {
+			ch = append(ch, "- "+applied[f], "+ "+l)
+		}
+	}
+	if len(ch) > 0 {
+		warn("a chat token changed since the last lock up (run lock up to apply it): %s", strings.Join(ch, "; "))
 	}
 }
 

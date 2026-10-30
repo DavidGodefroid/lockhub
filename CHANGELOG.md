@@ -9,6 +9,15 @@ Needs locks built on lockkit v0.4.0 (pinned for now to the pre-release
 commit of lockkit#78) for reveals and renewals; older locks ignore the new
 `requests` member of the decisions poll.
 
+- A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
+  is now a change `lock up` reviews and applies: the summary carries
+  each chat secret's identity (a short hash, never the token), so the
+  hub's config label changes and compose recreates the hub, which reads
+  its tokens at start. Before, the hub kept the old token until it
+  restarted. `lock doctor` warns about a token rotated since the last
+  `lock up`. The first `lock up` after upgrading with a chat facade
+  shows the new `hub secret` lines once, asks for a yes, and recreates
+  the hub.
 - Clear values on demand (Ctrl-O) and re-approval of expired tickets
   (decision H1).
   - Hub requests: the hub signs a `reveal` or `renew` request
