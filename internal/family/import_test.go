@@ -21,7 +21,7 @@ const otherSQL = "ghcr.io/davidgodefroid/locksql@sha256:555555555555555555555555
 func TestImportTwoSubProjectsKeepsStrictest(t *testing.T) {
 	root := t.TempDir()
 	// The workspace declares only its hub: its locks come from the sub-projects.
-	base := write(t, filepath.Join(root, "lockfamily.yaml"), "# workspace\nversion: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck, mobile]\n")
+	base := write(t, filepath.Join(root, "lockfamily.yaml"), "# workspace\nversion: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck, mobile]\n  mobile:\n    origin: https://hub.example.net\n")
 	a := write(t, filepath.Join(root, "crm", "lockfamily.yaml"), `version: 1
 hub:
   image: `+hubImg+`
@@ -37,6 +37,8 @@ locks:
 hub:
   image: `+hubImg+`
   facades: [tty, deck, mobile]
+  mobile:
+    origin: https://hub.example.net
   routing:
     crm: [tty, mobile]
 locks:

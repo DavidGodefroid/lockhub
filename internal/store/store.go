@@ -49,6 +49,22 @@ CREATE TABLE IF NOT EXISTS renewals (
 	at       INTEGER NOT NULL,
 	PRIMARY KEY (instance, renewed)
 );
+-- Audit records of committed changes not yet in the audit log: written
+-- in the change's transaction, appended to the log after the commit, then
+-- dropped (a transactional outbox).
+CREATE TABLE IF NOT EXISTS audit_outbox (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	record BLOB NOT NULL,
+	sig    TEXT NOT NULL  -- the hub key's (audit.SignOutbox)
+);
+CREATE TABLE IF NOT EXISTS devices (
+	id         TEXT PRIMARY KEY,
+	record     BLOB NOT NULL,    -- the lockkit device record, as confirmed
+	state      TEXT NOT NULL,    -- active, revoked
+	sign_count INTEGER NOT NULL,
+	created    INTEGER NOT NULL,
+	updated    INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -302,7 +318,17 @@ func (s *Store) Decisions(ctx context.Context, instance string, since int64, lim
 // AllDecisions lists every instance's decisions after seq since, oldest
 // first (for read-only observers such as lea).
 func (s *Store) AllDecisions(ctx context.Context, since int64, limit int) ([]Decision, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT seq, ticket, instance, raw, at FROM decisions WHERE seq > ? ORDER BY seq LIMIT ?`, since, limit)
+	return allDecisions(ctx, s.db, since, limit)
+}
+
+// querier is a database or a transaction.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func allDecisions(ctx context.Context, q querier, since int64, limit int) ([]Decision, error) {
+	rows, err := q.QueryContext(ctx, `SELECT seq, ticket, instance, raw, at FROM decisions WHERE seq > ? ORDER BY seq LIMIT ?`, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -383,4 +409,172 @@ func (s *Store) DueForExpiry(ctx context.Context, now time.Time) ([]Ref, error) 
 func (s *Store) PurgeNonces(ctx context.Context, before time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM nonces WHERE at < ?`, before.Unix())
 	return err
+}
+
+// QueueAudit stores an audit record (JSON) in the transaction, with the
+// hub key's signature of it and its row id (sign), for the audit log once
+// the transaction commits (see Store.AuditOutbox).
+func (t *Tx) QueueAudit(record []byte, sign func(id int64) string) error {
+	res, err := t.tx.Exec(`INSERT INTO audit_outbox(record, sig) VALUES (?, '')`, record)
+	if err != nil {
+		return err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return err
+	}
+	_, err = t.tx.Exec(`UPDATE audit_outbox SET sig = ? WHERE id = ?`, sign(id), id)
+	return err
+}
+
+// Outboxed is an audit record of a committed change awaiting the log.
+type Outboxed struct {
+	ID     int64
+	Record []byte
+	Sig    string
+}
+
+// AuditOutbox returns the audit records awaiting the log, in commit order.
+// A database from before the outbox (read only, so not migrated) has none.
+func (s *Store) AuditOutbox(ctx context.Context) ([]Outboxed, error) {
+	return auditOutbox(ctx, s.db)
+}
+
+func auditOutbox(ctx context.Context, q querier) ([]Outboxed, error) {
+	var n int
+	if err := q.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'audit_outbox'`).Scan(&n); err != nil || n == 0 {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id, record, sig FROM audit_outbox ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Outboxed
+	for rows.Next() {
+		var o Outboxed
+		if err := rows.Scan(&o.ID, &o.Record, &o.Sig); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// AuditSnapshot reads the outbox and every decision as of one instant
+// (one read transaction), for verification against a running hub.
+func (s *Store) AuditSnapshot(ctx context.Context) ([]Outboxed, []Decision, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	out, err := auditOutbox(ctx, tx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var ds []Decision
+	var since int64
+	for {
+		page, err := allDecisions(ctx, tx, since, 500)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(page) == 0 {
+			return out, ds, nil
+		}
+		ds = append(ds, page...)
+		since = page[len(page)-1].Seq
+	}
+}
+
+// DropAudit removes an outboxed record once it is in the audit log.
+func (s *Store) DropAudit(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM audit_outbox WHERE id = ?`, id)
+	return err
+}
+
+// Device is an approval device the human confirmed (mobile facade).
+type Device struct {
+	ID        string
+	Record    []byte
+	State     string // DeviceActive or DeviceRevoked
+	SignCount uint32
+	Created   time.Time
+	Updated   time.Time
+}
+
+// Device states.
+const (
+	DeviceActive  = "active"
+	DeviceRevoked = "revoked"
+)
+
+// ErrDeviceExists is a device id already stored.
+var ErrDeviceExists = errors.New("device already registered")
+
+// PutDevice stores a new active device.
+func (t *Tx) PutDevice(d Device) error {
+	var n int
+	if err := t.tx.QueryRow(`SELECT count(*) FROM devices WHERE id = ?`, d.ID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return ErrDeviceExists
+	}
+	_, err := t.tx.Exec(`INSERT INTO devices (id, record, state, sign_count, created, updated) VALUES (?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Record, DeviceActive, int64(d.SignCount), d.Created.Unix(), d.Created.Unix())
+	return err
+}
+
+// Device returns device id.
+func (t *Tx) Device(id string) (Device, error) {
+	var d Device
+	var sc, created, updated int64
+	err := t.tx.QueryRow(`SELECT id, record, state, sign_count, created, updated FROM devices WHERE id = ?`, id).
+		Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+	return d, err
+}
+
+// SetDeviceState changes a device's state.
+func (t *Tx) SetDeviceState(id, st string, now time.Time) error {
+	res, err := t.tx.Exec(`UPDATE devices SET state = ?, updated = ? WHERE id = ?`, st, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSignCount records the authenticator counter of a device's last
+// assertion.
+func (t *Tx) SetSignCount(id string, n uint32, now time.Time) error {
+	_, err := t.tx.Exec(`UPDATE devices SET sign_count = ?, updated = ? WHERE id = ?`, int64(n), now.Unix(), id)
+	return err
+}
+
+// Devices lists every device, oldest first.
+func (s *Store) Devices(ctx context.Context) ([]Device, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, record, state, sign_count, created, updated FROM devices ORDER BY created, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Device
+	for rows.Next() {
+		var d Device
+		var sc, created, updated int64
+		if err := rows.Scan(&d.ID, &d.Record, &d.State, &sc, &created, &updated); err != nil {
+			return nil, err
+		}
+		d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }

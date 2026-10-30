@@ -10,6 +10,76 @@ v0.5.0 or later; older locks ignore the new `requests` member of the
 decisions poll. A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
+- Mobile facade (#10): an installable web app (embedded, no build step) on
+  its own listener, published on host loopback for the human's TLS reverse
+  proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones
+  pair with `lock mobile pair` (one-time code, WebAuthn registration with
+  user verification, fingerprint confirmed at the terminal); `lock up`
+  reviews paired devices and pins them at the locks that set
+  `devices: true` (`--devices-file`; their image needs lockkit ≥ v0.4.0),
+  with `seal_clear` (clear screens sealed end to end to the phones) and
+  `require_device` (locks refuse approvals of those risk classes not
+  signed by a phone). Each decision on the phone is a WebAuthn assertion
+  over the decision and the hash of the lock's signed ticket, checked by
+  the hub before it signs and by the locks after (lockkit v0.4.0). Sign
+  counters, single-use challenges and drafts, `__Host-` session cookie,
+  Origin and custom-header checks on every POST, strict CSP. The phone
+  answers every risk class but `unlock`. Audit records carry the device;
+  device pairings and revocations are audited. `lock mobile list|revoke`;
+  `lock doctor` reports devices paired since the last `lock up`.
+- Requires lockkit v0.4.0 or later (this release builds on v0.6.0; compatible: tickets and decisions without
+  devices are unchanged); locks need lockkit v0.4.0 to pin devices.
+- `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
+  lock-side audit logs (lockkit's `audit.log`, or its directory): the
+  chain (lockkit `audit.Verify`), and every record of a hub decision
+  (`approval: hub` approved or denied, or any record with `hub_sig`)
+  against the decision the hub signed for that instance and ticket: same
+  outcome, approver and facade, and same signature when the record has
+  one (locksql does not record `hub_sig` yet: its records are checked on
+  the rest, and counted). A record whose hub fields do not read fails.
+  Hub decisions the log has no record of are counted (not acted on yet,
+  or cut). With `--anchors FILE` (host only, 0600) each verified log's
+  anchor is kept between runs and the next run uses lockkit
+  `audit.VerifyAnchored`, so a log cut before it or stripped of its chain
+  is refused; a failed log keeps its old anchor (a cut after the anchor
+  is not seen until the next run). A second hub approval of one ticket
+  fails. Not checked: records a hub-mode lock should not write at all
+  (a local approval).
+
+- `lock doctor` asks the hub for its queue over the facade socket: it
+  says whether the hub answers, shows the pending caps and rate limit
+  (lockkit's defaults: each lock 20 pending plans, 10 new tickets per
+  5 min, counted in memory; the hub: 50 per lock), that this quota is per
+  lock instance, shared by every agent of the workspace, and each lock's
+  pending tickets on the hub (warned from 80%).
+
+- Audit records are written after the database commit, through a
+  transactional outbox: each change stores its record in its own
+  transaction, signed with the hub key together with its outbox row id,
+  and the record is appended to `tickets.jsonl` once the transaction
+  commits (after a crash, at the next start, before serving). A
+  rolled-back change never has an audit record, and a committed one
+  always gets one, exactly once: each record now carries its `outbox` id,
+  ids only grow along the log, and a row replayed into the database, or
+  not signed for its id, stops the flush instead of being signed into
+  the log. While the log cannot be written, every change starting after
+  the failure is refused (HTTP 503 `audit_down`); the changes already in
+  flight commit with their records waiting in the outbox, and their
+  decisions are delivered to locks meanwhile (durable and signed, not yet
+  in the log). A failed append is cut back from the log, and a torn last
+  line left by a power loss is cut at start, so a retry chains the record
+  once. `lock audit verify` reads the database as of one instant, then
+  the log, so it can run against a live hub; it accepts a decision whose
+  record is still in the outbox, says how many records await the log, and
+  reports replayed or foreign outbox rows. An older `lock audit verify`
+  refuses a log with `outbox` fields: use this release's.
+  A `hub.db` restored from a backup older than `tickets.jsonl` makes
+  every new outbox row look like a replay, and the hub refuses to start:
+  restore both together (or set `audit_outbox`'s row in `sqlite_sequence`
+  past the log's last `outbox` id). Not detected: an outbox row deleted
+  from the database by someone who can write it, before its flush, for a
+  record other than a decision (decisions are cross-checked).
+
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
   (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the

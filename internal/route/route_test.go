@@ -10,7 +10,7 @@ func TestDefaults(t *testing.T) {
 	want := map[string][]string{
 		Read: {TTY, Deck, Mobile, Slack, Telegram}, ReadPII: {TTY, Deck, Mobile, Slack, Telegram},
 		Write: {TTY, Deck, Mobile, Slack, Telegram}, ProdWrite: {TTY, Deck, Mobile},
-		PolicyLoosen: {TTY, Deck, Mobile}, Unlock: {TTY, Deck, Mobile},
+		PolicyLoosen: {TTY, Deck, Mobile}, Unlock: {TTY, Deck},
 	}
 	for risk, fs := range want {
 		if got := r.Facades("any", risk); !slices.Equal(got, fs) {

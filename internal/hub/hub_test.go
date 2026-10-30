@@ -264,3 +264,48 @@ func TestQueueVersionNoGap(t *testing.T) {
 		t.Errorf("up-to-date poll returned early (v %d)", v2)
 	}
 }
+
+// Only the mobile facade carries a device's assertion, and it always
+// does; the device must be active at the hub.
+func TestDeviceVerdicts(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "write", e.Clock.T, 24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	ref := store.Ref{Instance: "crm-prod", ID: "T1"}
+	dev := hub.Verdict{Approved: true, ApproverID: "webauthn:x", Facade: "mobile", Nonce: "n", At: e.Clock.T,
+		Device: []byte(`{}`), DeviceID: "webauthn:x", DeviceRecord: []byte(`{}`)}
+	for name, v := range map[string]hub.Verdict{
+		"mobile without assertion": {Approved: true, ApproverID: "webauthn:x", Facade: "mobile"},
+		"tty with an assertion":    func() hub.Verdict { v := dev; v.Facade = "tty"; return v }(),
+		"mobile, partial":          func() hub.Verdict { v := dev; v.DeviceRecord = nil; return v }(),
+	} {
+		if _, err := e.Hub.Decide(ctx, ref, v); !errors.Is(err, hub.ErrBadRequest) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := e.Hub.Decide(ctx, ref, dev); !errors.Is(err, hub.ErrDevice) {
+		t.Errorf("unknown device: %v", err)
+	}
+	old := dev
+	old.At = e.Clock.T.Add(-hub.DeviceWindow - time.Second)
+	if _, err := e.Hub.Decide(ctx, ref, old); !errors.Is(err, hub.ErrDevice) {
+		t.Errorf("stale device time: %v", err)
+	}
+	if err := e.Hub.AddDevice(ctx, "webauthn:x", []byte(`{"r":1}`), "fp", "host:uid:1", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Hub.UseCounter(ctx, "webauthn:x", 5); !errors.Is(err, hub.ErrDevice) {
+		t.Errorf("counter not growing: %v", err)
+	}
+	if err := e.Hub.UseCounter(ctx, "webauthn:x", 6); err != nil {
+		t.Error(err)
+	}
+	if err := e.Hub.RevokeDevice(ctx, "webauthn:x", "host:uid:1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Hub.UseCounter(ctx, "webauthn:x", 7); !errors.Is(err, hub.ErrDevice) {
+		t.Errorf("revoked device: %v", err)
+	}
+}

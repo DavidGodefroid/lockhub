@@ -264,10 +264,20 @@ func (h *Hub) AnswerRequest(instance, id string, body []byte) error {
 
 // auditRequest records a reveal or a renewal: who asked, on which
 // facade, and how it ended. Never what the lock answered.
+// Through the outbox like every record, so the log keeps commit order.
 func (h *Hub) auditRequest(kind string, tk store.Ticket, a Asker, outcome string) error {
-	_, err := h.c.Audit.Append(audit.Record{Event: kind, Ticket: tk.ID, Instance: tk.Instance, Risk: tk.Risk,
-		State: string(tk.State), Approver: a.ApproverID, Facade: a.Facade, Reason: outcome})
-	return err
+	ctx := context.Background()
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
+	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
+		return h.audit(tx, audit.Record{Event: kind, Ticket: tk.ID, Instance: tk.Instance, Risk: tk.Risk,
+			State: string(tk.State), Approver: a.ApproverID, Facade: a.Facade, Reason: outcome})
+	})
+	if err != nil {
+		return err
+	}
+	return h.FlushAudit(ctx)
 }
 
 func outcome(err error) string {

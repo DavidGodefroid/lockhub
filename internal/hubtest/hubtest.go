@@ -189,6 +189,11 @@ type Env struct {
 	Audit string
 	Clock *Clock
 	Pub   ed25519.PublicKey
+	// Dir is the data directory (hub.db, tickets.jsonl); Log and Key
+	// are the open audit log and the hub key.
+	Dir string
+	Log *audit.Log
+	Key ed25519.PrivateKey
 }
 
 // New builds a hub for locks, MaxPending max (0: default).
@@ -224,5 +229,5 @@ func NewWith(t testing.TB, mod func(*hub.Config), locks ...Lock) Env {
 		mod(&cfg)
 	}
 	h := hub.New(cfg)
-	return Env{Hub: h, Store: st, Audit: ap, Clock: clk, Pub: pub}
+	return Env{Hub: h, Store: st, Audit: ap, Clock: clk, Pub: pub, Dir: dir, Log: al, Key: priv}
 }
