@@ -5,6 +5,8 @@ digest).
 
 ## Unreleased
 
+- Builds on lockkit v0.3.1 (was a pre-release commit, 1d085bb).
+
 - The generated lock command passes `--hub-plain-http`: lockkit refuses
   an http:// hub without it (DavidGodefroid/lockkit#72), and the hub is
   reached by its service name on the internal `lockhub` network.
