@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+- A hub started without `routing.json` (or with one that lists no
+  `facades`) now routes tickets to the local facades only (terminal,
+  deck, phone), never to Slack or Telegram (#61, invariant I9). It used
+  to route and notify read, read-pii and write tickets to both chat
+  facades, though none ran. A chat facade is routed only when
+  `routing.json` lists it, as `lock up` writes it. Upgrade note: a hub
+  run by hand (not by `lock up`) with a routing.json that omits
+  `facades` no longer offers tickets on chat; list the facades in it.
+
 ## v0.2.2 (2026-10-30)
 
 Supported locks: as v0.2.1. `lock add` now pins locksql v0.11.0 or later
