@@ -99,8 +99,9 @@ type Config struct {
 type Hub struct {
 	c Config
 
-	mu      sync.Mutex
-	waiters map[string]chan struct{} // instance → closed on a new decision
+	mu       sync.Mutex
+	waiters  map[string]chan struct{} // instance → closed on a new decision
+	queueVer uint64                   // bumped on every change of the pending queue
 }
 
 // New returns a hub.
@@ -227,21 +228,35 @@ func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec aud
 // queueKey wakes facades waiting for a change of the pending queue.
 const queueKey = "\x00queue"
 
-// Queue returns the pending tickets, oldest first. With wait > 0 and the
-// queue unchanged since version, it waits up to wait for a change.
-func (h *Hub) Queue(ctx context.Context, wait time.Duration) ([]store.Ticket, error) {
-	ch := h.waiter(queueKey)
-	if wait > 0 {
-		t := time.NewTimer(wait)
-		defer t.Stop()
-		select {
-		case <-ch:
-		case <-t.C:
-		case <-ctx.Done():
-			return nil, ctx.Err()
+// Queue returns the pending tickets, oldest first, and the queue's
+// version. With wait > 0 and the version still since, it first waits up
+// to wait for a change, so a facade polling with its last version never
+// misses one.
+func (h *Hub) Queue(ctx context.Context, since uint64, wait time.Duration) ([]store.Ticket, uint64, error) {
+	h.mu.Lock()
+	ver := h.queueVer
+	h.mu.Unlock()
+	if wait > 0 && ver == since {
+		ch := h.waiter(queueKey)
+		h.mu.Lock()
+		ver = h.queueVer
+		h.mu.Unlock()
+		if ver == since {
+			t := time.NewTimer(wait)
+			defer t.Stop()
+			select {
+			case <-ch:
+			case <-t.C:
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			}
 		}
 	}
-	return h.c.Store.Tickets(ctx, state.Pending)
+	h.mu.Lock()
+	ver = h.queueVer
+	h.mu.Unlock()
+	tks, err := h.c.Store.Tickets(ctx, state.Pending)
+	return tks, ver, err
 }
 
 // Withdraw is a lock taking back one of its pending tickets.
@@ -323,6 +338,9 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 func (h *Hub) notify(instance string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if instance == queueKey {
+		h.queueVer++
+	}
 	if ch, ok := h.waiters[instance]; ok {
 		close(ch)
 		delete(h.waiters, instance)

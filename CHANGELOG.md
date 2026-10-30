@@ -5,6 +5,17 @@ digest).
 
 ## Unreleased
 
+- `lock approve` (#3): the terminal facade. It follows the hub's queue on
+  the host facade socket (`lockhub serve --facade-socket`, default
+  `$XDG_RUNTIME_DIR/lockhub/facade.sock`, mode 0600), shows each masked
+  screen through lockkit's terminal sanitizer, and sends y / n <reason> /
+  skip; production tickets need their name typed. The approver is
+  recorded from the socket peer's uid. Refuses a non-terminal stdin.
+- Facade API (host socket only): `GET /v1/queue?wait=`,
+  `POST /v1/tickets/{instance}/{id}/decide` (tty or deck),
+  `GET /v1/decided?since=` and `GET /v1/tickets/{instance}/{id}` (read-only,
+  for lea).
+
 - Ticket store, state machine and signed decisions (#2): SQLite store
   (pure Go) keyed by (instance, ticket id); states pending, approved,
   denied, withdrawn, expired, consumed; one decision per ticket, signed
