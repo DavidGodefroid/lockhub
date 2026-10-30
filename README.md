@@ -20,7 +20,10 @@ Early development. This repository holds:
 - `lockhub`: the hub server (`lockhub serve`), shipped as a cosign-signed image
   `ghcr.io/davidgodefroid/lockhub`, pinned by digest;
 - `lock`: the host CLI (`lock up`, `lock approve`, `lock audit verify`, …),
-  shipped in the same image and release.
+  shipped in the same image and release, and as static archives
+  (`lock_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
+  Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
+  installs into `~/.local/bin`.
 
 The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
