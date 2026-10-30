@@ -231,6 +231,7 @@ func TestConfigRefusals(t *testing.T) {
 		"allowed_uids negative":     strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [-1]", 1),
 		"allowed_uids too big":      strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [4294967295]", 1),
 		"allowed_uids console's":    strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [10011]", 1),
+		"allowed_uids nobody":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [65534]", 1),
 		"allowed_uids twice":        strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [1000, 1000]", 1),
 		"allowed_uids not a number": strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: [me]", 1),
 		"allowed_uids scalar":       strings.Replace(yamlConf(""), "    image: "+mqImg, "    image: "+mqImg+"\n    allowed_uids: 1000", 1),

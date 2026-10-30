@@ -10,7 +10,7 @@ digest).
   lockfile v0.5.1 or later), so that lea's agents, which run as the host
   user's uid with no account in the lock's image, reach it. Reviewed like
   any change; uids only, each once, never root nor the console's own uid;
-  refused on locksql (no such flag yet) and lockhttp locks. `lock import`
+  never 65534 (nobody); refused on locksql (no such flag yet) and lockhttp locks. `lock import`
   keeps the uids every declaration lists.
 
 ## v0.2.3 (2026-10-30)

@@ -149,8 +149,10 @@ func validAllowedUIDs(name string, l Lock) error {
 	}
 	for i, u := range l.AllowedUIDs {
 		switch {
-		case u <= 0 || u >= 1<<32-1:
+		case u <= 0 || int64(u) >= 1<<32-1:
 			return fmt.Errorf("locks.%s.allowed_uids: %d is root or not a uid", name, u)
+		case u == 65534:
+			return fmt.Errorf("locks.%s.allowed_uids: 65534 is nobody, the kernel's overflow uid", name)
 		case strconv.Itoa(u) == Kinds[l.Type].UID:
 			return fmt.Errorf("locks.%s.allowed_uids: %d is the console's own uid", name, u)
 		case slices.Contains(l.AllowedUIDs[:i], u):
