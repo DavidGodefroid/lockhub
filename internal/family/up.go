@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
@@ -33,6 +34,10 @@ type Exec struct{ Stderr io.Writer }
 // Run implements Runner.
 func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	// Nothing of the user's compose settings (COMPOSE_PROFILES would
+	// start the setup services, COMPOSE_FILE add a file): lock up passes
+	// everything compose needs.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(e string) bool { return strings.HasPrefix(e, "COMPOSE_") })
 	if stdin != nil {
 		cmd.Stdin = strings.NewReader(string(stdin))
 	}
@@ -96,6 +101,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
 			fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
+		if l.Profile != "" {
+			s = append(s, fmt.Sprintf("lock %s profile %s", n, l.Profile))
+		}
 		if m := c.Hub.Mobile; m != nil {
 			if !l.Devices {
 				s = append(s, fmt.Sprintf("lock %s pins no device: not answered on mobile", n))
@@ -146,12 +154,42 @@ var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
 
 // Do runs lock up.
 func (u *Up) Do(ctx context.Context) error {
-	c, err := Load(u.File)
+	// Read once: what is reviewed is what a legacy file is adopted as.
+	raw, err := readConfig(u.File)
 	if err != nil {
 		return err
 	}
-	ws, _ := filepath.Abs(filepath.Dir(u.File))
+	c, err := decode(raw, u.File, true)
+	if err != nil {
+		return err
+	}
+	// The workspace's canonical path (links resolved), as lea sees it:
+	// the project, the consoles' working directory and the socket names
+	// derive from it.
+	ws, err := filepath.Abs(Workspace(Canonical(u.File)))
+	if err != nil {
+		return err
+	}
 	project := Project(ws)
+	// Each lock's console reads its own profile, from the workspace: a
+	// copy, reviewed below (profile.go).
+	profiles := map[string]*Profile{}
+	for _, t := range types(c) {
+		k := Kinds[t]
+		uid, _ := strconv.Atoi(k.UID)
+		gid, _ := strconv.Atoi(k.GID)
+		pr, err := ReadProfile(profileDir(ws, t), uid, gid)
+		if err != nil {
+			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lock up)", t, err, t)
+		}
+		if t == "locksql" && !pr.Has("pii/", ".toml") {
+			// The copy is read-only: a console that must write its first
+			// PII rule set there would not start.
+			return fmt.Errorf("profile of the locksql locks: no PII rule set in %s: start the console once with locksql's own launcher (it writes .locksql/pii/<set>.toml after your review), then lock up",
+				filepath.Join(profileDir(ws, t), "pii"))
+		}
+		profiles[t] = pr
+	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
 	// Everything lock up writes and runs from lives in host-only
@@ -163,7 +201,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
-	paths := Paths{HubData: hubData, FacadeDir: facadeDir, HubPub: hubPubPath, User: u.User}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, User: u.User}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
 		return fmt.Errorf("paired devices: %w", err)
@@ -232,7 +270,16 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	lockPubs := map[string]string{}
 	for _, n := range c.Instances() {
-		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		var out []byte
+		var err error
+		if Kinds[c.Locks[n].Type].Gate {
+			// lockhttp: the gate's key, in the gate's own volume.
+			if _, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "gatehome-"+n)...); err == nil {
+				out, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "gatekey-"+n)...)
+			}
+		} else {
+			out, err = u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lock-"+n, "hub-key", "--instance", n)...)
+		}
 		if err != nil {
 			return fmt.Errorf("key of %s: %w", n, err)
 		}
@@ -246,6 +293,12 @@ func (u *Up) Do(ctx context.Context) error {
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := append(Summary(c, hp, lockPubs), chatTokens(c, hubData)...)
+	for _, t := range types(c) {
+		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
+		for _, l := range profiles[t].Lines {
+			sum = append(sum, fmt.Sprintf("profile %s %s", t, l))
+		}
+	}
 	sum = append(sum, devicesSummary(devices)...)
 	fp := fingerprint(sum)
 	appliedPath := filepath.Join(u.State, "applied.json")
@@ -312,7 +365,20 @@ func (u *Up) Do(ctx context.Context) error {
 		paths.Devices = snapPath
 	}
 	paths.Config = fp
+	paths.Profiles = map[string]string{}
+	for t, pr := range profiles {
+		paths.Profiles[t] = pr.Fingerprint
+	}
 	composeYAML = []byte(Compose(c, paths))
+	// The profiles go on the setup service's stdin (they can hold
+	// secrets; a process's arguments are public): compose reads this
+	// confirmed file from the private state directory meanwhile.
+	if err := u.copyProfiles(ctx, c, project, composeYAML, profiles); err != nil {
+		return err
+	}
+	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
+		return fmt.Errorf("hub key for the locks: %w", err)
+	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}
@@ -331,7 +397,36 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
 	}
+	// A legacy root lockfamily.yaml moves into .lockfamily (lea's agents
+	// only read it there): exactly what the human reviewed.
+	if Legacy(u.File) {
+		nf := filepath.Join(ws, Dir, FileName)
+		if err := ensureDir(nf); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(nf); errors.Is(err, os.ErrNotExist) {
+			if err := writeFileMode(nf, raw, 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(u.Out, "%s now lives in %s (lea's agents only read it there); remove %s\n", FileName, nf, u.File)
+		}
+	}
+	st := NewUpState(c, project, ws, hp)
+	// The authoritative copy is lock up's own (host only); lea reads the
+	// workspace's, checks it is the user's and that no one else can write
+	// it, and checks every volume's labels with docker before mounting it.
+	sb, _ := json.MarshalIndent(st, "", "  ")
+	if err := os.WriteFile(filepath.Join(u.State, UpFile), append(sb, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := writeUpState(ws, st); err != nil {
+		return err
+	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "  lock attach %s\n", n)
+	}
 	return nil
 }
 
@@ -384,4 +479,29 @@ func (c *Config) anyDevices() bool {
 func validPub(s string) bool {
 	b, err := base64.StdEncoding.DecodeString(s)
 	return err == nil && len(b) == 32 && keys.Public(b) == s
+}
+
+// copyProfiles copies each reviewed profile into its volume, the archive
+// on the stdin of the setup service profile-<type>.
+func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, composeYAML []byte, profiles map[string]*Profile) error {
+	f, err := os.CreateTemp(u.State, ".compose-*.yaml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	_, err = f.Write(composeYAML)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	for _, t := range types(c) {
+		args := []string{"compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
+			"run", "--rm", "-T", "--no-deps", "profile-" + t}
+		if _, err := u.Run.Run(ctx, profiles[t].Tar, "docker", args...); err != nil {
+			return fmt.Errorf("profile of the %s locks: %w", t, err)
+		}
+	}
+	return nil
 }

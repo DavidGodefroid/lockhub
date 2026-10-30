@@ -19,6 +19,36 @@ digest).
   notifications" button; the service worker shows a generic
   notification. `lock up` reviews push and gives the hub its `egress-hub`
   network for it.
+- lock up runs consoles lea's agents can reach, and tells lea how
+  (docs/lock-up.md):
+  - lockfamily.yaml lives in `.lockfamily/` (lea mounts it read-only in
+    its agents' containers); a legacy `./lockfamily.yaml` is still read,
+    with a warning. lock import finds `*/.lockfamily/lockfamily.yaml` (or
+    a legacy `*/lockfamily.yaml`).
+  - After applying, lock up writes `.lockfamily/up.json`: the compose
+    project, the hub's network and key, each lock's socket volume
+    (labelled `dev.lockfamily.role=socket`, which lea checks before it
+    mounts one) and clients group.
+  - Each console runs as its image's console account, with a terminal
+    (`tty`, `stdin_open`): it asks its policy and the credentials it does
+    not take from Vault there; `lock attach INSTANCE` answers it. Its own
+    profile directory (`<workspace>/.<type>`) is never mounted: lock up
+    snapshots it (no links, the user's own files only), shows its
+    fingerprint in the review, and copies the reviewed archive into a
+    root-written volume, read-only in the lock (at the same path for
+    locksql and lockmq, whose socket name derives from the project path). `profile:` (optional)
+    names the profile; lockfile's defaults to `default`.
+  - The hub's public key reaches the locks in the `hubkey` volume, written
+    by root, read-only in the locks (locksql refuses a key file another
+    account could rewrite).
+  - lockhttp: the hub is asked by the gate, which lea runs beside its
+    proxy, not by the console (lockhttp#11). lock up runs the lockhttp
+    console (policy only, no hub network) and makes the gate's own volume
+    and instance key; lea's gate uses them.
+- lock add pins the latest release (or `--version vX.Y.Z`) of the lock,
+  and of the hub for a new workspace, by digest, once cosign verified it
+  was signed by that repository's release workflow for that tag.
+  `--image` still pins one by hand.
 - Mobile facade (#10): an installable web app (embedded, no build step) on
   its own listener, published on host loopback for the human's TLS reverse
   proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones

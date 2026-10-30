@@ -55,7 +55,11 @@ func TestAddRefusals(t *testing.T) {
 }
 
 func TestAddCreatesFreshWorkspace(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "lockfamily.yaml")
+	ws := t.TempDir()
+	file := Locate(ws)
+	if file != filepath.Join(ws, Dir, FileName) {
+		t.Fatalf("a new lockfamily.yaml goes in .lockfamily: %s", file)
+	}
 	if err := Add(file, AddOptions{Type: "locksql", Name: "crm", Image: sqlImg}); err == nil || !strings.Contains(err.Error(), "--hub-image") {
 		t.Fatalf("no hub image: %v", err)
 	}
@@ -72,7 +76,20 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 	if c.Hub.Image != hubImg || c.Locks["crm"].Image != sqlImg {
 		t.Errorf("%+v", c)
 	}
-	// Then lock up starts it.
+	if fi, err := os.Stat(filepath.Dir(file)); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf(".lockfamily: %v", err)
+	}
+	// Then lock up starts it, once the lock's profile exists.
+	f0 := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
+	if _, err := upFor(t, file)("y\n", f0); err == nil || !strings.Contains(err.Error(), "profile of the locksql locks") {
+		t.Fatalf("lock up without the lock's profile: %v", err)
+	}
+	os.Mkdir(filepath.Join(ws, ".locksql"), 0o755)
+	f1 := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
+	if _, err := upFor(t, file)("y\n", f1); err == nil || !strings.Contains(err.Error(), "no PII rule set") {
+		t.Fatalf("lock up of a locksql profile without its PII rule set: %v", err)
+	}
+	piiSet(ws)
 	f := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
 	u := upFor(t, file)
 	if out, err := u("y\n", f); err != nil || !f.ran("up -d") {

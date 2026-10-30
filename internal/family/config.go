@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -109,11 +110,18 @@ func (m *Mobile) validate() error {
 type Lock struct {
 	Type  string `yaml:"type"`
 	Image string `yaml:"image"`
+	// Profile is the name of the profile the console serves, in the
+	// lock's own configuration (<workspace>/.<type>). Default: for
+	// lockfile, whose console needs one, "default"; for the others, their
+	// only profile, or the one typed at the console's terminal.
+	Profile string `yaml:"profile,omitempty"`
 	// Devices: the lock pins the paired phones (its image is on lockkit
 	// v0.4.0 or later and takes --devices-file). Without it, the lock
 	// refuses every decision taken on a phone.
 	Devices bool `yaml:"devices,omitempty"`
 }
+
+var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // Types are the lock types lock up knows, and their image repositories.
 var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
@@ -122,11 +130,22 @@ var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-
 
 // Load reads and validates path.
 func Load(path string) (*Config, error) {
-	b, err := os.ReadFile(path)
+	b, err := readConfig(path)
 	if err != nil {
 		return nil, err
 	}
 	return decode(b, path, true)
+}
+
+// readConfig reads the lockfamily.yaml at path; in .lockfamily, only once
+// the directory is the user's own that no one else writes (not a link).
+func readConfig(path string) ([]byte, error) {
+	if !Legacy(path) {
+		if err := ownDir(filepath.Dir(path)); err != nil {
+			return nil, err
+		}
+	}
+	return os.ReadFile(path)
 }
 
 // decode parses and validates a lockfamily.yaml; needLocks refuses one
@@ -204,6 +223,9 @@ func (c *Config) validate(needLocks bool) error {
 		}
 		if !slices.Contains(Types, l.Type) {
 			return fmt.Errorf("locks.%s.type: want one of %s", name, strings.Join(Types, ", "))
+		}
+		if l.Profile != "" && !profileName.MatchString(l.Profile) {
+			return fmt.Errorf("locks.%s.profile: a profile name (letters, digits, _ . -)", name)
 		}
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
