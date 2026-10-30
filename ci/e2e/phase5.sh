@@ -87,7 +87,7 @@ for order in strict-first strict-last; do
 	for l in shared a-only b-only; do grep -q "^  $l:" "$f" || die "$l not merged ($order)"; done
 	r=$(sed -n '/^  routing:/,/^locks:/p' "$f" | tr -d ' \n')
 	echo "$order: $r"
-	case "$r" in *shared:-tty) ;; *) cat "$f"; die "routing of shared is not exactly [tty] ($order)" ;; esac
+	case "$r" in routing:shared:-ttylocks:) ;; *) cat "$f"; die "routing of shared is not exactly [tty] ($order)" ;; esac
 	case "$r" in *deck*) die "a facade one sub-project refuses was kept ($order)" ;; esac
 done
 echo "phase 5: OK"
