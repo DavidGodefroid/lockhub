@@ -5,6 +5,12 @@ digest).
 
 ## Unreleased
 
+- `lock doctor` asks the hub for its queue over the facade socket: it
+  says whether the hub answers, shows the pending caps and rate limit
+  (each lock: 20 pending, 10 new tickets per 5 min; the hub: 50 per lock)
+  and that this quota is per lock instance, shared by every agent of the
+  workspace, and each lock's use of it (warned from 80%).
+
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
   (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the

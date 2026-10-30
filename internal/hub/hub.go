@@ -80,6 +80,9 @@ var (
 	ErrRetype      = errors.New("approving this production ticket needs its name typed exactly")
 )
 
+// DefaultMaxPending is the hub's cap on an instance's pending tickets.
+const DefaultMaxPending = 50
+
 // Config builds a Hub.
 type Config struct {
 	Store *store.Store
@@ -88,7 +91,7 @@ type Config struct {
 	Key   ed25519.PrivateKey
 	// Locks are the lock instances allowed to push, by instance name.
 	Locks map[string]ed25519.PublicKey
-	// MaxPending caps an instance's pending tickets (default 50).
+	// MaxPending caps an instance's pending tickets (DefaultMaxPending).
 	MaxPending int
 	// Routes decides which facade may answer which ticket.
 	Routes route.Rules
@@ -110,7 +113,7 @@ type Hub struct {
 // New returns a hub.
 func New(c Config) *Hub {
 	if c.MaxPending == 0 {
-		c.MaxPending = 50
+		c.MaxPending = DefaultMaxPending
 	}
 	if c.MaxSkew == 0 {
 		c.MaxSkew = time.Minute
