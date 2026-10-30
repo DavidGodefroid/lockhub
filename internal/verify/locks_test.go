@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,3 +174,45 @@ type rawRecord string
 func (r rawRecord) AuditEvent() string { return "approved" }
 
 func (r rawRecord) MarshalJSON() ([]byte, error) { return []byte(r), nil }
+
+// The same hub approval recorded twice claims a second run.
+func TestReplayedApproval(t *testing.T) {
+	dir, pub := build(t, 1)
+	path := lockLog(t, dir, pub, nil)
+	p := filepath.Join(path, "audit.log")
+	b, _ := os.ReadFile(p)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	var rec map[string]any
+	json.Unmarshal([]byte(lines[1]), &rec)
+	delete(rec, "prev_hash")
+	l, _ := lkaudit.Open(kit.Product{Name: "locksql"}, filepath.Dir(path))
+	raw, _ := json.Marshal(rec)
+	if err := l.Append(rawRecord(raw)); err != nil {
+		t.Fatal(err)
+	}
+	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	if err != nil || reps[0].OK() || !strings.Contains(strings.Join(reps[0].Problems, ";"), "second approval") {
+		t.Fatalf("%+v %v", reps, err)
+	}
+}
+
+// A run record with the hub's signature is checked on the signature,
+// approver and facade, not as a decision.
+func TestRunRecordWithHubSig(t *testing.T) {
+	dir, pub := build(t, 1)
+	path := lockLog(t, dir, pub, nil)
+	b, _ := os.ReadFile(filepath.Join(path, "audit.log"))
+	var rec map[string]any
+	json.Unmarshal([]byte(strings.Split(strings.TrimSpace(string(b)), "\n")[1]), &rec)
+	delete(rec, "prev_hash")
+	rec["event"], rec["decision"] = "run", "ok"
+	raw, _ := json.Marshal(rec)
+	l, _ := lkaudit.Open(kit.Product{Name: "locksql"}, filepath.Dir(path))
+	if err := l.Append(rawRecord(raw)); err != nil {
+		t.Fatal(err)
+	}
+	reps, err := Locks(context.Background(), dir, pub, []LockLog{{"crm", path}}, nil)
+	if err != nil || !reps[0].OK() {
+		t.Fatalf("%+v %v", reps, err)
+	}
+}

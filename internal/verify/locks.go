@@ -119,6 +119,7 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 		sc.Buffer(make([]byte, 64<<10), 4<<20)
 		line := 0
 		recorded := map[string]bool{}
+		approvedSeen := map[string]bool{}
 		for sc.Scan() {
 			line++
 			var raw map[string]json.RawMessage
@@ -162,12 +163,19 @@ func Locks(ctx context.Context, dir string, hubKey ed25519.PublicKey, logs []Loc
 				r.bad("line %d (%s): a hub decision on %s the hub has not signed", line, rec.Event, key)
 			case rec.HubSig != "" && d.sig != rec.HubSig:
 				r.bad("line %d (%s): the hub signature differs from the hub's decision on %s", line, rec.Event, key)
-			case isDecision && rec.Event != want, rec.Decision != "" && rec.Decision != d.outcome:
+			case isDecision && (rec.Event != want || rec.Decision != "" && rec.Decision != d.outcome):
 				r.bad("line %d (%s, decision %q): the hub's decision on %s is %s", line, rec.Event, rec.Decision, key, d.outcome)
+			case rec.Event == lkaudit.EventApproved && approvedSeen[key]:
+				// A hub approval runs once: a second record of it claims a
+				// run the hub did not allow. (Denials repeat: one per try.)
+				r.bad("line %d (approved): a second approval of %s", line, key)
 			case d.approver != approver || d.facade != rec.Facade:
 				r.bad("line %d (%s): approver %s on %s, the hub's decision on %s says %s on %s", line, rec.Event, approver, rec.Facade, key, d.approver, d.facade)
 			}
 			recorded[key] = true
+			if rec.Event == lkaudit.EventApproved {
+				approvedSeen[key] = true
+			}
 		}
 		for key := range byTicket {
 			if strings.HasPrefix(key, l.Instance+"/") && !recorded[key] {

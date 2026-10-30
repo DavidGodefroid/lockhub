@@ -17,8 +17,10 @@ digest).
   or cut). With `--anchors FILE` (host only, 0600) each verified log's
   anchor is kept between runs and the next run uses lockkit
   `audit.VerifyAnchored`, so a log cut before it or stripped of its chain
-  is refused; a failed log keeps its old anchor. Lines after the anchor
-  are checked by the chain only.
+  is refused; a failed log keeps its old anchor (a cut after the anchor
+  is not seen until the next run). A second hub approval of one ticket
+  fails. Not checked: records a hub-mode lock should not write at all
+  (a local approval).
 
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries

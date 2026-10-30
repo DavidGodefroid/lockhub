@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -164,6 +165,7 @@ func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anch
 			return 1
 		}
 	}
+	kept := maps.Clone(anchors)
 	reps, err := verify.Locks(context.Background(), data, pub, logs, anchors)
 	if err != nil {
 		fmt.Fprintln(stderr, "lock audit verify:", err)
@@ -179,10 +181,11 @@ func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anch
 			continue
 		}
 		how := "not anchored (pass --anchors FILE to see a cut tail next time)"
-		if _, had := anchors[r.Instance]; r.Anchored {
-			how = fmt.Sprintf("anchored at line %d of the last run", anchors[r.Instance].Line)
-		} else if anchorsFile != "" && len(anchors) > 0 && !had {
-			how = "not anchored: no anchor kept for it yet (a first run, or its entry was removed)"
+		switch {
+		case r.Anchored:
+			how = fmt.Sprintf("anchored at line %d of the last run", kept[r.Instance].Line)
+		case anchorsFile != "":
+			how = "not anchored: no anchor kept for it yet (a first run, or its entry or the file was removed)"
 		}
 		fmt.Fprintf(stdout, "OK: %s: %d audit records chained (%d before the chain), %d hub decisions match the hub's, %s\n", r.Instance, r.Records, r.Legacy, r.HubDecisions, how)
 		if r.Unsigned > 0 {
