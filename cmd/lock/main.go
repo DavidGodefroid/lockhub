@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/approve"
+	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/verify"
 )
 
@@ -27,13 +28,15 @@ var version = "dev"
 const usage = `lock: the Lock Family CLI
 
 Usage:
+  lock up [--file lockfamily.yaml] [--dry-run]
+                                          review and start the hub and the workspace's locks
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lock version                            print the version
   lock help                               show this help
 
-Coming: lock up, lock add, lock import, lock doctor.
+Coming: lock add, lock import, lock doctor.
 `
 
 func main() {
@@ -54,6 +57,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 0
 	case "approve":
 		return approveCmd(args[1:], stdin, stdout, stderr)
+	case "up":
+		return upCmd(args[1:], stdin, stdout, stderr)
 	case "audit":
 		if len(args) < 2 || args[1] != "verify" {
 			fmt.Fprintln(stderr, "usage: lock audit verify --data DIR --hub-key-file FILE")
@@ -107,14 +112,67 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// defaultSocket is where lock up publishes the hub's facade socket.
-func defaultSocket() string {
-	dir := os.Getenv("XDG_RUNTIME_DIR")
-	if dir == "" {
-		dir = filepath.Join(os.TempDir(), fmt.Sprintf("lockhub-%d", os.Getuid()))
+func runtimeDir() string {
+	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
+		return d
 	}
-	return filepath.Join(dir, "lockhub", "facade.sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("lockhub-%d", os.Getuid()))
 }
+
+func stateDir(project string) string {
+	d := os.Getenv("XDG_STATE_HOME")
+	if d == "" {
+		home, _ := os.UserHomeDir()
+		d = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(d, "lockfamily", project)
+}
+
+// hubUser is the uid:gid that makes the hub's files and facade socket the
+// host user's: root under a rootless engine (it is the host user there),
+// the host user's ids otherwise.
+func hubUser(ctx context.Context, r family.Runner) string {
+	// Docker reports rootless in SecurityOptions, Podman in Host.Security.
+	if out, err := r.Run(ctx, nil, "docker", "info", "--format", "{{.SecurityOptions}}"); err == nil && strings.Contains(string(out), "rootless") {
+		return "0:0"
+	}
+	if out, err := r.Run(ctx, nil, "docker", "info", "--format", "{{.Host.Security.Rootless}}"); err == nil && strings.TrimSpace(string(out)) == "true" {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+}
+
+func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("up", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	dry := fs.Bool("dry-run", false, "show the review, apply nothing")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fi, err := stdin.Stat(); !*dry && (err != nil || fi.Mode()&os.ModeCharDevice == 0) {
+		fmt.Fprintln(stderr, "lock up: changes are confirmed at a terminal; stdin is not one")
+		return 1
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock up:", err)
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	r := family.Exec{Stderr: stderr}
+	u := &family.Up{File: abs, State: stateDir(family.Project(filepath.Dir(abs))), Runtime: runtimeDir(),
+		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry}
+	if err := u.Do(ctx); err != nil {
+		fmt.Fprintln(stderr, "lock up:", err)
+		return 1
+	}
+	return 0
+}
+
+// defaultSocket is where lock up publishes the hub's facade socket.
+func defaultSocket() string { return filepath.Join(runtimeDir(), "lockhub", "facade.sock") }
 
 func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("approve", flag.ContinueOnError)

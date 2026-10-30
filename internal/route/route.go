@@ -52,9 +52,11 @@ func KnownRisk(r string) bool { return slices.Contains(risks, r) }
 
 // Rules is the routing in force. The zero value is the defaults.
 type Rules struct {
+	// Enabled lists the facades this hub runs; empty: all of them.
+	Enabled []string `json:"facades,omitempty"`
 	// Only, per instance, lists the facades that may answer it. Facades
 	// outside the defaults are ignored: Only narrows, never widens.
-	Only map[string][]string
+	Only map[string][]string `json:"only,omitempty"`
 }
 
 // Allowed reports whether facade f may decide a ticket of risk r from
@@ -67,6 +69,9 @@ func (r Rules) Allowed(inst, f, risk string) error {
 		return fmt.Errorf("unknown risk class %q", risk)
 	case !slices.Contains(local, f) && !slices.Contains(chatRisks, risk):
 		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
+	}
+	if len(r.Enabled) > 0 && !slices.Contains(r.Enabled, f) {
+		return fmt.Errorf("facade %s is not enabled on this hub", f)
 	}
 	if only, ok := r.Only[inst]; ok && !slices.Contains(only, f) {
 		return fmt.Errorf("instance %s is not routed to %s", inst, f)

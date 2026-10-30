@@ -4,7 +4,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +26,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 	"github.com/DavidGodefroid/lockhub/internal/ticketcodec"
 )
@@ -109,7 +113,13 @@ func openHub(data string) (*hub.Hub, func(), error) {
 		st.Close()
 		return nil, nil, err
 	}
-	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks})
+	routes, err := loadRoutes(filepath.Join(data, "routing.json"), locks)
+	if err != nil {
+		al.Close()
+		st.Close()
+		return nil, nil, err
+	}
+	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks, Routes: routes})
 	return h, func() { al.Close(); st.Close() }, nil
 }
 
@@ -162,6 +172,33 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// loadRoutes reads routing.json (written by lock up); missing: defaults.
+func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return route.Rules{}, nil
+	} else if err != nil {
+		return route.Rules{}, err
+	}
+	var r route.Rules
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return route.Rules{}, fmt.Errorf("%s: %w", path, err)
+	}
+	for _, f := range r.Enabled {
+		if !route.KnownFacade(f) {
+			return route.Rules{}, fmt.Errorf("%s: unknown facade %q", path, f)
+		}
+	}
+	for inst := range r.Only {
+		if _, ok := locks[inst]; !ok {
+			return route.Rules{}, fmt.Errorf("%s: unknown instance %q", path, inst)
+		}
+	}
+	return r, nil
 }
 
 // listenFacade serves the facade API on a unix socket created with mode

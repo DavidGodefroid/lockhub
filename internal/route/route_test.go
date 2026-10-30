@@ -52,3 +52,13 @@ func TestUnknown(t *testing.T) {
 		t.Error("unknown facade or risk accepted")
 	}
 }
+
+func TestEnabled(t *testing.T) {
+	r := Rules{Enabled: []string{TTY}}
+	if r.Allowed("i", Deck, Read) == nil {
+		t.Error("disabled facade allowed")
+	}
+	if r.Allowed("i", TTY, ProdWrite) != nil {
+		t.Error("enabled facade refused")
+	}
+}

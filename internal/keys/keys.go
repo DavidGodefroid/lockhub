@@ -78,7 +78,7 @@ func Load(path string) (ed25519.PrivateKey, error) {
 // Public encodes a public key as locks.json and `lockhub keygen` print it.
 func Public(k ed25519.PublicKey) string { return base64.StdEncoding.EncodeToString(k) }
 
-var instanceName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+var instanceName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 // ValidInstance reports whether name may name a lock instance.
 func ValidInstance(name string) bool { return instanceName.MatchString(name) }
