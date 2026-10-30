@@ -5,6 +5,19 @@ digest).
 
 ## Unreleased
 
+- Slack facade (#7): runs inside the hub when `hub.facades` lists
+  `slack`, in Socket Mode only (an outbound websocket: the hub listens
+  for nothing). Only the lock's masked screen is posted, every
+  agent-provided string escaped and kept inside code spans; the requester
+  is shown as unverified; never a reveal. Answers count only from the
+  team, channel and member ids of `hub.slack` in lockfamily.yaml
+  (reviewed by lock up, written to the hub's chat.json); production
+  tickets and the risk classes kept off chat get no buttons. Decisions
+  are signed by the hub as `slack:<team>:<user>`. The hub then joins its
+  own `egress-hub` network; without a chat facade it has no route out.
+  `lock add slack --team --channel --user` asks for the tokens at the
+  terminal and stores them 0600 with the hub's data, never in the
+  workspace; the hub reads them only when slack is enabled.
 - `lock add`, `lock import`, `lock doctor` (#9). `add` declares a lock
   (image pinned by digest) in lockfamily.yaml, keeping its comments;
   `import` merges sub-projects' lockfamily.yaml, keeping each instance's

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/route"
 )
@@ -101,6 +102,19 @@ func (d *Doctor) Do(ctx context.Context) int {
 			fail("hub lock list: the hub knows %s, lockfamily.yaml declares %s: run lock up", strings.Join(have, ", "), strings.Join(c.Instances(), ", "))
 		} else {
 			ok("hub lock list: a key for each lock")
+		}
+	}
+	if c != nil && c.Hub.Slack != nil {
+		var bad []string
+		for _, f := range []string{chatconf.SlackAppToken, chatconf.SlackBotToken} {
+			if _, err := chatconf.ReadSecret(filepath.Join(hubData, f)); err != nil {
+				bad = append(bad, err.Error())
+			}
+		}
+		if len(bad) > 0 {
+			fail("slack tokens: %s: run lock add slack", strings.Join(bad, "; "))
+		} else {
+			ok("slack tokens present, 0600")
 		}
 	}
 	if c != nil {

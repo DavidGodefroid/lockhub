@@ -17,12 +17,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockhub/internal/audit"
+	"github.com/DavidGodefroid/lockhub/internal/chatconf"
+	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
+	"github.com/DavidGodefroid/lockhub/internal/facade/slack"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
@@ -147,8 +151,20 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	chats, err := chatFacades(h, *data, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "lockhub:", err)
+		return 1
+	}
 	go sweep(ctx, h, stderr)
-	errc := make(chan error, 2)
+	errc := make(chan error, 2+len(chats))
+	for _, c := range chats {
+		go func() {
+			if err := c.Run(ctx); ctx.Err() == nil {
+				errc <- err
+			}
+		}()
+	}
 	go func() { errc <- srv.ListenAndServe() }()
 	if *facadeSock != "" {
 		fsrv, err := listenFacade(h, *facadeSock, *facadeMode, errc)
@@ -172,6 +188,39 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// chatFacades are the chat facades routing.json enables, with their
+// settings (chat.json) and secrets. A facade that is not enabled reads
+// no secret; one enabled without them refuses to start the hub.
+func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error) {
+	s, err := chatconf.Load(filepath.Join(data, chatconf.File))
+	if err != nil {
+		return nil, err
+	}
+	on := slices.Contains(h.Routes().Enabled, route.Slack)
+	var out []*chat.Facade
+	switch {
+	case on && s.Slack == nil:
+		return nil, errors.New("slack is enabled but chat.json has no slack section (run lock up)")
+	case !on && s.Slack != nil:
+		return nil, errors.New("chat.json configures slack but routing.json has it not enabled (run lock up)")
+	case on:
+		app, err := chatconf.ReadSecret(filepath.Join(data, chatconf.SlackAppToken))
+		if err != nil {
+			return nil, fmt.Errorf("slack app token: %w (run lock add slack)", err)
+		}
+		bot, err := chatconf.ReadSecret(filepath.Join(data, chatconf.SlackBotToken))
+		if err != nil {
+			return nil, fmt.Errorf("slack bot token: %w (run lock add slack)", err)
+		}
+		t, err := slack.New(slack.Config{Team: s.Slack.Team, Channel: s.Slack.Channel, Users: s.Slack.Users, AppToken: app, BotToken: bot})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &chat.Facade{H: h, T: t, Log: log})
+	}
+	return out, nil
 }
 
 // loadRoutes reads routing.json (written by lock up); missing: defaults.

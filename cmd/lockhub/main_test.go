@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
@@ -135,5 +137,49 @@ func TestLoadRoutes(t *testing.T) {
 		if _, err := loadRoutes(p, locks); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
+	}
+}
+
+func TestChatFacades(t *testing.T) {
+	codec = hubtest.Codec{}
+	t.Cleanup(func() { codec = nil })
+	data := t.TempDir()
+	var out, errb bytes.Buffer
+	run(context.Background(), []string{"keygen", "--data", data}, &out, &errb)
+	l := hubtest.NewLock("crm")
+	os.WriteFile(filepath.Join(data, "locks.json"), []byte(`{"locks":{"crm":{"public_key":"`+keys.Public(l.Pub)+`"}}}`), 0o644)
+	open := func() ([]*chat.Facade, error) {
+		h, closeHub, err := openHub(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeHub()
+		return chatFacades(h, data, io.Discard)
+	}
+	w := func(name, s string, mode os.FileMode) { os.WriteFile(filepath.Join(data, name), []byte(s), mode) }
+	// Slack not enabled: no facade, and its secrets are never read.
+	w("slack-bot-token", "xoxb-1", 0o644)
+	if fs, err := open(); err != nil || len(fs) != 0 {
+		t.Fatalf("default: %v %v", fs, err)
+	}
+	w("chat.json", `{"slack":{"team":"T01","channel":"C02","users":["U03"]}}`, 0o600)
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "not enabled") {
+		t.Errorf("slack configured, not enabled: %v", err)
+	}
+	w("routing.json", `{"facades":["tty","slack"]}`, 0o600)
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lock add slack") {
+		t.Errorf("missing app token: %v", err)
+	}
+	w("slack-app-token", "xapp-1", 0o600)
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "0600") {
+		t.Errorf("readable bot token: %v", err)
+	}
+	os.Chmod(filepath.Join(data, "slack-bot-token"), 0o600)
+	if fs, err := open(); err != nil || len(fs) != 1 || fs[0].T.Facade() != "slack" {
+		t.Errorf("slack: %v %v", fs, err)
+	}
+	os.Remove(filepath.Join(data, "chat.json"))
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "chat.json") {
+		t.Errorf("enabled without settings: %v", err)
 	}
 }

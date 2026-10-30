@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // Merge folds the lockfamily.yaml configurations of sub-workspaces into
@@ -115,9 +117,14 @@ func Import(path string, srcs []string) ([]string, error) {
 	case errors.Is(err, os.ErrNotExist):
 		first := srcs[0]
 		h := others[first].Hub
-		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: h.Facades}}
+		// Chat facades need their own allowlist: lock add slack.
+		fs := slices.DeleteFunc(slices.Clone(h.Facades), func(f string) bool { return f == route.Slack })
+		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: fs}}
 		notes = append(notes, fmt.Sprintf("%s does not exist: hub section from %s", path, first))
-		b = []byte("version: 1\nhub:\n  image: " + h.Image + "\n  facades: [" + strings.Join(h.Facades, ", ") + "]\n")
+		if len(fs) != len(h.Facades) {
+			notes = append(notes, "slack not enabled here: run lock add slack to give it its allowlist")
+		}
+		b = []byte("version: 1\nhub:\n  image: " + h.Image + "\n  facades: [" + strings.Join(fs, ", ") + "]\n")
 	case err != nil:
 		return nil, err
 	default:

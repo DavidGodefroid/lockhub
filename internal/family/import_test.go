@@ -21,7 +21,7 @@ const otherSQL = "ghcr.io/davidgodefroid/locksql@sha256:555555555555555555555555
 func TestImportTwoSubProjectsKeepsStrictest(t *testing.T) {
 	root := t.TempDir()
 	// The workspace declares only its hub: its locks come from the sub-projects.
-	base := write(t, filepath.Join(root, "lockfamily.yaml"), "# workspace\nversion: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck, slack]\n")
+	base := write(t, filepath.Join(root, "lockfamily.yaml"), "# workspace\nversion: 1\nhub:\n  image: "+hubImg+"\n  facades: [tty, deck, mobile]\n")
 	a := write(t, filepath.Join(root, "crm", "lockfamily.yaml"), `version: 1
 hub:
   image: `+hubImg+`
@@ -36,9 +36,9 @@ locks:
 	b := write(t, filepath.Join(root, "billing", "lockfamily.yaml"), `version: 1
 hub:
   image: `+hubImg+`
-  facades: [tty, deck, slack]
+  facades: [tty, deck, mobile]
   routing:
-    crm: [tty, slack]
+    crm: [tty, mobile]
 locks:
   crm:
     type: locksql
@@ -59,7 +59,7 @@ locks:
 	if crm.Image != sqlImg {
 		t.Errorf("first declaration not kept: %+v", crm)
 	}
-	// crm: facades tty,deck in a (defaults), tty,slack in b: only tty is in both.
+	// crm: facades tty,deck in a (defaults), tty,mobile in b: only tty is in both.
 	if got := strings.Join(c.Hub.Routing["crm"], ","); got != "tty" {
 		t.Errorf("routing crm = %q, want tty", got)
 	}

@@ -17,7 +17,10 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/term"
+
 	"github.com/DavidGodefroid/lockhub/internal/approve"
+	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/verify"
 )
@@ -32,6 +35,8 @@ Usage:
                                           review and start the hub and the workspace's locks
   lock add TYPE INSTANCE --image REF [--hub-image REF] [--file lockfamily.yaml]
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp; REF pinned @sha256)
+  lock add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
+                                          enable the Slack facade; asks for its tokens at the terminal
   lock import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
@@ -66,6 +71,9 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	case "up":
 		return upCmd(args[1:], stdin, stdout, stderr)
 	case "add":
+		if len(args) > 1 && args[1] == "slack" {
+			return addSlackCmd(args[2:], stdin, stdout, stderr)
+		}
 		return addCmd(args[1:], stdout, stderr)
 	case "import":
 		return importCmd(args[1:], stdout, stderr)
@@ -301,5 +309,69 @@ func doctorCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%d problem(s)\n", n)
 		return 1
 	}
+	return 0
+}
+
+// strings is a repeatable flag.
+type stringsFlag []string
+
+func (s *stringsFlag) String() string     { return strings.Join(*s, ",") }
+func (s *stringsFlag) Set(v string) error { *s = append(*s, v); return nil }
+
+func addSlackCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("add slack", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	var s chatconf.Slack
+	var users stringsFlag
+	fs.StringVar(&s.Team, "team", "", "the Slack workspace id (T…)")
+	fs.StringVar(&s.Channel, "channel", "", "the channel id (C…) where tickets are posted; invite the app there")
+	fs.Var(&users, "user", "a member id (U…) who may answer (repeat)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return 2
+	}
+	s.Users = users
+	if len(pos) != 0 || s.Team == "" || s.Channel == "" || len(s.Users) == 0 {
+		fmt.Fprintln(stderr, "usage: lock add slack --team T… --channel C… --user U… [--user U…]")
+		return 2
+	}
+	if err := s.Validate(); err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
+		return 2
+	}
+	// Tokens are typed (or pasted) at a terminal, never on the command
+	// line, where other processes and the shell history see them.
+	fd := int(stdin.Fd())
+	if !term.IsTerminal(fd) {
+		fmt.Fprintln(stderr, "lock add slack: the tokens are typed at a terminal; stdin is not one")
+		return 1
+	}
+	ask := func(prompt string) (string, error) {
+		fmt.Fprint(stdout, prompt)
+		b, err := term.ReadPassword(fd)
+		fmt.Fprintln(stdout)
+		return strings.TrimSpace(string(b)), err
+	}
+	app, err := ask("Slack app-level token (xapp-…, scope connections:write): ")
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
+		return 1
+	}
+	bot, err := ask("Slack bot token (xoxb-…, scope chat:write): ")
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
+		return 1
+	}
+	abs, err := filepath.Abs(*file)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
+		return 1
+	}
+	if err := family.AddSlack(abs, stateDir(family.Project(filepath.Dir(abs))), s, app, bot); err != nil {
+		fmt.Fprintln(stderr, "lock add slack:", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", *file, strings.Join(s.Users, ", "))
 	return 0
 }

@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/route"
 )
@@ -45,6 +46,8 @@ type Hub struct {
 	Image   string              `yaml:"image"`
 	Facades []string            `yaml:"facades"`
 	Routing map[string][]string `yaml:"routing,omitempty"`
+	// Slack is who may answer on Slack (required when slack is enabled).
+	Slack *chatconf.Slack `yaml:"slack,omitempty"`
 }
 
 // Lock is one lock instance.
@@ -100,12 +103,25 @@ func (c *Config) validate(needLocks bool) error {
 			return fmt.Errorf("hub.facades: unknown facade %q", f)
 		}
 	}
+	switch on := slices.Contains(c.Hub.Facades, route.Slack); {
+	case on && c.Hub.Slack == nil:
+		return fmt.Errorf("hub.slack: the slack facade needs its allowlist (team, channel, users): run lock add slack")
+	case !on && c.Hub.Slack != nil:
+		return fmt.Errorf("hub.slack: set, but slack is not in hub.facades")
+	case on:
+		if err := c.Hub.Slack.Validate(); err != nil {
+			return fmt.Errorf("hub.%w", err)
+		}
+	}
 	if needLocks && len(c.Locks) == 0 {
 		return fmt.Errorf("locks: none declared")
 	}
 	for name, l := range c.Locks {
 		if !keys.ValidInstance(name) {
 			return fmt.Errorf("locks: bad instance name %q (lower case, digits and -)", name)
+		}
+		if name == "hub" {
+			return fmt.Errorf("locks: %q is reserved (the hub's own network is egress-hub)", name)
 		}
 		if !slices.Contains(Types, l.Type) {
 			return fmt.Errorf("locks.%s.type: want one of %s", name, strings.Join(Types, ", "))
@@ -129,6 +145,10 @@ func (c *Config) validate(needLocks bool) error {
 	}
 	return nil
 }
+
+// ChatEnabled reports whether a chat facade (which needs a route out to
+// its service) is enabled.
+func (c *Config) ChatEnabled() bool { return slices.Contains(c.Hub.Facades, route.Slack) }
 
 // Instances are the instance names, sorted.
 func (c *Config) Instances() []string {

@@ -44,7 +44,13 @@ func Compose(c *Config, p Paths) string {
 	w("      - type: bind")
 	w("        source: %s", q(p.FacadeDir))
 	w("        target: /run/lockhub-facade")
-	w("    networks: [lockhub]")
+	// The hub has no route out, unless a chat facade must reach its
+	// service: then through its own network, never a lock's.
+	if c.ChatEnabled() {
+		w("    networks: [lockhub, %s]", q("egress-hub"))
+	} else {
+		w("    networks: [lockhub]")
+	}
 	if p.Config != "" {
 		w("    labels:")
 		w("      lockfamily.config: %s", q(p.Config))
@@ -70,6 +76,9 @@ func Compose(c *Config, p Paths) string {
 	w("networks:")
 	w("  lockhub:")
 	w("    internal: true")
+	if c.ChatEnabled() {
+		w("  %s: {}", q("egress-hub"))
+	}
 	for _, name := range c.Instances() {
 		w("  %s: {}", q("egress-"+name))
 	}
