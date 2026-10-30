@@ -5,6 +5,15 @@ digest).
 
 ## Unreleased
 
+Builds on lockkit v0.6.0. Locks built on lockkit v0.3.1 or later still
+start with the generated commands. Reveals and renewals need locks built on
+lockkit v0.5.0 or later (older ones ignore the new `requests` member of the
+decisions poll: the facade's request times out). A reveal also needs
+`reveal: true` on the lock in `lockfamily.yaml` (opt-in, like `devices`:
+only then does `lock up` pass `--facade-keys-file`, which older images
+refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
+could not check them now) are shown as such, and never allow one click.
+
 - Mobile facade: optional Web Push (`hub.mobile.push: true` →
   `lockhub serve --mobile-push`; off by default). When a ticket the phone
   may answer becomes pending, the hub sends a payload-less push (no ticket
@@ -66,7 +75,7 @@ digest).
   answers every risk class but `unlock`. Audit records carry the device;
   device pairings and revocations are audited. `lock mobile list|revoke`;
   `lock doctor` reports devices paired since the last `lock up`.
-- Requires lockkit v0.4.0 (compatible: tickets and decisions without
+- Requires lockkit v0.4.0 or later (this release builds on v0.6.0; compatible: tickets and decisions without
   devices are unchanged); locks need lockkit v0.4.0 to pin devices.
 - `lock audit verify --lock INSTANCE=PATH` (repeatable) also verifies
   lock-side audit logs (lockkit's `audit.log`, or its directory): the
@@ -135,6 +144,42 @@ digest).
   `lock up`. The first `lock up` after upgrading with a chat facade
   shows the new `hub secret` lines once, asks for a yes, and recreates
   the hub.
+- Clear values on demand (Ctrl-O) and re-approval of expired tickets
+  (decision H1).
+  - Hub requests: the hub signs a `reveal` or `renew` request
+    (lockkit `ticket.HubRequest`), hands it to the lock in its
+    `GET /v1/decisions` long poll (new `requests` member, waking the poll),
+    and relays the lock's answer (`POST /v1/requests/{id}/answer`, signed
+    like every lock call, accepted once and only from that instance) to the
+    waiting facade. In memory only, 8 open per instance, 30 s wait (504),
+    bounded bodies; a lock's error is a fixed code, never its text.
+  - Facade socket: `POST /v1/tickets/{instance}/{id}/reveal` (tty and deck
+    only, routed to the ticket, the key signed for the caller's facade) and
+    `…/renew`; `GET /v1/queue` gains an `expired` list (expired in the last
+    24 h, not renewed yet). The hub relays the sealed answer without storing
+    or logging it; the audit log records `reveal` and `renew` events (who,
+    which facade, outcome), never content.
+  - Renewals: a ticket that renews another ends it expired (pending, or
+    approved and not run; only a renewal ends an approval, never the
+    sweeper) and links them. A renewal asked from the terminal or the deck
+    within 24 h of the expiry, unchanged, with the old ticket's risk and
+    flags, and not for production, is approved at once; otherwise it waits
+    with its changes, production still asks for the typed name.
+  - `lock up` creates per-user tty and deck facade keys
+    (`$XDG_STATE_HOME/lockfamily/facades/`, 0600), reviews them
+    (`facade tty key …`), mounts their public halves read-only in every lock
+    with `reveal: true` at `/run/lockfamily-facades/facades.json` with
+    `--facade-keys-file` (reviewed: `lock … pins the host facades' keys`),
+    and keeps a host-only copy of the pinned lock keys there for facades to
+    verify a lock's answers. up.json carries the same set (`facade_keys`)
+    and each lock's `reveal` for lea's lockhttp gate (`--facade-keys-file`,
+    lockhttp#16, lockhttp v0.5.0 or later), which lock up does not run.
+  - A renewal routed to mobile with Web Push on may send a push for a
+    ticket the one-click path approves a moment later (the push carries no
+    content; the phone then finds nothing waiting).
+  - `lock approve`: `o` reveals (Ctrl-O too where the terminal passes it;
+    macOS keeps ^O), clearly marked and escaped; `r` on an expired ticket
+    approves it again; a renewal shows what changed.
 
 ## v0.1.1 (2026-10-30)
 

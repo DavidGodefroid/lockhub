@@ -198,7 +198,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ")
 		})
 	}
-	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil))); len(ch) > 0 {
+	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {
 		warn("lockfamily.yaml changed since the last lock up (run lock up to review it): %s", strings.Join(ch, "; "))
 	}
 	// Devices paired or revoked since: the locks pin them at the next lock up.

@@ -187,3 +187,39 @@ func TestTicketState(t *testing.T) {
 		t.Errorf("other instance: %d", code)
 	}
 }
+
+// A renewal lists each input that moved, including one the lock could
+// not check now (lockkit's "unchecked").
+func TestScreenShowsRenewalChanges(t *testing.T) {
+	raw := []byte(`{"id":"N1","source":{"lock":"locksql"},"screen":{"header":"h"},"renews":{"of":"O1","reason":"expired","approved_at":null,"checked":true,
+		"changes":[{"input":"schema","change":"changed"},{"input":"stats","change":"unchecked"}]}}`)
+	out, _, err := approve.Screen(api.QueueItem{ID: "N1", Instance: "crm", Risk: "write", Ticket: raw}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"asks again for ticket O1", "schema: changed", "stats: not checked now — the run checks it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("screen lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// An expired ticket (lock approve renew) says how long ago, never a
+// negative "expires in".
+func TestScreenExpiredTicket(t *testing.T) {
+	now := time.Now()
+	raw := []byte(`{"id":"O1","source":{"lock":"locksql"},"screen":{"header":"h"}}`)
+	for _, c := range []struct {
+		at   time.Time
+		want string
+	}{{now.Add(-2 * time.Hour), "expired 2h0m0s ago"}, {now.Add(time.Hour), "expires in 1h0m0s"}} {
+		at := c.at
+		out, _, err := approve.Screen(api.QueueItem{ID: "O1", Instance: "crm", Risk: "write", Ticket: raw, Expires: &at}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, c.want) || strings.Contains(out, "expires in -") {
+			t.Errorf("screen lacks %q:\n%s", c.want, out)
+		}
+	}
+}

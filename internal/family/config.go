@@ -119,6 +119,11 @@ type Lock struct {
 	// v0.4.0 or later and takes --devices-file). Without it, the lock
 	// refuses every decision taken on a phone.
 	Devices bool `yaml:"devices,omitempty"`
+	// Reveal: the lock pins the host facades' keys (its image is on
+	// lockkit v0.5.0 or later and takes --facade-keys-file), so Ctrl-O on
+	// the terminal or the deck can reveal its clear screen. Without it the
+	// lock refuses reveals; renewals need no facade key.
+	Reveal bool `yaml:"reveal,omitempty"`
 }
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)

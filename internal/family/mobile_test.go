@@ -169,7 +169,7 @@ func TestMobileRoutingAndReview(t *testing.T) {
 	if err := r.Allowed("events", "tty", "read"); err != nil {
 		t.Fatalf("events lost the terminal: %v", err)
 	}
-	sum := strings.Join(Summary(c, "", nil), "\n")
+	sum := strings.Join(Summary(c, "", nil, nil), "\n")
 	for _, want := range []string{"lock crm-prod accepts only device-signed approvals of prod-write,policy-loosen",
 		"lock crm-prod seals its clear screens to them", "lock events pins no device: not answered on mobile"} {
 		if !strings.Contains(sum, want) {
