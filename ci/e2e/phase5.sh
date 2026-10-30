@@ -54,44 +54,40 @@ cat up.out
 grep -q "up: project " up.out || die "lock up did not finish"
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
-docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --status running --services | grep -qx lockhub || die "hub not running"
+docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --status running --services >svc.out
+grep -qx lockhub svc.out || die "hub not running"
+grep -qx lock-first svc.out || die "lock first not running"
 "$lock" doctor || true
 
-say "lock import: two sub-projects, the strictest routing kept"
-imp=$(mktemp -d)/ws
-mkdir -p "$imp/billing/.lockfamily" "$imp/crm"
+say "lock import: two sub-projects, the strictest routing kept, in either order"
 hub=$(sed -n 's/^  image: *//p' .lockfamily/lockfamily.yaml | head -1)
 img=$(sed -n '/^  first:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
-cat >"$imp/billing/.lockfamily/lockfamily.yaml" <<YAML
-version: 1
-hub:
-  image: $hub
-  facades: [tty, deck]
-locks:
-  shared:
-    type: $LOCK_TYPE
-    image: $img
-YAML
-cat >"$imp/crm/lockfamily.yaml" <<YAML
-version: 1
-hub:
-  image: $hub
-  facades: [tty, deck]
-  routing:
-    shared: [tty]
-locks:
-  shared:
-    type: $LOCK_TYPE
-    image: $img
-  crm-only:
-    type: $LOCK_TYPE
-    image: $img
-YAML
-cd "$imp"
-"$lock" import | tee import.out
-grep -q "routing narrowed to tty" import.out || die "the strictest routing was not kept"
-grep -q "adds lock crm-only" import.out || die "crm-only not added"
-f=.lockfamily/lockfamily.yaml
-sed -n '/^  routing:/,/^locks:/p' "$f" | tr -d ' \n' | grep -q 'routing:shared:-tty' || { cat "$f"; die "routing of shared is not exactly [tty]"; }
-sed -n '/^  routing:/,/^locks:/p' "$f" | grep -q 'deck' && die "a facade one sub-project refuses was kept"
+# sub DIR ROUTING: a sub-project declaring the lock shared (and DIR-only),
+# with ROUTING ("" or "shared: [tty]") under hub.routing.
+sub() {
+	mkdir -p "$1/.lockfamily"
+	{
+		printf 'version: 1\nhub:\n  image: %s\n  facades: [tty, deck]\n' "$hub"
+		[ -z "$2" ] || printf '  routing:\n    %s\n' "$2"
+		printf 'locks:\n  shared:\n    type: %s\n    image: %s\n  %s-only:\n    type: %s\n    image: %s\n' \
+			"$LOCK_TYPE" "$img" "$(basename "$1")" "$LOCK_TYPE" "$img"
+	} >"$1/.lockfamily/lockfamily.yaml"
+}
+for order in strict-first strict-last; do
+	imp=$(mktemp -d)/ws
+	# Sub-projects are imported in name order: a* before b*.
+	if [ "$order" = strict-first ]; then
+		sub "$imp/a" "shared: [tty]"; sub "$imp/b" ""
+	else
+		sub "$imp/a" ""; sub "$imp/b" "shared: [tty]"
+	fi
+	(cd "$imp" && "$lock" import) >import.out 2>&1 || { cat import.out; die "lock import failed ($order)"; }
+	cat import.out
+	f=$imp/.lockfamily/lockfamily.yaml
+	for l in shared a-only b-only; do grep -q "^  $l:" "$f" || die "$l not merged ($order)"; done
+	r=$(sed -n '/^  routing:/,/^locks:/p' "$f" | tr -d ' \n')
+	echo "$order: $r"
+	case "$r" in *shared:-tty) ;; *) cat "$f"; die "routing of shared is not exactly [tty] ($order)" ;; esac
+	case "$r" in *deck*) die "a facade one sub-project refuses was kept ($order)" ;; esac
+done
 echo "phase 5: OK"

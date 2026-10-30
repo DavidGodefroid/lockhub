@@ -80,7 +80,7 @@ for l in $LOCKS; do
 	n=${l%%:*}
 	# y to the policy, then detach (Ctrl-P Ctrl-Q).
 	(sleep 3; printf 'y\n'; sleep 8; printf '\020\021') | timeout 60 script -qefc "$lock attach $n" /dev/null >attach.out 2>&1 || true
-	grep -q 'approved policy' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
+	grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 done
 sleep 5
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps
@@ -123,6 +123,9 @@ agent() { docker run --rm --network "$agents" curlimages/curl:8.11.1 -sS -m 10 "
 say "I2: the hub answers on its own network (positive control)"
 docker run --rm --network "$hubnet" curlimages/curl:8.11.1 -sS -m 10 -o /dev/null -w '%{http_code}\n' "http://lockhub:8443/v1/hello" | grep -qx 200 ||
 	die "the hub does not answer on its network: the checks below would prove nothing"
+say "I2: the hub's network is internal and publishes nothing"
+[ "$(docker network inspect -f '{{.Internal}}' "$hubnet")" = true ] || die "the hub network is not internal"
+[ -z "$(docker port "${p}-lockhub-1")" ] || die "the hub publishes a port"
 say "I2: no route from an agent to the hub"
 rc=0; agent "http://lockhub:8443/v1/hello" || rc=$?
 [ "$rc" = 6 ] || die "an agent resolved the hub's name (curl exit $rc, want 6)"
@@ -160,6 +163,7 @@ echo "http://e2ehubalias:8443/v1/hello via a gate without --hub-net: $code"
 code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "http://$got:8443/v1/hello" || true)
 echo "http://$got:8443/v1/hello (IP literal) via the gate: $code"
 [ "$code" = 403 ] || die "the gate did not refuse the hub's address ($code)"
+docker logs "$gate" 2>&1 | grep "\"host\":\"$got\"" | grep -q '"rule":"floor:' || die "no floor refusal logged for $got"
 code=$(agent -o /dev/null -w '%{http_code}' -x "http://$gate:3128" "https://lockhub:8443/v1/hello" 2>&1 || true)
 echo "CONNECT lockhub:8443 via the gate: $code"
 case "$code" in *200*) die "the gate opened a tunnel to the hub" ;; esac
