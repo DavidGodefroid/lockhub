@@ -31,6 +31,31 @@ jobs:
       - name: go test
         run: go test ./...
 
+  # Compatibility with lockkit (plan H0): lockhub, built on the pinned
+  # lockkit, checked against the signed ticket fixtures of the pinned
+  # lockkit, of the release before it and of the newest one: the tickets
+  # of locks built on each (scripts/compat.sh). Not built on the release
+  # before the pin: lockhub uses lockkit v0.6.0's API (ticket
+  # ChangeUnchecked); `sh scripts/compat.sh prev …` tries it by hand.
+  compat:
+    name: compat (build ${{ matrix.build }}, fixtures ${{ matrix.fixtures }})
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [pinned]
+        fixtures: [pinned, prev, latest]
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          check-latest: true
+      - name: compat
+        run: sh scripts/compat.sh ${{ matrix.build }} ${{ matrix.fixtures }}
+
   # The release archives of the lock CLI (scripts/release-cli.sh), as the
   # release workflow builds them, without signing: layout, version, and
   # reproducibility (two builds, same checksums).
