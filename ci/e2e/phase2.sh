@@ -47,6 +47,8 @@ splice = []
 deny = []
 TOML
 chmod 0644 .lockhttp/config.toml
+# A subdirectory and an owner-only file: the copy keeps both.
+mkdir -p .lockhttp/notes && chmod 0700 .lockhttp/notes && echo note >.lockhttp/notes/n.txt && chmod 0600 .lockhttp/notes/n.txt
 
 say "lock up (review at a terminal)"
 tty 'y\n' "$lock" up | tee up.out
@@ -138,6 +140,12 @@ grep -qi 'read-only' err.out || die "not EROFS: $(cat err.out)"
 say "I11: a change of lockfamily.yaml is reviewed, not applied silently"
 "$lock" add lockhttp extra >/dev/null
 tty 'n\n' "$lock" up >up2.out 2>&1 || true
+cat up2.out | tr -d '\r' | grep -v 'Pull\|Running\|Creat' | tail -20
 grep -q "+ lock extra" up2.out || die "the change was not shown"
 grep -q 'not applied' up2.out || die "the change was applied without a yes"
+say "lock up again, confirmed: the setup services run again on volumes that are the console's now"
+tty 'y\n' "$lock" up >up3.out 2>&1 || { tail -20 up3.out; die "a second lock up failed"; }
+grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lock up did not finish"; }
+docker run --rm --network none -v "${p}_profile-lockhttp:/p:ro" alpine:3.22 stat -c '%n %u:%g %a' /p/notes /p/notes/n.txt | tee st.out
+grep -q '/p/notes/n.txt 10021:10020 600' st.out || die "the profile copy lost its owner or mode"
 echo "phase 2: OK"
