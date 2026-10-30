@@ -153,8 +153,9 @@ type Facade struct {
 	Log io.Writer
 	// Wait is the queue long-poll (default 30s).
 	Wait time.Duration
-	// retries are the failed closes, by ticket (Run's loop only).
-	retries map[store.Ref]*closing
+	// retries are the failed closes, by ticket and message (Run's loop
+	// only).
+	retries map[retryKey]*closing
 	// RetryBase, RetryMax and RetryTries bound the retries of a failed
 	// close (defaults DefaultRetry*).
 	RetryBase, RetryMax time.Duration
@@ -166,12 +167,27 @@ type posted struct {
 	card Card
 }
 
+// retryKey is a failed close's ticket and message: a ticket reposted
+// from a stale queue snapshot has two messages to close.
+type retryKey struct {
+	store.Ref
+	msg string
+}
+
+// Each retry is bounded on its own, and a pass tries at most
+// retriesPerPass closes, so the loop goes back to answering clicks and
+// syncing the queue between them.
+const (
+	retryTimeout   = 15 * time.Second
+	retriesPerPass = 2
+)
+
 // closing is a close that failed, waiting for its next try.
 type closing struct {
 	posted
-	outcome string
-	tries   int
-	next    time.Time
+	outcome    string
+	tries      int
+	last, next time.Time
 }
 
 // Run serves until ctx ends or the transport fails for good.
@@ -204,7 +220,6 @@ func (f *Facade) Run(ctx context.Context) error {
 		}
 	}()
 	shown := map[store.Ref]*posted{}
-	f.retries = map[store.Ref]*closing{}
 	for {
 		var timer *time.Timer
 		var due <-chan time.Time
@@ -240,17 +255,25 @@ func (f *Facade) close(ctx context.Context, r store.Ref, p *posted, outcome stri
 		return
 	}
 	c := &closing{posted: *p, outcome: outcome}
-	f.failed(r, c, err, time.Now())
+	f.failed(retryKey{r, p.ref}, c, err, time.Now())
+}
+
+func (f *Facade) retryBase() time.Duration {
+	if f.RetryBase > 0 {
+		return f.RetryBase
+	}
+	return DefaultRetryBase
 }
 
 // failed records a failed try of c: retried later, or dropped (gone, or
 // out of tries).
-func (f *Facade) failed(r store.Ref, c *closing, err error, now time.Time) {
-	c.tries++
-	base, maxd, tries := f.RetryBase, f.RetryMax, f.RetryTries
-	if base <= 0 {
-		base = DefaultRetryBase
+func (f *Facade) failed(k retryKey, c *closing, err error, now time.Time) {
+	if f.retries == nil {
+		f.retries = map[retryKey]*closing{}
 	}
+	c.tries++
+	c.last = now
+	base, maxd, tries := f.retryBase(), f.RetryMax, f.RetryTries
 	if maxd <= 0 {
 		maxd = DefaultRetryMax
 	}
@@ -259,12 +282,12 @@ func (f *Facade) failed(r store.Ref, c *closing, err error, now time.Time) {
 	}
 	switch {
 	case errors.Is(err, ErrGone):
-		f.logf("close %s/%s: %v (not retried)", r.Instance, r.ID, err)
-		delete(f.retries, r)
+		f.logf("close %s/%s: %v (not retried)", k.Instance, k.ID, err)
+		delete(f.retries, k)
 		return
 	case c.tries >= tries:
-		f.logf("close %s/%s: %v (gave up after %d tries: its buttons stay, and are refused)", r.Instance, r.ID, err, c.tries)
-		delete(f.retries, r)
+		f.logf("close %s/%s: %v (gave up after %d tries: its buttons stay, and are refused)", k.Instance, k.ID, err, c.tries)
+		delete(f.retries, k)
 		return
 	}
 	d := base << (c.tries - 1)
@@ -272,8 +295,8 @@ func (f *Facade) failed(r store.Ref, c *closing, err error, now time.Time) {
 		d = maxd
 	}
 	c.next = now.Add(d)
-	f.retries[r] = c
-	f.logf("close %s/%s: %v (try %d, again in %s)", r.Instance, r.ID, err, c.tries, d)
+	f.retries[k] = c
+	f.logf("close %s/%s: %v (try %d, again in %s)", k.Instance, k.ID, err, c.tries, d)
 }
 
 // nextRetry is when the earliest pending retry is due.
@@ -287,18 +310,37 @@ func (f *Facade) nextRetry() (time.Time, bool) {
 	return next, !next.IsZero()
 }
 
-// retryCloses tries again every close due at now.
+// retryCloses tries again at most retriesPerPass of the closes due at
+// now, each within retryTimeout.
 func (f *Facade) retryCloses(ctx context.Context, now time.Time) {
-	for r, c := range f.retries {
+	n := 0
+	for k, c := range f.retries {
 		if c.next.After(now) {
 			continue
 		}
-		if err := f.T.Close(ctx, c.ref, c.card, c.outcome); err != nil {
-			f.failed(r, c, err, time.Now())
+		if n++; n > retriesPerPass {
+			return
+		}
+		cctx, cancel := context.WithTimeout(ctx, retryTimeout)
+		err := f.T.Close(cctx, c.ref, c.card, c.outcome)
+		cancel()
+		if err != nil {
+			f.failed(k, c, err, time.Now())
 			continue
 		}
-		delete(f.retries, r)
-		f.logf("close %s/%s: done (try %d)", r.Instance, r.ID, c.tries+1)
+		delete(f.retries, k)
+		f.logf("close %s/%s: done (try %d)", k.Instance, k.ID, c.tries+1)
+	}
+}
+
+// retrySoon makes the failed closes of ticket r due now, unless one was
+// tried less than RetryBase ago (a burst of clicks does not burn the
+// tries during a rate limit).
+func (f *Facade) retrySoon(r store.Ref, now time.Time) {
+	for k, c := range f.retries {
+		if k.Ref == r && now.Sub(c.last) >= f.retryBase() {
+			c.next = now
+		}
 	}
 }
 
@@ -351,9 +393,7 @@ func (f *Facade) answer(ctx context.Context, shown map[store.Ref]*posted, a Answ
 		// decides only pending tickets. A close waiting for its retry
 		// is tried again now.
 		reply("this ticket is no longer pending")
-		if c := f.retries[r]; c != nil {
-			c.next = time.Now()
-		}
+		f.retrySoon(r, time.Now())
 		return
 	case !p.card.Answerable:
 		reply(p.card.Why)

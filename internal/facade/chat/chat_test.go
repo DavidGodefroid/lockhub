@@ -82,7 +82,7 @@ func run(t *testing.T, tries int, base time.Duration, fail func(n int) error) en
 		c.Routes = route.Rules{Enabled: []string{route.TTY, route.Slack}}
 	}, l)
 	f := &fakeChat{fail: fail, answers: make(chan chat.Answer)}
-	fc := &chat.Facade{H: e.Hub, T: f, Wait: 50 * time.Millisecond, RetryBase: base, RetryMax: 4 * base, RetryTries: tries}
+	fc := &chat.Facade{H: e.Hub, T: f, Wait: 50 * time.Millisecond, RetryBase: base, RetryMax: 16 * base, RetryTries: tries}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { fc.Run(ctx); close(done) }()
@@ -184,34 +184,42 @@ func TestFailedCloseGivesUpAndStaleClickRefused(t *testing.T) {
 }
 
 // A click on a message whose close waits for its retry tries the close
-// again at once; a message the transport says is gone is not retried.
+// again at once (but not twice within RetryBase); a message the transport
+// says is gone is not retried, by a click or by the timer.
 func TestStaleClickRetriesNowAndGoneNotRetried(t *testing.T) {
-	var gone bool
-	// Retries an hour apart: only the click tries again.
-	e := run(t, 10, time.Hour, func(n int) error {
-		if gone {
+	// Tries 1-3 fail (retried after 100, 200 ms; the 4th would wait
+	// 400 ms); the 4th, brought forward by a click, says gone.
+	e := run(t, 10, 100*time.Millisecond, func(n int) error {
+		if n >= 4 {
 			return fmt.Errorf("chat.update: message_not_found: %w", chat.ErrGone)
 		}
 		return errDown
 	})
-	ref := e.ref
-	if _, err := e.e.Hub.Decide(context.Background(), ref, hub.Verdict{ApproverID: "host:david", Facade: route.TTY}); err != nil {
+	if _, err := e.e.Hub.Decide(context.Background(), e.ref, hub.Verdict{ApproverID: "host:david", Facade: route.TTY}); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "first close", func() bool { _, c, _ := e.f.counts(); return c >= 1 })
-	e.f.mu.Lock()
-	gone = true
-	e.f.mu.Unlock()
-	replies := make(chan string, 1)
-	e.f.answers <- chat.Answer{Instance: e.ref.Instance, ID: e.ref.ID, Approve: true, ApproverID: "slack:T1:U1", Display: "u1",
-		Reply: func(_ context.Context, s string) { replies <- s }}
-	if r := <-replies; r != "this ticket is no longer pending" {
-		t.Fatalf("stale click: %q", r)
+	waitFor(t, "3 tries", func() bool { _, c, _ := e.f.counts(); return c == 3 })
+	time.Sleep(120 * time.Millisecond)
+	replies := make(chan string, 4)
+	click := func() {
+		e.f.answers <- chat.Answer{Instance: e.ref.Instance, ID: e.ref.ID, Approve: true, ApproverID: "slack:T1:U1", Display: "u1",
+			Reply: func(_ context.Context, s string) { replies <- s }}
+		if r := <-replies; r != "this ticket is no longer pending" {
+			t.Fatalf("stale click: %q", r)
+		}
 	}
-	waitFor(t, "a try on the click", func() bool { _, c, _ := e.f.counts(); return c >= 2 })
-	_, n, _ := e.f.counts()
-	time.Sleep(200 * time.Millisecond)
-	if _, c, _ := e.f.counts(); c != n {
-		t.Fatalf("a gone message was retried: %d closes, then %d", n, c)
+	start := time.Now()
+	click()
+	click() // within RetryBase of the first: no extra try
+	waitFor(t, "the click's try", func() bool { _, c, _ := e.f.counts(); return c == 4 })
+	if d := time.Since(start); d > 300*time.Millisecond {
+		t.Fatalf("the click did not bring the retry forward (%s)", d)
+	}
+	time.Sleep(150 * time.Millisecond)
+	click()
+	// Not gone, the next timer retry would come 800 ms after the 4th.
+	time.Sleep(1200 * time.Millisecond)
+	if _, c, _ := e.f.counts(); c != 4 {
+		t.Fatalf("a gone message was retried: %d closes", c)
 	}
 }

@@ -400,7 +400,7 @@ func TestLongTextStaysInsideItsCodeSpan(t *testing.T) {
 // Close and its retries (#60): a message Slack can no longer update is
 // gone (not retried); a rate limit or a 5xx is retried.
 func TestCloseErrors(t *testing.T) {
-	for answer, gone := range map[string]bool{"message_not_found": true, "cant_update_message": true, "edit_window_closed": true,
+	for answer, gone := range map[string]bool{"message_not_found": true, "cant_update_message": true, "edit_window_closed": true, "channel_not_found": true, "is_archived": true,
 		"ratelimited": false, "internal_error": false, "": false} {
 		t.Run(answer, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
