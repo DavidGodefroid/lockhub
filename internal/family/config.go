@@ -74,18 +74,22 @@ var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-
 
 // Load reads and validates path.
 func Load(path string) (*Config, error) {
-	// .lockfamily must be the user's own directory no one else writes
-	// (not a link), before anything in it is trusted.
+	b, err := readConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return decode(b, path, true)
+}
+
+// readConfig reads the lockfamily.yaml at path; in .lockfamily, only once
+// the directory is the user's own that no one else writes (not a link).
+func readConfig(path string) ([]byte, error) {
 	if !Legacy(path) {
 		if err := ownDir(filepath.Dir(path)); err != nil {
 			return nil, err
 		}
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return decode(b, path, true)
+	return os.ReadFile(path)
 }
 
 // decode parses and validates a lockfamily.yaml; needLocks refuses one

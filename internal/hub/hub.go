@@ -60,6 +60,9 @@ type Codec interface {
 	SignDecision(hub ed25519.PrivateKey, t Info, v Verdict, at time.Time) ([]byte, error)
 	// KeyID names a lock key as tickets do.
 	KeyID(ed25519.PublicKey) string
+	// TicketVersions are the ticket schema versions VerifyTicket
+	// accepts, ascending.
+	TicketVersions() []int
 	// VerifyRequest checks a lock's request signature (Lock-Sig) over
 	// the request's method, path and query, instance, time, nonce and body.
 	VerifyRequest(lock ed25519.PublicKey, method, pathQuery, instance string, at time.Time, nonce string, body []byte, sig string) bool
@@ -77,6 +80,9 @@ var (
 	ErrRetype      = errors.New("approving this production ticket needs its name typed exactly")
 )
 
+// DefaultMaxPending is the hub's cap on an instance's pending tickets.
+const DefaultMaxPending = 50
+
 // Config builds a Hub.
 type Config struct {
 	Store *store.Store
@@ -85,7 +91,7 @@ type Config struct {
 	Key   ed25519.PrivateKey
 	// Locks are the lock instances allowed to push, by instance name.
 	Locks map[string]ed25519.PublicKey
-	// MaxPending caps an instance's pending tickets (default 50).
+	// MaxPending caps an instance's pending tickets (DefaultMaxPending).
 	MaxPending int
 	// Routes decides which facade may answer which ticket.
 	Routes route.Rules
@@ -99,6 +105,8 @@ type Config struct {
 type Hub struct {
 	c Config
 
+	auditMu sync.Mutex // one outbox flush at a time
+
 	mu       sync.Mutex
 	waiters  map[string]chan struct{} // instance → closed on a new decision
 	queueVer uint64                   // bumped on every change of the pending queue
@@ -107,7 +115,7 @@ type Hub struct {
 // New returns a hub.
 func New(c Config) *Hub {
 	if c.MaxPending == 0 {
-		c.MaxPending = 50
+		c.MaxPending = DefaultMaxPending
 	}
 	if c.MaxSkew == 0 {
 		c.MaxSkew = time.Minute
@@ -133,6 +141,15 @@ func (h *Hub) Codec() Codec { return h.c.Codec }
 // Now is the hub's clock.
 func (h *Hub) Now() time.Time { return h.c.Now() }
 
+// KeyID names the hub's key as decisions and tickets name keys ("" for
+// a hub without a key).
+func (h *Hub) KeyID() string {
+	if len(h.c.Key) != ed25519.PrivateKeySize {
+		return ""
+	}
+	return h.c.Codec.KeyID(h.c.Key.Public().(ed25519.PublicKey))
+}
+
 // Store is the hub's store.
 func (h *Hub) Store() *store.Store { return h.c.Store }
 
@@ -141,11 +158,10 @@ func hashBytes(b []byte) string {
 	return "sha256:" + hex.EncodeToString(s[:])
 }
 
-// Every state change appends its audit record inside the store
-// transaction, before the commit: if the audit write fails, the change is
-// rolled back (fail closed). A commit that fails after a successful
-// append leaves a record of an attempted change; lock audit verify
-// reports it as a record the database does not have.
+// Every state change writes its audit record in the store transaction
+// (the outbox, outbox.go), and the record goes to the audit log after the
+// commit: an uncommitted change never has an audit record, and a
+// committed one always gets one, at the latest when the hub next starts.
 
 // Push accepts a ticket from instance. Sending the same ticket again is
 // not an error (created is false).
@@ -175,6 +191,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 			return Info{}, false, ErrExpired
 		}
 	}
+	if err := h.auditReady(ctx); err != nil {
+		return Info{}, false, err
+	}
 	err = h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		if _, err := tx.Ticket(store.Ref{Instance: instance, ID: info.ID}); errors.Is(err, store.ErrNotFound) {
 			n, err := tx.CountPending(instance)
@@ -192,10 +211,10 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 		if err != nil || !created {
 			return err
 		}
-		_, err = h.c.Audit.Append(audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)})
-		return err
+		return h.audit(tx, audit.Record{Event: "push", Ticket: info.ID, Instance: instance, Risk: info.Risk, State: string(state.Pending)})
 	})
 	if err == nil && created {
+		h.flushAudit(ctx)
 		h.notify(queueKey)
 	}
 	return info, created, err
@@ -203,6 +222,9 @@ func (h *Hub) Push(ctx context.Context, instance string, raw []byte) (info Info,
 
 // change applies ev to a ticket and audits it.
 func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec audit.Record) error {
+	if err := h.auditReady(ctx); err != nil {
+		return err
+	}
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
 		tk, err := tx.Ticket(ref)
 		if err != nil {
@@ -216,10 +238,10 @@ func (h *Hub) change(ctx context.Context, ref store.Ref, ev state.Event, rec aud
 			return err
 		}
 		rec.Event, rec.Ticket, rec.Instance, rec.Risk, rec.State = string(ev), ref.ID, ref.Instance, tk.Risk, string(to)
-		_, err = h.c.Audit.Append(rec)
-		return err
+		return h.audit(tx, rec)
 	})
 	if err == nil {
+		h.flushAudit(ctx)
 		h.notify(queueKey)
 	}
 	return err
@@ -281,6 +303,9 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID {
 		return nil, fmt.Errorf("%w: field too long", ErrBadRequest)
 	}
+	if err := h.auditReady(ctx); err != nil {
+		return nil, err
+	}
 	var raw []byte
 	var instance string
 	err := h.c.Store.Tx(ctx, func(tx *store.Tx) error {
@@ -326,15 +351,15 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 			return err
 		}
 		instance = tk.Instance
-		_, err = h.c.Audit.Append(audit.Record{
+		return h.audit(tx, audit.Record{
 			Event: string(ev), Ticket: ref.ID, Instance: tk.Instance, Risk: tk.Risk, State: string(to),
 			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw),
 		})
-		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	h.flushAudit(ctx)
 	h.notify(instance)
 	h.notify(queueKey)
 	return raw, nil
@@ -388,19 +413,30 @@ func (h *Hub) Decisions(ctx context.Context, instance string, since int64, wait 
 // Sweep expires pending tickets past their TTL and drops old request
 // nonces. Run it periodically.
 func (h *Hub) Sweep(ctx context.Context) error {
+	// Records of committed changes a failed flush left in the outbox; while
+	// they cannot be logged, expiries are refused like any change (Decide
+	// refuses an expired ticket by itself), and nonces are still purged.
+	ferr := h.FlushAudit(ctx)
 	now := h.c.Now()
-	ids, err := h.c.Store.DueForExpiry(ctx, now)
-	if err != nil {
-		return err
-	}
-	for _, ref := range ids {
-		err := h.change(ctx, ref, state.Expire, audit.Record{})
-		var te state.ErrTransition
-		if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
-			return err
+	var errs []error
+	if ferr == nil {
+		ids, err := h.c.Store.DueForExpiry(ctx, now)
+		if err != nil {
+			errs = append(errs, err)
 		}
+		for _, ref := range ids {
+			err := h.change(ctx, ref, state.Expire, audit.Record{})
+			var te state.ErrTransition
+			if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
+				errs = append(errs, err)
+				break
+			}
+		}
+	} else {
+		errs = append(errs, ferr)
 	}
-	return h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow))
+	errs = append(errs, h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow)))
+	return errors.Join(errs...)
 }
 
 // Field limits: what a lock or a facade sends is bounded before it

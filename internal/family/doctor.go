@@ -141,6 +141,7 @@ func (d *Doctor) Do(ctx context.Context) int {
 		fail("facade socket %s: owned by uid %d, not by you", sock, st.Uid)
 	} else {
 		ok("facade socket %s", sock)
+		d.hubLimits(ctx, sock, c, ok, warn, fail)
 	}
 
 	if c != nil && engine {

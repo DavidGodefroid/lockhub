@@ -89,7 +89,7 @@ type ws struct {
 }
 
 func newWS(t *testing.T, conf string) ws {
-	dir := t.TempDir()
+	dir, _ := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link
 	file := filepath.Join(dir, "projects", Dir, FileName)
 	os.MkdirAll(filepath.Dir(file), 0o755)
 	for _, t := range Types {
@@ -215,7 +215,7 @@ func TestComposeIsolation(t *testing.T) {
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
-		`user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
+		`extra_hosts: ["host.docker.internal:host-gateway"]`, `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
 		"      - hubkey:/run/lockfamily:ro", `      - "profile-locksql:/w/.locksql:ro"`,
 		"dev.lockfamily.role: \"socket\"", "dev.lockfamily.instance: \"crm-prod\"",
 		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,

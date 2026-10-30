@@ -131,7 +131,12 @@ var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
 
 // Do runs lock up.
 func (u *Up) Do(ctx context.Context) error {
-	c, err := Load(u.File)
+	// Read once: what is reviewed is what a legacy file is adopted as.
+	raw, err := readConfig(u.File)
+	if err != nil {
+		return err
+	}
+	c, err := decode(raw, u.File, true)
 	if err != nil {
 		return err
 	}
@@ -323,6 +328,20 @@ func (u *Up) Do(ctx context.Context) error {
 	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
+	}
+	// A legacy root lockfamily.yaml moves into .lockfamily (lea's agents
+	// only read it there): exactly what the human reviewed.
+	if Legacy(u.File) {
+		nf := filepath.Join(ws, Dir, FileName)
+		if err := ensureDir(nf); err != nil {
+			return err
+		}
+		if _, err := os.Lstat(nf); errors.Is(err, os.ErrNotExist) {
+			if err := writeFileMode(nf, raw, 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintf(u.Out, "%s now lives in %s (lea's agents only read it there); remove %s\n", FileName, nf, u.File)
+		}
 	}
 	st := NewUpState(c, project, ws, hp)
 	// The authoritative copy is lock up's own (host only); lea reads the
