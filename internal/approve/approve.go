@@ -168,11 +168,23 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 		default:
 			fmt.Fprintln(&b, "changed since then:")
 			for _, c := range r.Changes {
-				fmt.Fprintf(&b, "  %s: %s\n", clean(c.Input), clean(c.Change))
+				fmt.Fprintf(&b, "  %s: %s\n", clean(c.Input), changeWords(c.Change))
 			}
 		}
 	}
 	return b.String(), &t, nil
+}
+
+// changeWords says what happened to a plan-hash input since the expired
+// ticket (lockkit ticket.Change kinds; "unchecked" from lockkit v0.6.0).
+func changeWords(kind string) string {
+	switch kind {
+	case "changed", "new", "gone":
+		return kind
+	case "unchecked":
+		return "not checked now — the run checks it"
+	}
+	return sanitize.Terminal(kind, false)
 }
 
 // RenderClear renders a revealed clear screen, clearly set apart from

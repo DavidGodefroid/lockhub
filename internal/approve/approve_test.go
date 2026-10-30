@@ -187,3 +187,19 @@ func TestTicketState(t *testing.T) {
 		t.Errorf("other instance: %d", code)
 	}
 }
+
+// A renewal lists each input that moved, including one the lock could
+// not check now (lockkit's "unchecked").
+func TestScreenShowsRenewalChanges(t *testing.T) {
+	raw := []byte(`{"id":"N1","source":{"lock":"locksql"},"screen":{"header":"h"},"renews":{"of":"O1","reason":"expired","approved_at":null,"checked":true,
+		"changes":[{"input":"schema","change":"changed"},{"input":"stats","change":"unchecked"}]}}`)
+	out, _, err := approve.Screen(api.QueueItem{ID: "N1", Instance: "crm", Risk: "write", Ticket: raw}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"asks again for ticket O1", "schema: changed", "stats: not checked now — the run checks it"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("screen lacks %q:\n%s", want, out)
+		}
+	}
+}
