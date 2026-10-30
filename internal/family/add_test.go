@@ -85,6 +85,11 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 		t.Fatalf("lock up without the lock's profile: %v", err)
 	}
 	os.Mkdir(filepath.Join(ws, ".locksql"), 0o755)
+	f1 := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
+	if _, err := upFor(t, file)("y\n", f1); err == nil || !strings.Contains(err.Error(), "no PII rule set") {
+		t.Fatalf("lock up of a locksql profile without its PII rule set: %v", err)
+	}
+	piiSet(ws)
 	f := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
 	u := upFor(t, file)
 	if out, err := u("y\n", f); err != nil || !f.ran("up -d") {

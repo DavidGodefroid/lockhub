@@ -105,6 +105,7 @@ func newWS(t *testing.T, conf string) ws {
 	for _, t := range Types {
 		os.Mkdir(filepath.Join(dir, "projects", "."+t), 0o755)
 	}
+	piiSet(filepath.Join(dir, "projects"))
 	os.WriteFile(file, []byte(conf), 0o644)
 	state, run := filepath.Join(dir, "state"), filepath.Join(dir, "run")
 	return ws{dir, file, func(input string, f *fake) (string, error) {
@@ -339,4 +340,12 @@ func TestConfigChangeRecreatesHub(t *testing.T) {
 	if f3.upCompose != f2.upCompose {
 		t.Error("an unchanged config changes the hub service")
 	}
+}
+
+// piiSet gives the workspace ws's locksql profile a PII rule set (the
+// console writes its first one in its profile, which lock up copies
+// read-only).
+func piiSet(ws string) {
+	os.MkdirAll(filepath.Join(ws, ".locksql", "pii"), 0o755)
+	os.WriteFile(filepath.Join(ws, ".locksql", "pii", "default.toml"), []byte("# rules\n"), 0o644)
 }

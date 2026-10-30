@@ -57,9 +57,9 @@ Usage:
                                           detach with Ctrl-P Ctrl-Q
   lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lock approve [--socket PATH] [--once]   answer approval tickets in this terminal
-  lock mobile pair --name NAME [--file lockfamily.yaml] [--socket PATH]
+  lock mobile pair --name NAME [--file FILE] [--socket PATH]
                                           pair a phone with the mobile facade (confirmed at this terminal)
-  lock mobile list|revoke NAME|ID [--file lockfamily.yaml] [--socket PATH]
+  lock mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
                                           list or revoke paired phones; lock up then (un)pins them at the locks
   lock audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
@@ -294,6 +294,10 @@ func lockFile(flagged string, stderr io.Writer) (string, error) {
 	abs = family.Canonical(abs)
 	if family.Legacy(abs) {
 		fmt.Fprintln(stderr, family.LegacyWarning(abs))
+	} else if h := family.MissingHint(abs); h != "" {
+		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintln(stderr, "lock: "+abs+" does not exist"+h)
+		}
 	}
 	return abs, nil
 }
@@ -690,7 +694,7 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 }
 
 func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
-	const use = "usage: lock mobile pair --name NAME | list | revoke NAME|ID  [--file lockfamily.yaml] [--socket PATH]"
+	const use = "usage: lock mobile pair --name NAME | list | revoke NAME|ID  [--file FILE] [--socket PATH]"
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, use)
 		return 2
@@ -698,19 +702,19 @@ func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	sub := args[0]
 	fs := flag.NewFlagSet("mobile "+sub, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	file := fs.String("file", "lockfamily.yaml", "the workspace's lockfamily.yaml")
+	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml, or a legacy ./lockfamily.yaml)")
 	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
 	name := fs.String("name", "", "the phone's name (a-z, 0-9, -)")
 	pos, err := parse(fs, args[1:])
 	if err != nil {
 		return 2
 	}
-	abs, err := filepath.Abs(*file)
+	abs, err := lockFile(*file, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, "lock mobile:", err)
 		return 1
 	}
-	state := stateDir(family.Project(filepath.Dir(abs)))
+	state := stateDir(family.Project(family.Workspace(abs)))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	c := mobilecli.Dial(*sock)

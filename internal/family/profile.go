@@ -32,6 +32,8 @@ type Profile struct {
 	Tar []byte
 	// Fingerprint is the sha256 of Tar.
 	Fingerprint string
+	// Files are the regular files' names (slash-separated).
+	Files []string
 	// Lines are what the human reviews: each file by name, size and
 	// hash, and the lines of its TOML files (lockkit's configuration
 	// refuses secrets in them).
@@ -80,7 +82,7 @@ func ReadProfile(dir string, uid, gid int) (*Profile, error) {
 		return nil, fmt.Errorf("%s: more than %d bytes", dir, maxProfile)
 	}
 	s := sha256.Sum256(buf.Bytes())
-	return &Profile{Tar: buf.Bytes(), Fingerprint: "sha256:" + hex.EncodeToString(s[:]), Lines: r.lines}, nil
+	return &Profile{Tar: buf.Bytes(), Fingerprint: "sha256:" + hex.EncodeToString(s[:]), Lines: r.lines, Files: r.files}, nil
 }
 
 // maxTar bounds the archive (maxProfile of content plus the headers).
@@ -94,6 +96,17 @@ type profileReader struct {
 	entries  int
 	uid, gid int
 	lines    []string
+	files    []string
+}
+
+// Has reports a file under dir (prefix) with the suffix.
+func (p *Profile) Has(prefix, suffix string) bool {
+	for _, f := range p.Files {
+		if strings.HasPrefix(f, prefix) && strings.HasSuffix(f, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // mode is the copy's mode: owner-only stays owner-only.
@@ -189,6 +202,7 @@ func (r *profileReader) file(rel string, want os.FileInfo) error {
 	if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: mode(fi, 0o644), Size: int64(len(b)), Uid: r.uid, Gid: r.gid}); err != nil {
 		return err
 	}
+	r.files = append(r.files, filepath.ToSlash(rel))
 	h := sha256.Sum256(b)
 	r.lines = append(r.lines, fmt.Sprintf("file %s %d bytes sha256:%s", filepath.ToSlash(rel), len(b), hex.EncodeToString(h[:])))
 	if strings.HasSuffix(rel, ".toml") {

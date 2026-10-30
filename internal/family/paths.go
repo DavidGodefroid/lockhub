@@ -33,6 +33,17 @@ func Workspace(file string) string {
 // workspace's root is writable by lea's agents.
 func Legacy(file string) bool { return filepath.Base(filepath.Dir(file)) != Dir }
 
+// MissingHint is what to do when Locate's file does not exist but a
+// legacy one sits at the root (lea made .lockfamily first).
+func MissingHint(file string) string {
+	ws := Workspace(file)
+	if !Legacy(file) && isFile(filepath.Join(ws, FileName)) {
+		return fmt.Sprintf(" (a lockfamily.yaml at the workspace's root is not read once %s exists: review it, then mv %s %s)",
+			filepath.Join(ws, Dir), filepath.Join(ws, FileName), file)
+	}
+	return ""
+}
+
 // LegacyWarning is what lock says about a legacy lockfamily.yaml.
 func LegacyWarning(file string) string {
 	ws := Workspace(file)

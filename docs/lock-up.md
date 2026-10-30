@@ -111,7 +111,10 @@ own launcher sets.
 The copy is read-only in the lock: what a console writes in its own
 profile directory (locksql's PII rule sets in `.locksql/pii/`, edited at its
 console) cannot be written there; edit them in the workspace and run lock up
-again.
+again. A locksql console writes its first rule set at its first start, so lock
+up refuses a `.locksql/` without one: start the console once with locksql's
+own launcher (it writes `.locksql/pii/<set>.toml` after your review), then
+lock up.
 
 `lock add` pins only releases that run under lock up (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.10.0, lockmq v0.3.0, lockfile v0.4.0,
