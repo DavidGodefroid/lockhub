@@ -105,6 +105,15 @@ that restarts asks again: attach again. Locks are pending (agents get no
 answer) until answered. Memory and process limits are the ones each lock's
 own launcher sets.
 
+The copy is read-only in the lock: what a console writes in its own
+profile directory (locksql's PII rule sets in `.locksql/pii/`, edited at its
+console) cannot be written there; edit them in the workspace and run lock up
+again.
+
+`lock add` pins only releases that run under lock up (hub mode on lockkit
+v0.3.1): lockhub v0.1.1, locksql v0.10.0, lockmq v0.3.0, lockfile v0.4.0,
+lockhttp v0.3.0 or later.
+
 Not yet: Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
 `-vault` image variant, which lock up does not pass or pin), and lockfile's
 shipped seccomp profile (lock up uses Docker's default).

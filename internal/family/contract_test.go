@@ -195,7 +195,10 @@ func TestReleasesLatestSignedDigest(t *testing.T) {
 	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `^https://github\.com/DavidGodefroid/locksql/\.github/workflows/release\.yml@refs/tags/v0\.10\.0$ `+ref) {
 		t.Errorf("cosign: %v", cf.calls)
 	}
-	if _, err := r.Image(ctx, "locksql", "v0.9.0"); err == nil {
+	if _, err := r.Image(ctx, "locksql", "v0.9.0"); err == nil || !strings.Contains(err.Error(), "v0.10.0 or later") {
+		t.Errorf("a release without hub mode was pinned: %v", err)
+	}
+	if _, err := r.Image(ctx, "locksql", "v0.10.1"); err == nil {
 		t.Error("an image the registry does not serve was pinned")
 	}
 	if _, err := r.Image(ctx, "locksql", "latest"); err == nil {
@@ -423,7 +426,7 @@ func TestLegacyNotAdoptedAndDirChecked(t *testing.T) {
 func TestProfileCopyModesAndReview(t *testing.T) {
 	d := filepath.Join(t.TempDir(), ".locksql")
 	os.Mkdir(d, 0o700)
-	os.WriteFile(filepath.Join(d, "config.toml"), []byte("[profiles.crm]\nproduction = true\x1b[2J\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "config.toml"), []byte("[profiles.crm]\nproduction = true\x1b[2J\n# \u202eesrever\n"), 0o644)
 	os.WriteFile(filepath.Join(d, "tls.key"), []byte("k"), 0o600)
 	pr, err := ReadProfile(d, 10001, 10000)
 	if err != nil {
@@ -445,12 +448,12 @@ func TestProfileCopyModesAndReview(t *testing.T) {
 		t.Errorf("config.toml: %+v", h)
 	}
 	all := strings.Join(pr.Lines, "\n")
-	for _, want := range []string{"file tls.key 1 bytes sha256:", "config.toml:1 [profiles.crm]", `config.toml:2 production = true\x1b[2J`} {
+	for _, want := range []string{"file tls.key 1 bytes sha256:", "config.toml:1 [profiles.crm]", `config.toml:2 production = true\x{1b}[2J`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("review lacks %q:\n%s", want, all)
 		}
 	}
-	if strings.Contains(all, "\x1b") {
+	if strings.ContainsAny(all, "\x1b\u202e") {
 		t.Error("an escape sequence reaches the review")
 	}
 }

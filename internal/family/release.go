@@ -102,12 +102,19 @@ func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error
 	return "", false, fmt.Errorf("%s has no published release", repo)
 }
 
+// MinRelease is each repository's first release that runs under lock up
+// (hub mode, lockkit v0.3.1: --hub-plain-http, hub-key).
+var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.10.0", "lockmq": "v0.3.0", "lockfile": "v0.4.0", "lockhttp": "v0.3.0"}
+
 // Image is the image of repo's release tag, pinned by the digest the
 // registry serves for it, once cosign verified that digest's signature
 // by repo's release workflow run for tag.
 func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) {
 	if !semverTag.MatchString(tag) {
 		return "", fmt.Errorf("%q is not a release tag (vX.Y.Z)", tag)
+	}
+	if min, ok := MinRelease[repo]; ok && semverLess(tag, min) {
+		return "", fmt.Errorf("%s %s cannot run under lock up (no hub mode): %s or later is needed", repo, tag, min)
 	}
 	name := "davidgodefroid/" + repo
 	// The release workflows tag the image with the version without the v.

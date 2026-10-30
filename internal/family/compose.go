@@ -210,7 +210,8 @@ func Compose(c *Config, p Paths) string {
 			w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q("chmod 0700 /g && chown "+gateUID+":"+gateGID+" /g"))
 			w("    network_mode: none")
 			hardening(w)
-			w("    cap_add: [CHOWN] # chmod first: once chowned, root no longer owns /g")
+			// Again on every lock up: /g is the gate's by then.
+			w("    cap_add: [CHOWN, FOWNER]")
 			w("    volumes:")
 			w("      - %s", q(name+"-gate:/g"))
 			w("  gatekey-%s:", name)
@@ -234,8 +235,10 @@ func Compose(c *Config, p Paths) string {
 		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p && chown %s:%s /p && chmod 0700 /p", maxTar, Kinds[t].UID, Kinds[t].GID)))
 		w("    network_mode: none")
 		hardening(w)
-		// The archive's owner (the console) and modes, kept by root.
-		w("    cap_add: [CHOWN, FOWNER]")
+		// The archive's owner (the console) and modes, kept by root, which
+		// also clears the console's previous copy (its 0700 directories):
+		// a service with no network that only unpacks what lock up sends.
+		w("    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]")
 		w("    volumes:")
 		w("      - %s", q("profile-"+t+":/p"))
 	}
