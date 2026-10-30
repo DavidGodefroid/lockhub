@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"sync/atomic"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
