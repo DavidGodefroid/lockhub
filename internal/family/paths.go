@@ -92,3 +92,19 @@ func SubProjects(ws string) []string {
 	}
 	return out
 }
+
+// Canonical is file with its workspace's links resolved (when the
+// workspace exists): the path lea sees, from which the project, the
+// state directory and the consoles' socket names derive.
+func Canonical(file string) string {
+	ws := Workspace(file)
+	real, err := filepath.EvalSymlinks(ws)
+	if err != nil {
+		return file
+	}
+	rel, err := filepath.Rel(ws, file)
+	if err != nil {
+		return file
+	}
+	return filepath.Join(real, rel)
+}

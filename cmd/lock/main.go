@@ -195,6 +195,7 @@ func lockFile(flagged string, stderr io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	abs = family.Canonical(abs)
 	if family.Legacy(abs) {
 		fmt.Fprintln(stderr, family.LegacyWarning(abs))
 	}
