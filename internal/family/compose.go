@@ -60,7 +60,7 @@ func Compose(c *Config, p Paths) string {
 		l := c.Locks[name]
 		w("  lock-%s:", name)
 		w("    image: %s", q(l.Image))
-		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s]", q(name))
+		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-plain-http\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s]", q(name))
 		hardening(w)
 		w("    volumes:")
 		w("      - %s:/run/%s", q(name+"-run"), l.Type)

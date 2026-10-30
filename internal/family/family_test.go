@@ -204,6 +204,7 @@ func TestComposeIsolation(t *testing.T) {
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
+		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("compose lacks %q", want)
