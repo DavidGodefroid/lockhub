@@ -9,6 +9,7 @@
 # DIST_DIR holds this commit's release archives (scripts/release-cli.sh
 # VERSION DIST_DIR), served as a local mirror; install.sh checks the
 # archive against its sha256 (cosign would require a tagged release run).
+# lock up runs this commit's hub build (E2E_HUB_IMAGE, ci/e2e/local-hub.sh).
 . "$(dirname "$0")/lib.sh"
 install=$1 dist=$2 v=$3
 home=$(mktemp -d)
@@ -25,7 +26,8 @@ lock=$home/.local/bin/lock
 
 say "install.sh, the latest release, cosign-verified"
 home2=$(mktemp -d)
-HOME=$home2 sh "$install" 2>&1 | tee install2.out
+HOME=$home2 sh "$install" >install2.out 2>&1 || { cat install2.out; die "install.sh (latest release) failed"; }
+cat install2.out
 grep -q 'cosign: checksums.txt signed by the lockhub release workflow' install2.out || die "install.sh did not report a cosign check"
 "$home2/.local/bin/lock" version
 
@@ -41,10 +43,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 say "lock add ${LOCK_TYPE:=lockhttp} (latest signed release)"
-"$lock" add "$LOCK_TYPE" first | tee add.out
+"$lock" add "$LOCK_TYPE" first >add.out 2>&1 || { cat add.out; die "lock add failed"; }
+cat add.out
 grep -q "signature verified" add.out || die "lock add did not verify the signature"
 grep -q "ghcr.io/davidgodefroid/$LOCK_TYPE@sha256:" .lockfamily/lockfamily.yaml || die "not pinned by digest"
 grep -q "ghcr.io/davidgodefroid/lockhub@sha256:" .lockfamily/lockfamily.yaml || die "hub not pinned"
+local_hub .lockfamily/lockfamily.yaml
 
 say "lock up"
 mkdir -p ".$LOCK_TYPE"
@@ -57,6 +61,7 @@ state="$XDG_STATE_HOME/lockfamily/$p"
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --status running --services >svc.out
 grep -qx lockhub svc.out || die "hub not running"
 grep -qx lock-first svc.out || die "lock first not running"
+hub_is_local "$p"
 "$lock" doctor || true
 
 say "lock import: two sub-projects, the strictest routing kept, in either order"
@@ -89,6 +94,20 @@ for order in strict-first strict-last; do
 	r=$(sed -n '/^  routing:/,/^locks:/p' "$f" | tr -d ' \n')
 	echo "$order: $r"
 	case "$r" in routing:shared:-ttylocks:) ;; *) cat "$f"; die "routing of shared is not exactly [tty] ($order)" ;; esac
-	case "$r" in *deck*) die "a facade one sub-project refuses was kept ($order)" ;; esac
 done
+# Disjoint routings: no facade both allow, so import refuses (union or
+# "last wins" would pass the cases above).
+imp=$(mktemp -d)/ws
+sub "$imp/a" "shared: [tty]"; sub "$imp/b" "shared: [deck]"
+rc=0; (cd "$imp" && "$lock" import) >import.out 2>&1 || rc=$?
+cat import.out
+[ "$rc" != 0 ] || die "lock import merged disjoint routings"
+grep -q 'no facade left that every declaration allows' import.out || die "no note about the disjoint routings"
+[ ! -e "$imp/.lockfamily/lockfamily.yaml" ] || die "lock import wrote a file after refusing"
+# Control: no routing on either side, none in the result.
+imp=$(mktemp -d)/ws
+sub "$imp/a" ""; sub "$imp/b" ""
+(cd "$imp" && "$lock" import) >import.out 2>&1 || { cat import.out; die "lock import failed (no routing)"; }
+grep -q 'routing:' "$imp/.lockfamily/lockfamily.yaml" && { cat "$imp/.lockfamily/lockfamily.yaml"; die "a routing appeared from nowhere"; }
+grep -q '^  b-only:' "$imp/.lockfamily/lockfamily.yaml" || die "b-only not merged (no routing)"
 echo "phase 5: OK"
