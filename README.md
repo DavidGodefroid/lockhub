@@ -7,15 +7,15 @@ Each Lock keeps a human between an AI agent and a production system. With the
 hub, a Lock no longer needs a human at its own terminal: it sends an approval
 ticket (a masked screen of the request) to the hub, the human answers from a
 facade (a terminal with `lock approve`, the lea deck, Slack or Telegram; a
-mobile facade later), and the hub signs the decision. The Lock executes only on a signed
-decision bound to the exact plan that was approved.
+mobile facade later), and the hub signs the decision. The Lock executes only on
+a signed decision bound to the exact plan that was approved.
 
 The hub never runs a request, never sees its results, and never sees values in
 clear.
 
-Chat facades (Slack, Telegram) show masked screens only and answer only
-non-production reads and writes; production tickets, policy loosening and
-unlocks are answered in the terminal or the deck (`internal/route`). A
+Chat facades (Slack, Telegram) show masked screens only and answer only non-
+production reads and writes; production tickets, policy loosening and unlocks
+are answered in the terminal or the deck (`hub.Decide`, `internal/route`). A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
 ## Status
