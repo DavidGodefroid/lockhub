@@ -121,6 +121,9 @@ func Import(path string, srcs []string) ([]string, error) {
 		// mobile facade its origin (hub.mobile): not carried over.
 		fs := slices.DeleteFunc(slices.Clone(h.Facades), func(f string) bool { return isChat(f) || f == route.Mobile })
 		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: fs}}
+		if err := ensureDir(path); err != nil {
+			return nil, err
+		}
 		notes = append(notes, fmt.Sprintf("%s does not exist: hub section from %s", path, first))
 		if len(fs) != len(h.Facades) {
 			notes = append(notes, "chat and mobile facades not enabled here: run lock add slack / lock add telegram, or set hub.mobile, to enable them")

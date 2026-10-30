@@ -23,8 +23,9 @@ const (
 	// ticket.FacadeSet mounted read-only in every lock at
 	// LockFacadesPath.
 	FacadesFile = "facades.json"
-	// LockFacadesPath is where a lock reads it (--facade-keys-file).
-	LockFacadesPath = "/run/lockfamily/facades.json"
+	// LockFacadesPath is where a lock reads it (--facade-keys-file),
+	// next to the devices file (/run/lockfamily is the hub key's volume).
+	LockFacadesPath = "/run/lockfamily-facades/facades.json"
 	// LockKeysFile, in the facade keys directory, lists the lock keys
 	// lock up pinned ({"locks": {"<instance>": {"public_key": "…"}}}),
 	// for host facades to verify a lock's signed answers.

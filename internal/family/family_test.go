@@ -37,6 +37,7 @@ hub:
 }
 
 type fake struct {
+	stdins    map[string][]byte
 	upCompose string
 	calls     []string
 	keys      map[string]string
@@ -54,6 +55,10 @@ func pubKey() string {
 func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	line := name + " " + strings.Join(args, " ")
 	f.calls = append(f.calls, line)
+	if f.stdins == nil {
+		f.stdins = map[string][]byte{}
+	}
+	f.stdins[line] = stdin
 	for _, l := range strings.Split(string(stdin), "\n") {
 		if src, ok := strings.CutPrefix(strings.TrimSpace(l), "source: "); ok && strings.Contains(src, "devices-") {
 			if _, err := os.Stat(strings.Trim(src, `"`)); err != nil {
@@ -71,6 +76,9 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		if a == "keygen" {
 			return []byte(f.keys["hub"] + "\n"), nil
 		}
+	}
+	if i := strings.Index(line, "--no-deps gatekey-"); i >= 0 {
+		return []byte(f.keys[line[i+len("--no-deps gatekey-"):]] + "\n"), nil
 	}
 	if i := strings.Index(line, "hub-key --instance "); i >= 0 {
 		return []byte(f.keys[line[i+len("hub-key --instance "):]] + "\n"), nil
@@ -93,9 +101,13 @@ type ws struct {
 }
 
 func newWS(t *testing.T, conf string) ws {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "projects", "lockfamily.yaml")
+	dir, _ := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link
+	file := filepath.Join(dir, "projects", Dir, FileName)
 	os.MkdirAll(filepath.Dir(file), 0o755)
+	for _, t := range Types {
+		os.Mkdir(filepath.Join(dir, "projects", "."+t), 0o755)
+	}
+	piiSet(filepath.Join(dir, "projects"))
 	os.WriteFile(file, []byte(conf), 0o644)
 	state, run := filepath.Join(dir, "state"), filepath.Join(dir, "run")
 	return ws{dir, file, func(input string, f *fake) (string, error) {
@@ -209,13 +221,16 @@ func TestComposeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"})
+	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"})
 	for _, want := range []string{
 		"  lockhub:\n    internal: true",
 		`networks: [lockhub, "egress-crm-prod"]`,
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
+		`extra_hosts: ["host.docker.internal:host-gateway"]`, `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
+		"      - hubkey:/run/lockfamily:ro", `      - "profile-locksql:/w/.locksql:ro"`,
+		"dev.lockfamily.role: \"socket\"", "dev.lockfamily.instance: \"crm-prod\"",
 		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,
 	} {
 		if !strings.Contains(out, want) {
@@ -225,7 +240,7 @@ func TestComposeIsolation(t *testing.T) {
 	if strings.Contains(out, "docker.sock") || strings.Contains(out, "privileged") {
 		t.Error("compose grants the engine or privileges")
 	}
-	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"}) {
+	if out != Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"}) {
 		t.Error("compose output is not deterministic")
 	}
 }
@@ -369,8 +384,8 @@ func TestFacadeKeys(t *testing.T) {
 		t.Errorf("host copy of the lock keys: %v %v", lk, err)
 	}
 	compose, _ := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
-	if !strings.Contains(string(compose), `"--facade-keys-file", "/run/lockfamily/facades.json"`) ||
-		!strings.Contains(string(compose), `target: "/run/lockfamily/facades.json"`) {
+	if !strings.Contains(string(compose), `"--facade-keys-file", "/run/lockfamily-facades/facades.json"`) ||
+		!strings.Contains(string(compose), `target: "/run/lockfamily-facades/facades.json"`) {
 		t.Errorf("compose:\n%s", compose)
 	}
 	// Second run: same keys, nothing to review.
@@ -384,4 +399,12 @@ func TestFacadeKeys(t *testing.T) {
 	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "- facade tty key "+pubs["tty"]) {
 		t.Errorf("changed tty key: %v\n%s", err, out)
 	}
+}
+
+// piiSet gives the workspace ws's locksql profile a PII rule set (the
+// console writes its first one in its profile, which lock up copies
+// read-only).
+func piiSet(ws string) {
+	os.MkdirAll(filepath.Join(ws, ".locksql", "pii"), 0o755)
+	os.WriteFile(filepath.Join(ws, ".locksql", "pii", "default.toml"), []byte("# rules\n"), 0o644)
 }

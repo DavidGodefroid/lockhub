@@ -46,7 +46,7 @@ func TestComposeMobile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths := Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", HubPub: "/s/hub.pub", User: "0:0"}
+	paths := Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0"}
 	out := Compose(c, paths)
 	for _, want := range []string{
 		`"--mobile-listen", ":8444", "--mobile-origin", "https://hub.example.net"`,
@@ -70,8 +70,8 @@ func TestComposeMobile(t *testing.T) {
 		t.Error("a change of the paired devices does not change the locks")
 	}
 	for _, want := range []string{
-		`"--devices-file", "/run/lockfamily/devices.json", "--seal-clear", "--require-device", "prod-write,policy-loosen"]`,
-		"source: \"/s/devices.json\"\n        target: /run/lockfamily/devices.json\n        read_only: true",
+		`"--devices-file", "/run/lockfamily-devices/devices.json", "--seal-clear", "--require-device", "prod-write,policy-loosen"]`,
+		"source: \"/s/devices.json\"\n        target: /run/lockfamily-devices/devices.json\n        read_only: true",
 	} {
 		if strings.Count(out, want) != 1 {
 			t.Errorf("compose has %q %d times, want once (crm-prod only)", want, strings.Count(out, want))
