@@ -19,7 +19,8 @@
 # --hub-net, a locksql named "db" serves Postgres at PGHOST:PGPORT
 # (superuser postgres, password PGPASSWORD, both required by default: a
 # throwaway server, the workflow's container; the script creates the app
-# database and the ro role in it).
+# database and the ro role in it, and drops both at exit, only if it
+# created them: a server that already has one makes the run fail first).
 #
 # The deck facade (lea's deck, lea#182/#200) is not driven here: lea
 # routes a hub ticket only to the deck of the lea container whose agent
@@ -38,6 +39,9 @@ mkdir -p "$ws"
 cd "$ws"
 agents="$E2E_ID-agents"
 gate="$E2E_ID-gate"
+pg() { docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:17 psql -v ON_ERROR_STOP=1 -h "${PGHOST:-127.0.0.1}" -p "${PGPORT:-5432}" -U postgres "$@"; }
+# What this run created on the Postgres server, dropped at exit.
+made_db="" made_role=""
 cleanup() {
 	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" >/dev/null 2>&1 || true
 	# A run that died while .lockfamily was moved aside (the link check).
@@ -50,6 +54,14 @@ cleanup() {
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
 	docker network rm "$agents" >/dev/null 2>&1 || true
+	# After compose down: no console holds a session any more (FORCE ends
+	# one left anyway). The database first: the role's grants live in it.
+	if [ -n "$made_db" ]; then
+		pg -c "DROP DATABASE IF EXISTS app WITH (FORCE)" >/dev/null 2>&1 || echo "e2e: could not drop the database app" >&2
+	fi
+	if [ -n "$made_role" ]; then
+		pg -c "DROP ROLE IF EXISTS ro" >/dev/null 2>&1 || echo "e2e: could not drop the role ro" >&2
+	fi
 }
 trap cleanup EXIT INT TERM
 
@@ -67,10 +79,11 @@ cat lockfamily.yaml
 say "the locks' own profiles"
 if [ -n "$sql" ]; then
 	say "Postgres: a read-only account and a table with personal data"
-	pg() { docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:17 psql -v ON_ERROR_STOP=1 -h "${PGHOST:-127.0.0.1}" -p "${PGPORT:-5432}" -U postgres "$@"; }
 	pg -c "CREATE DATABASE app" >/dev/null
-	pg -d app -c "CREATE ROLE ro LOGIN PASSWORD 'ro-e2e-only';
-CREATE TABLE people (id int PRIMARY KEY, email text NOT NULL, label text NOT NULL);
+	made_db=1
+	pg -d app -c "CREATE ROLE ro LOGIN PASSWORD 'ro-e2e-only'" >/dev/null
+	made_role=1
+	pg -d app -c "CREATE TABLE people (id int PRIMARY KEY, email text NOT NULL, label text NOT NULL);
 INSERT INTO people VALUES (1, 'alice@example.com', 'alpha'), (2, 'bob@example.com', 'beta');
 GRANT SELECT ON people TO ro;" >/dev/null
 	# No PII rule set: the console writes its first one in its own
@@ -288,7 +301,12 @@ if [ -n "$sql" ]; then
 	# As lea runs an agent: its own account in the clients group, the
 	# socket volume, the workspace at its path; no network at all.
 	asagent() { docker run --rm --network none --user agent -v "${p}_db-run:/run/locksql" -v "$ws:$ws:ro" -w "$ws" "$sqlimg" "$@"; }
-	asagent plan --profile e2e --db app --json "SELECT id, email, label FROM people ORDER BY id LIMIT 10" >plan.json 2>plan.err || { cat plan.json plan.err; die "locksql plan failed"; }
+	# A literal the agent typed, shaped as a personal value (on a column
+	# that is not personal: locksql limits how a PII column is filtered): the
+	# screen that leaves the lock masks every literal (locksql's
+	# hubScreen), so the hub and its facades never see it. No row has it:
+	# the result is both rows.
+	asagent plan --profile e2e --db app --json "SELECT id, email, label FROM people WHERE label <> 'carol@mail.test' ORDER BY id LIMIT 10" >plan.json 2>plan.err || { cat plan.json plan.err; die "locksql plan failed"; }
 	plan=$(jq -r .plan_id plan.json)
 	[ -n "$plan" ] && [ "$plan" != null ] || { cat plan.json; die "no plan id"; }
 	asagent run --profile e2e --json "$plan" >run1.json 2>run1.err || true
@@ -306,7 +324,11 @@ if [ -n "$sql" ]; then
 	cat approve2.out
 	[ -n "$ok" ] || { docker logs "${p}-lockhub-1" 2>&1 | tail -20; die "the locksql ticket was not approved"; }
 	tr -d '\r' <approve2.out | grep -q "$ticket" || die "the approved ticket is not the agent's ($ticket)"
-	tr -d '\r' <approve2.out | grep -q 'alice@example.com' && die "the facade screen shows a personal value"
+	# The screen shown is the statement's (positive control), without the
+	# literal: the approval screen of a query never holds its results, so
+	# only a value of the statement itself can leak there.
+	tr -d '\r' <approve2.out | grep -q 'FROM people' || die "the facade screen does not show the statement"
+	tr -d '\r' <approve2.out | grep -q 'carol@mail.test' && die "the facade screen shows the statement's literal in clear"
 	ok=""
 	for i in $(seq 1 30); do
 		if asagent run --profile e2e --json "$ticket" >run2.json 2>run2.err; then ok=1; break; fi
