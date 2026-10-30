@@ -21,9 +21,12 @@ import (
 
 	"golang.org/x/term"
 
+	lkaudit "github.com/DavidGodefroid/lockkit/audit"
+
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/family"
+	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/verify"
 )
 
@@ -106,7 +109,14 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	data := fs.String("data", "", "the hub's data directory")
 	keyFile := fs.String("hub-key-file", "", "the hub's public key (base64), as lock up pinned it")
+	var lockLogs lockLogFlag
+	fs.Var(&lockLogs, "lock", "INSTANCE=PATH: also verify that lock's audit log (its audit.log, or the directory holding it); repeatable")
+	anchorsFile := fs.String("anchors", "", "file keeping each lock log's anchor between runs (host only, 0600): a log cut or stripped since is refused")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *anchorsFile != "" && len(lockLogs) == 0 {
+		fmt.Fprintln(stderr, "lock audit verify: --anchors needs --lock")
 		return 2
 	}
 	if *data == "" || *keyFile == "" {
@@ -136,7 +146,72 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "OK: %d audit records chained, %d decisions signed and recorded\n", r.Records, r.Decisions)
-	return 0
+	if len(lockLogs) == 0 {
+		return 0
+	}
+	return verifyLocks(*data, ed25519.PublicKey(pub), lockLogs, *anchorsFile, stdout, stderr)
+}
+
+// verifyLocks is lock audit verify --lock: each lock's chain, against its
+// kept anchor when there is one, and its records of hub decisions against
+// the hub's.
+func verifyLocks(data string, pub ed25519.PublicKey, logs []verify.LockLog, anchorsFile string, stdout, stderr io.Writer) int {
+	anchors := map[string]lkaudit.Anchor{}
+	if anchorsFile != "" {
+		var err error
+		if anchors, err = verify.LoadAnchors(anchorsFile); err != nil {
+			fmt.Fprintln(stderr, "lock audit verify:", err)
+			return 1
+		}
+	}
+	reps, err := verify.Locks(context.Background(), data, pub, logs, anchors)
+	if err != nil {
+		fmt.Fprintln(stderr, "lock audit verify:", err)
+		return 1
+	}
+	code := 0
+	for _, r := range reps {
+		for _, p := range r.Problems {
+			fmt.Fprintf(stdout, "FAIL %s: %s\n", r.Instance, p)
+		}
+		if !r.OK() {
+			code = 1
+			continue
+		}
+		how := "not anchored (pass --anchors FILE to see a cut tail next time)"
+		if r.Anchored {
+			how = "anchored"
+		}
+		fmt.Fprintf(stdout, "OK: %s: %d audit records chained (%d before the chain), %d hub decisions match the hub's, %s\n", r.Instance, r.Records, r.Legacy, r.HubDecisions, how)
+		anchors[r.Instance] = r.Anchor
+	}
+	if anchorsFile != "" {
+		// Only verified logs move their anchor forward.
+		if err := verify.SaveAnchors(anchorsFile, anchors); err != nil {
+			fmt.Fprintln(stderr, "lock audit verify:", err)
+			return 1
+		}
+	}
+	return code
+}
+
+// lockLogFlag is the repeatable --lock INSTANCE=PATH.
+type lockLogFlag []verify.LockLog
+
+func (f *lockLogFlag) String() string { return "" }
+
+func (f *lockLogFlag) Set(v string) error {
+	inst, path, ok := strings.Cut(v, "=")
+	if !ok || !keys.ValidInstance(inst) || path == "" {
+		return fmt.Errorf("want INSTANCE=PATH, got %q", v)
+	}
+	for _, l := range *f {
+		if l.Instance == inst {
+			return fmt.Errorf("--lock %s given twice", inst)
+		}
+	}
+	*f = append(*f, verify.LockLog{Instance: inst, Path: path})
+	return nil
 }
 
 func runtimeDir() string {
