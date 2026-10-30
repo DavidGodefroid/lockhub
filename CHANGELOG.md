@@ -10,7 +10,8 @@ digest).
   deck, phone), never to Slack or Telegram (#61, invariant I9). It used
   to route and notify read, read-pii and write tickets to both chat
   facades, though none ran. A chat facade is routed only when
-  `routing.json` lists it, as `lock up` writes it. Upgrade note: a hub
+  `routing.json` lists it, as `lock up` writes it; the phone stays
+  implicit (it serves nothing without `--mobile-listen`). Upgrade note: a hub
   run by hand (not by `lock up`) with a routing.json that omits
   `facades` no longer offers tickets on chat; list the facades in it.
 

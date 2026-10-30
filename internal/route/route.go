@@ -60,10 +60,13 @@ func KnownFacade(f string) bool { return slices.Contains(facades, f) }
 // KnownRisk reports whether r is a risk class.
 func KnownRisk(r string) bool { return slices.Contains(risks, r) }
 
-// Rules is the routing in force. The zero value is the defaults.
+// Rules is the routing in force. The zero value routes to the local
+// facades only (the table above without slack and telegram).
 type Rules struct {
 	// Enabled lists the facades this hub runs; empty: the local ones
-	// only (tty, deck, mobile), never a chat facade.
+	// only (tty, deck, mobile), never a chat facade. Mobile stays
+	// implicit: it serves nothing without --mobile-listen, and its
+	// decisions are signed by a paired device the locks pin.
 	Enabled []string `json:"facades,omitempty"`
 	// Only, per instance, lists the facades that may answer it. Facades
 	// outside the defaults are ignored: Only narrows, never widens.
