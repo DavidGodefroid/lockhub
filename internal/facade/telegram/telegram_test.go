@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -365,5 +366,49 @@ func TestErrorsNeverHoldTheToken(t *testing.T) {
 	_, err := tg.Post(context.Background(), chat.Card{ID: "t", Instance: "crm", Risk: "read", Answerable: true})
 	if err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatalf("error %v", err)
+	}
+}
+
+// Close and its retries (#60): a message already rewritten ("message is
+// not modified", a retry after another chat failed) is done; a failure is
+// retried unless every failed message is gone.
+func TestCloseErrors(t *testing.T) {
+	for name, c := range map[string]struct {
+		answers []string // per editMessageText call, "" ok
+		ok      bool
+		gone    bool
+	}{
+		"not modified":      {answers: []string{"Bad Request: message is not modified: specified new message content and reply markup are exactly the same", ""}, ok: true},
+		"one down":          {answers: []string{"", "Too Many Requests: retry after 5"}},
+		"all gone":          {answers: []string{"Bad Request: message to edit not found", "Bad Request: message can't be edited"}, gone: true},
+		"one gone one down": {answers: []string{"Bad Request: message to edit not found", "Internal Server Error"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var mu sync.Mutex
+			n := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				a := c.answers[n%len(c.answers)]
+				n++
+				mu.Unlock()
+				if a == "" {
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": true})
+					return
+				}
+				json.NewEncoder(w).Encode(map[string]any{"ok": false, "description": a})
+			}))
+			t.Cleanup(srv.Close)
+			tg, err := telegram.New(telegram.Config{Chats: []chatconf.TelegramChat{{Chat: 1, From: 1}, {Chat: 2, From: 2}}, Token: token, API: srv.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = tg.Close(context.Background(), "1:10,2:20", chat.Card{Instance: "crm", ID: "T1"}, "approved by u")
+			if (err == nil) != c.ok || errors.Is(err, chat.ErrGone) != c.gone {
+				t.Fatalf("Close: %v (want ok %v, gone %v)", err, c.ok, c.gone)
+			}
+			if err != nil && strings.Contains(err.Error(), "SECRET") {
+				t.Fatalf("the token reached the error: %v", err)
+			}
+		})
 	}
 }
