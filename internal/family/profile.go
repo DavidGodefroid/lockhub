@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
+	"unicode/utf8"
 )
 
 // A lock's own profile directory is in the workspace, which lea's agents
@@ -30,6 +32,10 @@ type Profile struct {
 	Tar []byte
 	// Fingerprint is the sha256 of Tar.
 	Fingerprint string
+	// Lines are what the human reviews: each file by name, size and
+	// hash, and the lines of its TOML files (lockkit's configuration
+	// refuses secrets in them).
+	Lines []string
 }
 
 // maxEntries bounds a profile directory's files and directories.
@@ -40,7 +46,11 @@ const maxEntries = 256
 // (os.Root: no path, even one swapped for a link while it is read,
 // leads outside dir); every file and directory is checked on the handle
 // it was read through.
-func ReadProfile(dir string) (*Profile, error) {
+//
+// The copy is owned by uid:gid (the console's account), with the
+// owner-only modes kept: a 0600 file stays 0600 (locks refuse a key
+// others can read).
+func ReadProfile(dir string, uid, gid int) (*Profile, error) {
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
@@ -55,7 +65,7 @@ func ReadProfile(dir string) (*Profile, error) {
 	defer root.Close()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	r := &profileReader{root: root, dir: dir, tw: tw}
+	r := &profileReader{root: root, dir: dir, tw: tw, uid: uid, gid: gid}
 	// The root itself: still the directory checked above.
 	if err := r.walk(".", fi); err != nil {
 		return nil, err
@@ -67,18 +77,28 @@ func ReadProfile(dir string) (*Profile, error) {
 		return nil, fmt.Errorf("%s: more than %d bytes", dir, maxProfile)
 	}
 	s := sha256.Sum256(buf.Bytes())
-	return &Profile{Tar: buf.Bytes(), Fingerprint: "sha256:" + hex.EncodeToString(s[:])}, nil
+	return &Profile{Tar: buf.Bytes(), Fingerprint: "sha256:" + hex.EncodeToString(s[:]), Lines: r.lines}, nil
 }
 
 // maxTar bounds the archive (maxProfile of content plus the headers).
 const maxTar = maxProfile + (maxEntries+2)*1024
 
 type profileReader struct {
-	root    *os.Root
-	dir     string
-	tw      *tar.Writer
-	total   int
-	entries int
+	root     *os.Root
+	dir      string
+	tw       *tar.Writer
+	total    int
+	entries  int
+	uid, gid int
+	lines    []string
+}
+
+// mode is the copy's mode: owner-only stays owner-only.
+func mode(fi os.FileInfo, open int64) int64 {
+	if fi.Mode().Perm()&0o077 == 0 {
+		return open &^ 0o077
+	}
+	return open
 }
 
 // walk adds the directory rel, which lstat described as want.
@@ -100,7 +120,7 @@ func (r *profileReader) walk(rel string, want os.FileInfo) error {
 		return err
 	}
 	if rel != "." {
-		if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: filepath.ToSlash(rel) + "/", Mode: 0o755}); err != nil {
+		if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: filepath.ToSlash(rel) + "/", Mode: mode(fi, 0o755), Uid: r.uid, Gid: r.gid}); err != nil {
 			return err
 		}
 	}
@@ -159,8 +179,15 @@ func (r *profileReader) file(rel string, want os.FileInfo) error {
 	if r.total += len(b); r.total > maxProfile {
 		return fmt.Errorf("%s: more than %d bytes", r.dir, maxProfile)
 	}
-	if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: 0o644, Size: int64(len(b))}); err != nil {
+	if err := r.tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: filepath.ToSlash(rel), Mode: mode(fi, 0o644), Size: int64(len(b)), Uid: r.uid, Gid: r.gid}); err != nil {
 		return err
+	}
+	h := sha256.Sum256(b)
+	r.lines = append(r.lines, fmt.Sprintf("file %s %d bytes sha256:%s", filepath.ToSlash(rel), len(b), hex.EncodeToString(h[:])))
+	if strings.HasSuffix(rel, ".toml") && utf8.Valid(b) && len(b) <= 16<<10 {
+		for i, l := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
+			r.lines = append(r.lines, fmt.Sprintf("%s:%d %s", filepath.ToSlash(rel), i+1, printable(l)))
+		}
 	}
 	_, err = r.tw.Write(b)
 	return err
@@ -187,4 +214,18 @@ func ownedNotShared(p string, fi os.FileInfo) error {
 		return fmt.Errorf("%s: mode %v: writable by others than you", p, fi.Mode().Perm())
 	}
 	return nil
+}
+
+// printable is l with control characters shown as \xNN (no escape
+// sequence reaches the human's terminal).
+func printable(l string) string {
+	var b strings.Builder
+	for _, c := range l {
+		if c < 0x20 && c != '\t' || c == 0x7f || (c >= 0x80 && c < 0xa0) {
+			fmt.Fprintf(&b, "\\x%02x", c)
+			continue
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }

@@ -129,9 +129,8 @@ func TestLocateAndLegacy(t *testing.T) {
 	if Project(Workspace(old)) != Project(Workspace(filepath.Join(ws, Dir, FileName))) {
 		t.Error("moving lockfamily.yaml changes the project")
 	}
-	for _, sub := range []string{"a", "b"} {
-		os.MkdirAll(filepath.Join(ws, sub, Dir), 0o755)
-	}
+	os.MkdirAll(filepath.Join(ws, "a", Dir), 0o755)
+	os.MkdirAll(filepath.Join(ws, "b"), 0o755)
 	os.WriteFile(filepath.Join(ws, "a", Dir, FileName), nil, 0o644)
 	os.WriteFile(filepath.Join(ws, "b", FileName), nil, 0o644)
 	got := SubProjects(ws)
@@ -236,7 +235,7 @@ func TestProfileReviewedAndCopied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pr, err := ReadProfile(filepath.Join(ws, ".locksql"))
+	pr, err := ReadProfile(filepath.Join(ws, ".locksql"), 10001, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +293,7 @@ func TestProfileRefusals(t *testing.T) {
 			d := filepath.Join(t.TempDir(), ".locksql")
 			os.Mkdir(d, 0o755)
 			mk(d)
-			if _, err := ReadProfile(d); err == nil {
+			if _, err := ReadProfile(d, 1, 1); err == nil {
 				t.Error("accepted")
 			}
 		})
@@ -397,5 +396,61 @@ func TestWorkspaceThroughLink(t *testing.T) {
 	rw, _ := filepath.EvalSymlinks(real)
 	if !f.ran("compose -p "+Project(rw)+" ") || strings.Contains(f.upCompose, link) {
 		t.Errorf("project or paths not canonical: %v", f.calls)
+	}
+}
+
+// Once .lockfamily exists, a lockfamily.yaml planted at the root is not
+// adopted; a .lockfamily others can write is not trusted.
+func TestLegacyNotAdoptedAndDirChecked(t *testing.T) {
+	ws := t.TempDir()
+	os.Mkdir(filepath.Join(ws, Dir), 0o755)
+	os.WriteFile(filepath.Join(ws, FileName), []byte(yamlConf("")), 0o644)
+	if got := Locate(ws); got != filepath.Join(ws, Dir, FileName) {
+		t.Errorf("planted root file adopted: %s", got)
+	}
+	os.WriteFile(filepath.Join(ws, Dir, FileName), []byte(yamlConf("")), 0o644)
+	if _, err := Load(filepath.Join(ws, Dir, FileName)); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(filepath.Join(ws, Dir), 0o777)
+	if _, err := Load(filepath.Join(ws, Dir, FileName)); err == nil {
+		t.Error("loaded from a world-writable .lockfamily")
+	}
+}
+
+// The copy keeps owner-only modes and belongs to the console; the review
+// lists every file and shows the TOML.
+func TestProfileCopyModesAndReview(t *testing.T) {
+	d := filepath.Join(t.TempDir(), ".locksql")
+	os.Mkdir(d, 0o700)
+	os.WriteFile(filepath.Join(d, "config.toml"), []byte("[profiles.crm]\nproduction = true\x1b[2J\n"), 0o644)
+	os.WriteFile(filepath.Join(d, "tls.key"), []byte("k"), 0o600)
+	pr, err := ReadProfile(d, 10001, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(bytes.NewReader(pr.Tar))
+	got := map[string]*tar.Header{}
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		got[h.Name] = h
+	}
+	if h := got["tls.key"]; h == nil || h.Mode != 0o600 || h.Uid != 10001 || h.Gid != 10000 {
+		t.Errorf("tls.key: %+v", h)
+	}
+	if h := got["config.toml"]; h == nil || h.Mode != 0o644 {
+		t.Errorf("config.toml: %+v", h)
+	}
+	all := strings.Join(pr.Lines, "\n")
+	for _, want := range []string{"file tls.key 1 bytes sha256:", "config.toml:1 [profiles.crm]", `config.toml:2 production = true\x1b[2J`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("review lacks %q:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "\x1b") {
+		t.Error("an escape sequence reaches the review")
 	}
 }

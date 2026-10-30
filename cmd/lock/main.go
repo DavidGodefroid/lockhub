@@ -369,12 +369,9 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return exec.Command("docker", append([]string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
 			"-f", filepath.Join(state, "compose.yaml")}, a...)...)
 	}
-	// Attaching replays nothing: the console's pending question is in its
-	// last lines.
-	logs := compose("logs", "--no-log-prefix", "--tail", "20", "lock-"+pos[0])
-	logs.Stdout, logs.Stderr = stdout, stderr
-	_ = logs.Run()
-	fmt.Fprintln(stdout, "--- attached to lock", pos[0], "(answer its last question above; detach with Ctrl-P Ctrl-Q)")
+	// The console has no log (it would keep its screens): attaching
+	// replays nothing.
+	fmt.Fprintln(stdout, "attached to lock", pos[0], "(its pending question is not shown again: it is the policy review, \"Apply these changes? [y/N]\", on a first start; detach with Ctrl-P Ctrl-Q)")
 	cmd := compose("attach", "lock-"+pos[0])
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	if err := cmd.Run(); err != nil {

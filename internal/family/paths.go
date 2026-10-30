@@ -44,8 +44,10 @@ func LegacyWarning(file string) string {
 // dir/.lockfamily/lockfamily.yaml, else the legacy dir/lockfamily.yaml,
 // else (none yet) the first, where lock add and lock import create it.
 func Locate(dir string) string {
+	// Once .lockfamily exists (lea makes it), only its lockfamily.yaml
+	// counts: one an agent plants at the root is never adopted.
 	p := filepath.Join(dir, Dir, FileName)
-	if _, err := os.Lstat(p); err == nil {
+	if _, err := os.Lstat(filepath.Join(dir, Dir)); err == nil {
 		return p
 	}
 	if old := filepath.Join(dir, FileName); isFile(old) {
