@@ -22,6 +22,33 @@ digest).
   fails. Not checked: records a hub-mode lock should not write at all
   (a local approval).
 
+- Audit records are written after the database commit, through a
+  transactional outbox: each change stores its record in its own
+  transaction, signed with the hub key together with its outbox row id,
+  and the record is appended to `tickets.jsonl` once the transaction
+  commits (after a crash, at the next start, before serving). A
+  rolled-back change never has an audit record, and a committed one
+  always gets one, exactly once: each record now carries its `outbox` id,
+  ids only grow along the log, and a row replayed into the database, or
+  not signed for its id, stops the flush instead of being signed into
+  the log. While the log cannot be written, every change starting after
+  the failure is refused (HTTP 503 `audit_down`); the changes already in
+  flight commit with their records waiting in the outbox, and their
+  decisions are delivered to locks meanwhile (durable and signed, not yet
+  in the log). A failed append is cut back from the log, and a torn last
+  line left by a power loss is cut at start, so a retry chains the record
+  once. `lock audit verify` reads the database as of one instant, then
+  the log, so it can run against a live hub; it accepts a decision whose
+  record is still in the outbox, says how many records await the log, and
+  reports replayed or foreign outbox rows. An older `lock audit verify`
+  refuses a log with `outbox` fields: use this release's.
+  A `hub.db` restored from a backup older than `tickets.jsonl` makes
+  every new outbox row look like a replay, and the hub refuses to start:
+  restore both together (or set `audit_outbox`'s row in `sqlite_sequence`
+  past the log's last `outbox` id). Not detected: an outbox row deleted
+  from the database by someone who can write it, before its flush, for a
+  record other than a decision (decisions are cross-checked).
+
 - `GET /v1/hello` also answers `ticket_versions` (the ticket schema
   versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
   (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the
