@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS devices (
 	created    INTEGER NOT NULL,
 	updated    INTEGER NOT NULL
 );
+-- Web Push subscriptions of paired devices (mobile facade, optional):
+-- the push service's endpoint only (pushes carry no payload, so no
+-- encryption keys are kept).
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+	endpoint TEXT PRIMARY KEY,
+	device   TEXT NOT NULL REFERENCES devices(id),
+	created  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS push_subscriptions_device ON push_subscriptions(device, created);
 CREATE TABLE IF NOT EXISTS nonces (
 	instance TEXT NOT NULL,
 	nonce    TEXT NOT NULL,
@@ -514,6 +523,75 @@ func (s *Store) Devices(ctx context.Context) ([]Device, error) {
 		}
 		d.SignCount, d.Created, d.Updated = uint32(sc), time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// PushSubscription is a Web Push endpoint of a device.
+type PushSubscription struct {
+	Endpoint string
+	Device   string
+	Created  time.Time
+}
+
+// ErrDeviceInactive is a push subscription for a device that is not
+// active.
+var ErrDeviceInactive = errors.New("device not active")
+
+// PutPushSubscription records endpoint for an active device, keeping at
+// most max per device (the oldest go). An endpoint already recorded moves
+// to device.
+func (s *Store) PutPushSubscription(ctx context.Context, device, endpoint string, max int, now time.Time) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		d, err := tx.Device(device)
+		if err != nil || d.State != DeviceActive {
+			return ErrDeviceInactive
+		}
+		if _, err := tx.tx.Exec(`INSERT INTO push_subscriptions(endpoint, device, created) VALUES (?, ?, ?)
+			ON CONFLICT(endpoint) DO UPDATE SET device = excluded.device, created = excluded.created`, endpoint, device, now.Unix()); err != nil {
+			return err
+		}
+		_, err = tx.tx.Exec(`DELETE FROM push_subscriptions WHERE device = ? AND endpoint NOT IN
+			(SELECT endpoint FROM push_subscriptions WHERE device = ? ORDER BY created DESC, rowid DESC LIMIT ?)`, device, device, max)
+		return err
+	})
+}
+
+// DeletePushSubscription drops a device's endpoint (device "": whoever's).
+func (s *Store) DeletePushSubscription(ctx context.Context, device, endpoint string) error {
+	var err error
+	if device == "" {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint = ?`, endpoint)
+	} else {
+		_, err = s.db.ExecContext(ctx, `DELETE FROM push_subscriptions WHERE endpoint = ? AND device = ?`, endpoint, device)
+	}
+	return err
+}
+
+// DeletePushSubscriptions drops every endpoint of a device.
+func (t *Tx) DeletePushSubscriptions(device string) error {
+	_, err := t.tx.Exec(`DELETE FROM push_subscriptions WHERE device = ?`, device)
+	return err
+}
+
+// PushSubscriptions lists the endpoints of active devices only, oldest
+// first (device "": every active device's).
+func (s *Store) PushSubscriptions(ctx context.Context, device string) ([]PushSubscription, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.endpoint, p.device, p.created FROM push_subscriptions p JOIN devices d ON d.id = p.device
+		WHERE d.state = ? AND (? = '' OR p.device = ?) ORDER BY p.created, p.endpoint`, DeviceActive, device, device)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PushSubscription
+	for rows.Next() {
+		var p PushSubscription
+		var created int64
+		if err := rows.Scan(&p.Endpoint, &p.Device, &created); err != nil {
+			return nil, err
+		}
+		p.Created = time.Unix(created, 0).UTC()
+		out = append(out, p)
 	}
 	return out, rows.Err()
 }

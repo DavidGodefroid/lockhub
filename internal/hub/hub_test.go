@@ -309,3 +309,22 @@ func TestDeviceVerdicts(t *testing.T) {
 		t.Errorf("revoked device: %v", err)
 	}
 }
+
+func TestOnPendingOnNewTicketsOnly(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	var got []hub.Pending
+	e.Hub.OnPending(func(p hub.Pending) { got = append(got, p) })
+	raw := a.Ticket("T1", "write", e.Clock.T, 24*time.Hour)
+	for range 2 {
+		if _, _, err := e.Hub.Push(ctx, "crm-prod", raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "read", e.Clock.T, 0)); err == nil {
+		t.Fatal("conflict accepted")
+	}
+	if len(got) != 1 || got[0] != (hub.Pending{Instance: "crm-prod", ID: "T1", Risk: "write"}) {
+		t.Fatalf("OnPending calls %+v, want one for T1", got)
+	}
+}
