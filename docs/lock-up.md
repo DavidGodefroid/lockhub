@@ -165,7 +165,7 @@ instance is not supported (lockhub#44).
 
 lea's agents run as the host user's uid, which has no account in a lock's
 image: the console refuses them unless the lock names that uid. In
-lockfamily.yaml, per lockmq or lockfile lock:
+lockfamily.yaml, per locksql, lockmq or lockfile lock:
 
 ```yaml
 locks:
@@ -175,15 +175,14 @@ locks:
     allowed_uids: [1000]   # id -u of the account that runs lea
 ```
 
-lock up passes it as the console's `--allowed-uids 1000` (lockmq v0.4.1,
-lockfile v0.5.1 or later; an older image refuses to start), and the review
+lock up passes it as the console's `--allowed-uids 1000` (locksql v0.11.2,
+lockmq v0.4.1, lockfile v0.5.1 or later; an older image refuses to start), and the review
 shows it (`lock events serves uids 1000 besides its clients group`): a
 change of it is a change to confirm. Only uids, each once: never root, 65534
 (nobody), nor the console's own uid. `.lockfamily/` is read-only in lea's containers,
 and every `allowed_uids` (from a legacy root file or a sub-project `lock
-import` reads, which agents may write, too) is in the review you confirm. A locksql lock takes none yet (its console has no such
-flag; lock up refuses the key there), and a lockhttp lock is reached by
-lea's gate, an account of its image. `lock import` keeps the uids every
+import` reads, which agents may write, too) is in the review you confirm. A lockhttp lock takes none (lock up refuses
+the key there): it is reached by lea's gate, an account of its image. `lock import` keeps the uids every
 declaration of an instance lists.
 
 `lock add` pins only releases that run under lock up (hub mode on lockkit

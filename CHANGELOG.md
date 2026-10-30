@@ -5,6 +5,13 @@ digest).
 
 ## Unreleased
 
+- lockfamily.yaml `allowed_uids` on locksql locks too (locksql#139): lock
+  up passes it as the console's `--allowed-uids` (locksql v0.11.2 or
+  later; an older locksql image refuses the flag and does not start), so
+  that lea's agents reach a locksql lock as they reach lockmq and lockfile
+  ones. Same rules: uids only, each once, never root, 65534 nor the
+  console's own uid (10001); still refused on lockhttp locks.
+
 ## v0.2.4 (2026-10-30)
 
 Supported locks: as v0.2.3, plus lockmq v0.4.1 and lockfile v0.5.1
