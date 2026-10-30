@@ -47,7 +47,16 @@ hub:
     port: 8444                           # host loopback port (default)
     seal_clear: true                     # clear values, end to end to the phone
     require_device: [prod-write]         # locks refuse other approvals of these
+locks:
+  crm-prod:
+    type: locksql
+    image: ghcr.io/davidgodefroid/locksql@sha256:…
+    devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
 ```
+
+A lock without `devices: true` refuses every decision taken on a phone (it
+pins none); `seal_clear` and `require_device` apply to the locks that pin the
+phones. Its image must take `--devices-file` (lockkit v0.4.0 or later).
 
 **Exposure.** `lock up` publishes the mobile listener on `127.0.0.1:8444`
 only. The phone reaches it through a TLS reverse proxy or tunnel that you run

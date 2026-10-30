@@ -10,7 +10,8 @@ digest).
   proxy or tunnel (`hub.facades: [mobile]`, `hub.mobile.origin`). Phones
   pair with `lock mobile pair` (one-time code, WebAuthn registration with
   user verification, fingerprint confirmed at the terminal); `lock up`
-  reviews paired devices and pins them at every lock (`--devices-file`),
+  reviews paired devices and pins them at the locks that set
+  `devices: true` (`--devices-file`; their image needs lockkit ≥ v0.4.0),
   with `seal_clear` (clear screens sealed end to end to the phones) and
   `require_device` (locks refuse approvals of those risk classes not
   signed by a phone). Each decision on the phone is a WebAuthn assertion

@@ -78,7 +78,7 @@ func Compose(c *Config, p Paths) string {
 		l := c.Locks[name]
 		w("  lock-%s:", name)
 		w("    image: %s", q(l.Image))
-		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-plain-http\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s%s]", q(name), deviceFlags(c, p))
+		w("    command: [\"console\", \"--hub\", \"http://lockhub:8443\", \"--hub-plain-http\", \"--hub-key-file\", \"/run/lockfamily/hub.pub\", \"--instance\", %s%s]", q(name), deviceFlags(c, l, p))
 		hardening(w)
 		w("    volumes:")
 		w("      - %s:/run/%s", q(name+"-run"), l.Type)
@@ -87,7 +87,7 @@ func Compose(c *Config, p Paths) string {
 		w("        source: %s", q(p.HubPub))
 		w("        target: /run/lockfamily/hub.pub")
 		w("        read_only: true")
-		if p.Devices != "" {
+		if p.Devices != "" && l.Devices {
 			w("      - type: bind")
 			w("        source: %s", q(p.Devices))
 			w("        target: /run/lockfamily/devices.json")
@@ -95,7 +95,7 @@ func Compose(c *Config, p Paths) string {
 		}
 		w("    networks: [lockhub, %s]", q("egress-"+name))
 		w("    depends_on: [lockhub]")
-		if p.DevicesID != "" {
+		if p.DevicesID != "" && l.Devices {
 			w("    labels:")
 			w("      lockfamily.devices: %s", q(p.DevicesID))
 		}
@@ -122,9 +122,10 @@ func Compose(c *Config, p Paths) string {
 }
 
 // deviceFlags are a lock's flags for the paired devices: pinned, and as
-// hub.mobile asks, sealed to and required.
-func deviceFlags(c *Config, p Paths) string {
-	if p.Devices == "" {
+// hub.mobile asks, sealed to and required; only for a lock that takes
+// them (locks.<name>.devices).
+func deviceFlags(c *Config, l Lock, p Paths) string {
+	if p.Devices == "" || !l.Devices {
 		return ""
 	}
 	out := `, "--devices-file", "/run/lockfamily/devices.json"`

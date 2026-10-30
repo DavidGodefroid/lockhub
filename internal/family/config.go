@@ -69,6 +69,11 @@ type Hub struct {
 //	    port: 8444                       # default
 //	    seal_clear: true                 # locks seal clear screens to paired phones
 //	    require_device: [prod-write]     # locks accept only device-signed approvals of these
+//	locks:
+//	  crm-prod:
+//	    type: locksql
+//	    image: …
+//	    devices: true                    # this lock pins the paired phones
 type Mobile struct {
 	Origin        string   `yaml:"origin"`
 	Port          int      `yaml:"port,omitempty"`
@@ -99,6 +104,10 @@ func (m *Mobile) validate() error {
 type Lock struct {
 	Type  string `yaml:"type"`
 	Image string `yaml:"image"`
+	// Devices: the lock pins the paired phones (its image is on lockkit
+	// v0.4.0 or later and takes --devices-file). Without it, the lock
+	// refuses every decision taken on a phone.
+	Devices bool `yaml:"devices,omitempty"`
 }
 
 // Types are the lock types lock up knows, and their image repositories.
@@ -194,6 +203,12 @@ func (c *Config) validate(needLocks bool) error {
 		if m := digestRef.FindStringSubmatch(l.Image); m == nil || m[1] != l.Type {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
 		}
+		if l.Devices && c.Hub.Mobile == nil {
+			return fmt.Errorf("locks.%s.devices: set, but the mobile facade is not configured (hub.mobile)", name)
+		}
+	}
+	if m := c.Hub.Mobile; m != nil && (m.SealClear || len(m.RequireDevice) > 0) && !c.anyDevices() {
+		return fmt.Errorf("hub.mobile: seal_clear and require_device apply to the locks that pin the devices: set devices: true on them")
 	}
 	for inst, fs := range c.Hub.Routing {
 		if _, ok := c.Locks[inst]; !ok {

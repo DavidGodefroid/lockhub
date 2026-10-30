@@ -99,6 +99,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string) []string {
 		l := c.Locks[n]
 		s = append(s, fmt.Sprintf("lock %s type %s", n, l.Type), fmt.Sprintf("lock %s image %s", n, l.Image),
 			fmt.Sprintf("lock %s key %s", n, lockPubs[n]))
+		if l.Devices {
+			s = append(s, fmt.Sprintf("lock %s pins the paired devices", n))
+		}
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
 		}
@@ -159,7 +162,7 @@ func (u *Up) Do(ctx context.Context) error {
 	paths.DevicesID = fingerprint(append([]string{"devices"}, devicesSummary(devices)...))
 	if len(devices) > 0 {
 		paths.Devices = DevicesFile(u.State)
-	} else if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 {
+	} else if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
 		// Fail closed: without a device, the locks would take the hub's
 		// approvals of these risk classes again.
 		return fmt.Errorf("hub.mobile.require_device needs a paired device: lock up without it, lock mobile pair, then set it again")
@@ -307,6 +310,16 @@ func privateDir(d string) error {
 		return err
 	}
 	return checkPrivate(d)
+}
+
+// anyDevices reports whether a lock pins the paired devices.
+func (c *Config) anyDevices() bool {
+	for _, l := range c.Locks {
+		if l.Devices {
+			return true
+		}
+	}
+	return false
 }
 
 func validPub(s string) bool {

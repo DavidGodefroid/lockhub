@@ -16,14 +16,20 @@ const mobileConf = `  facades: [tty, deck, mobile]
     require_device: [prod-write, policy-loosen]
 `
 
+// mobileYAML is yamlConf with mobile, crm-prod pinning devices.
+func mobileYAML() string {
+	return strings.Replace(yamlConf(mobileConf), "    image: "+sqlImg+"\n", "    image: "+sqlImg+"\n    devices: true\n", 1)
+}
+
 func TestMobileConfig(t *testing.T) {
 	for name, conf := range map[string]string{
-		"mobile without origin": "  facades: [tty, mobile]\n",
-		"origin without mobile": "  mobile:\n    origin: https://hub.example.net\n",
-		"http origin":           "  facades: [mobile]\n  mobile:\n    origin: http://hub.example.net\n",
-		"origin with path":      "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net/x\n",
-		"unknown risk":          "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    require_device: [writes]\n",
-		"low port":              "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    port: 80\n",
+		"mobile without origin":  "  facades: [tty, mobile]\n",
+		"origin without mobile":  "  mobile:\n    origin: https://hub.example.net\n",
+		"http origin":            "  facades: [mobile]\n  mobile:\n    origin: http://hub.example.net\n",
+		"origin with path":       "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net/x\n",
+		"unknown risk":           "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    require_device: [writes]\n",
+		"low port":               "  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    port: 80\n",
+		"require without a lock": mobileConf,
 	} {
 		p := filepath.Join(t.TempDir(), "lockfamily.yaml")
 		os.WriteFile(p, []byte(yamlConf(conf)), 0o644)
@@ -35,7 +41,7 @@ func TestMobileConfig(t *testing.T) {
 
 func TestComposeMobile(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "lockfamily.yaml")
-	os.WriteFile(p, []byte(yamlConf(mobileConf)), 0o644)
+	os.WriteFile(p, []byte(mobileYAML()), 0o644)
 	c, err := Load(p)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +62,7 @@ func TestComposeMobile(t *testing.T) {
 	}
 	paths.Devices, paths.DevicesID = "/s/devices.json", "sha256:aa"
 	out = Compose(c, paths)
-	if strings.Count(out, `lockfamily.devices: "sha256:aa"`) != 2 {
+	if strings.Count(out, `lockfamily.devices: "sha256:aa"`) != 1 {
 		t.Error("the locks do not carry the devices' identity")
 	}
 	paths.DevicesID = "sha256:bb"
@@ -67,8 +73,8 @@ func TestComposeMobile(t *testing.T) {
 		`"--devices-file", "/run/lockfamily/devices.json", "--seal-clear", "--require-device", "prod-write,policy-loosen"]`,
 		"source: \"/s/devices.json\"\n        target: /run/lockfamily/devices.json\n        read_only: true",
 	} {
-		if strings.Count(out, want) != 2 {
-			t.Errorf("compose lacks %q for each lock", want)
+		if strings.Count(out, want) != 1 {
+			t.Errorf("compose has %q %d times, want once (crm-prod only)", want, strings.Count(out, want))
 		}
 	}
 	if strings.Contains(out, "0.0.0.0") || strings.Contains(out, `"8444:8444"`) {
@@ -101,7 +107,7 @@ func TestPinnedDevicesAreReviewed(t *testing.T) {
 // require_device without a paired device would let the locks take the
 // hub's approvals again: lock up refuses to apply it.
 func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
-	w := newWS(t, yamlConf(mobileConf))
+	w := newWS(t, mobileYAML())
 	if _, err := w.up("y\n", newFake()); err == nil || !strings.Contains(err.Error(), "require_device") {
 		t.Fatalf("lock up applied require_device with no device: %v", err)
 	}
