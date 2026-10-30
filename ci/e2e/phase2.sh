@@ -1,7 +1,11 @@
 #!/bin/sh
-# Phase 2 of the hub plan, end to end: lock up on a 2-lock lockfamily.yaml
-# starts the stack; a ticket is approved through the facade socket
-# (lock approve, at a terminal); an agent can reach the hub neither
+# Phase 2 of the hub plan, end to end: lock up on a lockfamily.yaml with a
+# database lock (locksql, on the job's Postgres) and LockHTTP starts the
+# stack; tickets are approved through the facade socket (lock approve, at a
+# terminal): a LockHTTP write held by the gate, and a locksql query an
+# agent's container plans and runs (pending, approved, run by ticket,
+# PII masked by the rule set the console wrote in its own volume at its
+# first start: lockhub#41); an agent can reach the hub neither
 # directly nor through the LockHTTP gate (I2); lock up's side of I11: a
 # legacy root lockfamily.yaml moves into .lockfamily, a planted root file
 # is never read once .lockfamily exists, a .lockfamily others can write
@@ -10,11 +14,22 @@
 #
 #   ci/e2e/phase2.sh LOCK_BIN
 #
-# Locks: LOCKS="name:type ..." (default: two LockHTTP instances, the lock
-# with hub mode in a release); a lockhttp named "web" is the gate.
+# Locks: LOCKS="name:type ..." (default: locksql db, LockHTTP web and api);
+# a lockhttp named "web" is the gate, "api" the control gate without
+# --hub-net, a locksql named "db" serves Postgres at PGHOST:PGPORT
+# (superuser postgres, password PGPASSWORD; the job's service container).
+#
+# The deck facade (lea's deck, lea#182/#200) is not driven here: lea
+# routes a hub ticket only to the deck of the lea container whose agent
+# asked (internal/daemon/hubdeck.go: hubDecide), so a deck approval needs
+# lea's daemon and an agent container, which lea's own tests cover. The
+# deck and lock approve speak the same facade socket API (queue, decide),
+# which lock approve at a pty exercises here.
 . "$(dirname "$0")/lib.sh"
 lock=$1
-LOCKS=${LOCKS:-"web:lockhttp api:lockhttp"}
+LOCKS=${LOCKS:-"db:locksql web:lockhttp api:lockhttp"}
+here=$(cd "$(dirname "$0")" && pwd)
+case " $LOCKS " in *" db:locksql "*) sql=1 ;; *) sql="" ;; esac
 ws=$(mktemp -d)/projects
 mkdir -p "$ws"
 cd "$ws"
@@ -42,6 +57,20 @@ cp lockfamily.yaml reviewed.yaml
 cat lockfamily.yaml
 
 say "the locks' own profiles"
+if [ -n "$sql" ]; then
+	say "Postgres: a read-only account and a table with personal data"
+	pg() { docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:17 psql -v ON_ERROR_STOP=1 -h "${PGHOST:-127.0.0.1}" -p "${PGPORT:-5432}" -U postgres "$@"; }
+	pg -c "CREATE DATABASE app" >/dev/null
+	pg -d app -c "CREATE ROLE ro LOGIN PASSWORD 'ro-e2e-only';
+CREATE TABLE people (id int PRIMARY KEY, email text NOT NULL, label text NOT NULL);
+INSERT INTO people VALUES (1, 'alice@example.com', 'alpha'), (2, 'bob@example.com', 'beta');
+GRANT SELECT ON people TO ro;" >/dev/null
+	# No PII rule set: the console writes its first one in its own
+	# volume (LOCKSQL_PII_DIR), the profile's copy being read-only.
+	mkdir -p .locksql
+	printf '[profiles.e2e]\nengine = "postgres"\nhost = "host.docker.internal"\nport = %s\nuser = "ro"\ndatabase = "app"\n' "${PGPORT:-5432}" >.locksql/config.toml
+	chmod 0644 .locksql/config.toml
+fi
 mkdir -p .lockhttp
 cat >.lockhttp/config.toml <<'TOML'
 [profiles.default]
@@ -79,6 +108,7 @@ cat up.out
 grep -q "up: project " up.out || die "lock up did not finish"
 grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
+[ -z "$sql" ] || grep -q "  profile locksql " up.out || die "the locksql profile is not in the review"
 say "I11: the legacy root file is read with a warning and moved, exactly as reviewed"
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"
 grep -q "lockfamily.yaml now lives in $ws/.lockfamily/lockfamily.yaml" up.out || die "the legacy file was not moved into .lockfamily"
@@ -91,9 +121,20 @@ hub_is_local "$p"
 say "each console asks its policy at its terminal: lock attach"
 for l in $LOCKS; do
 	n=${l%%:*}
-	# y to the policy, then detach (Ctrl-P Ctrl-Q).
-	(sleep 3; printf 'y\n'; sleep 8; printf '\020\021') | timeout 60 script -qefc "$lock attach $n" /dev/null >attach.out 2>&1 || true
-	grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
+	case "${l#*:}" in
+	locksql)
+		# y to the policy, the password, a to the PII proposal (the first
+		# rule set, written in the console's volume), then detach.
+		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for ro@' 'ro-e2e-only\n' 'Accept all [a]' 'a\n' -- "$lock" attach "$n" >attach.out 2>&1 ||
+			{ cat attach.out; die "the console of $n did not start listening"; }
+		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
+		grep -q 'Accept all \[a\]' attach.out || { cat attach.out; die "no PII proposal at the first start of $n: the email column must be proposed"; }
+		;;
+	*)
+		python3 "$here/attach.py" 60 'y\n' '(approved policy)' -- "$lock" attach "$n" >attach.out 2>&1 ||
+			{ cat attach.out; die "the console of $n did not approve its policy"; }
+		;;
+	esac
 done
 sleep 5
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps
@@ -216,9 +257,54 @@ cat curl.out
 # is that the gate let it out (not 403/E_DENIED or 5xx of the gate).
 code=$(tr -d '\r' <curl.out | tail -1)
 case "$code" in 2??|3??|404|405|411) ;; *) docker logs "$gate" 2>&1 | tail -20; die "the approved request did not pass ($code)" ;; esac
+decisions=1
+
+if [ -n "$sql" ]; then
+	say "a locksql ticket from an agent's container, approved through the facade socket"
+	sqlimg=$(sed -n '/^  db:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
+	# As lea runs an agent: its own account in the clients group, the
+	# socket volume, the workspace at its path; no network at all.
+	asagent() { docker run --rm --network none --user agent -v "${p}_db-run:/run/locksql" -v "$ws:$ws:ro" -w "$ws" "$sqlimg" "$@"; }
+	asagent plan --profile e2e --db app --json "SELECT id, email, label FROM people ORDER BY id" >plan.json 2>plan.err || { cat plan.json plan.err; die "locksql plan failed"; }
+	plan=$(jq -r .plan_id plan.json)
+	[ -n "$plan" ] && [ "$plan" != null ] || { cat plan.json; die "no plan id"; }
+	asagent run --profile e2e --json "$plan" >run1.json 2>run1.err || true
+	cat run1.json run1.err
+	[ "$(jq -r .status run1.json)" = pending ] || die "the run did not answer pending"
+	ticket=$(jq -r .ticket run1.json)
+	[ -n "$ticket" ] && [ "$ticket" != null ] || die "no ticket"
+	asagent run --profile e2e --json "$ticket" >early.json 2>&1 && { cat early.json; die "the ticket ran before a decision"; }
+	ok=""
+	for i in $(seq 1 30); do
+		tty 'y\n' "$lock" approve --once >approve2.out 2>&1 || true
+		if tr -d '\r' <approve2.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
+		sleep 2
+	done
+	cat approve2.out
+	[ -n "$ok" ] || { docker logs "${p}-lockhub-1" 2>&1 | tail -20; die "the locksql ticket was not approved"; }
+	tr -d '\r' <approve2.out | grep -q "$ticket" || die "the approved ticket is not the agent's ($ticket)"
+	tr -d '\r' <approve2.out | grep -q 'alice@example.com' && die "the facade screen shows a personal value"
+	ok=""
+	for i in $(seq 1 30); do
+		if asagent run --profile e2e --json "$ticket" >run2.json 2>run2.err; then ok=1; break; fi
+		cat run2.json run2.err >run2.all; grep -q "no decision yet" run2.all || break
+		sleep 2
+	done
+	cat run2.json run2.err
+	[ -n "$ok" ] || die "the approved ticket did not run"
+	[ "$(jq -r '.rows | length' run2.json)" = 2 ] || die "want 2 rows"
+	[ "$(jq -r '.rows[0][2]' run2.json)" = alpha ] || die "want label alpha in the first row"
+	grep -q 'example.com' run2.json && die "the agent got an email in clear: the console's PII rule set is not in force"
+	say "the first PII rule set is in the console's volume, not in the profile's copy"
+	docker run --rm --network none -v "${p}_db-home:/h:ro" alpine:3.22 cat /h/pii-rules/pii/e2e.toml | tee rules.out
+	grep -q 'people.email' rules.out || die "the console's rule set does not mask people.email"
+	docker run --rm --network none -v "${p}_profile-locksql:/p:ro" alpine:3.22 sh -c '! ls -A /p/pii 2>/dev/null | grep -q .' ||
+		die "the profile copy holds a rule set (it is read-only: the console's set belongs in its volume)"
+	decisions=2
+fi
 "$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lock audit verify failed"; }
 cat audit.out
-grep -q ' 1 decisions signed' audit.out || die "the approval is not in the hub's audit"
+grep -q " $decisions decisions signed" audit.out || die "the approvals are not in the hub's audit (want $decisions)"
 
 say "control (Docker, not lockhub): .lockfamily read-only in a container, the mount lea makes"
 docker run --rm --user "$(id -u):$(id -g)" -v "$ws:$ws" -v "$ws/.lockfamily:$ws/.lockfamily:ro" alpine:3.22 \

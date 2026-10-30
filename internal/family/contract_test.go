@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -384,9 +385,34 @@ func TestComposeParses(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := Compose(c, Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0", Config: "sha256:x", Profiles: map[string]string{"locksql": "sha256:p"}})
-	var v map[string]any
+	var v struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+			Volumes     []any             `yaml:"volumes"`
+		} `yaml:"services"`
+	}
 	if err := yaml.Unmarshal([]byte(out), &v); err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	// A locksql console keeps its PII rule sets in its home volume, the
+	// only place of it lock up leaves writable (lockhub#41); no other
+	// lock gets the variable.
+	for _, typ := range Types {
+		env := v.Services["lock-x-"+typ].Environment
+		got, ok := env["LOCKSQL_PII_DIR"]
+		if typ != "locksql" {
+			if ok {
+				t.Errorf("%s gets LOCKSQL_PII_DIR", typ)
+			}
+			continue
+		}
+		home := env["HOME"]
+		if got != LocksqlPIIDir || !strings.HasPrefix(got, home+"/") {
+			t.Errorf("LOCKSQL_PII_DIR = %q, want %q under HOME %q", got, LocksqlPIIDir, home)
+		}
+		if !slices.Contains(v.Services["lock-x-locksql"].Volumes, any("x-locksql-home:"+home)) {
+			t.Errorf("HOME %s is not the lock's home volume: %v", home, v.Services["lock-x-locksql"].Volumes)
+		}
 	}
 }
 

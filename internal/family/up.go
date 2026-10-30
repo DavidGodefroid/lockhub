@@ -233,12 +233,6 @@ func (u *Up) Do(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lock up)", t, err, t)
 		}
-		if t == "locksql" && !pr.Has("pii/", ".toml") {
-			// The copy is read-only: a console that must write its first
-			// PII rule set there would not start.
-			return fmt.Errorf("profile of the locksql locks: no PII rule set in %s: start the console once with locksql's own launcher (it writes .locksql/pii/<set>.toml after your review), then lock up",
-				filepath.Join(profileDir(ws, t), "pii"))
-		}
 		profiles[t] = pr
 	}
 	hubData := filepath.Join(u.State, "hub")

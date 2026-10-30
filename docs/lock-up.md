@@ -118,23 +118,33 @@ that restarts asks again: attach again. Locks are pending (agents get no
 answer) until answered. Memory and process limits are the ones each lock's
 own launcher sets.
 
-The copy is read-only in the lock: what a console writes in its own
-profile directory (locksql's PII rule sets in `.locksql/pii/`, edited at its
-console) cannot be written there; edit them in the workspace and run lock up
-again. A locksql console writes its first rule set at its first start, so lock
-up refuses a `.locksql/` without one: start the console once with locksql's
-own launcher (it writes `.locksql/pii/<set>.toml` after your review), then
-lock up.
+The copy is read-only in the lock. A locksql console keeps its PII rule sets
+in its own home volume instead (`LOCKSQL_PII_DIR`, locksql v0.11.0 or later):
+its first start writes the first rule set there after your review at its
+terminal, as do `pii add` and the later PII proposals. The rule sets of
+`.locksql/pii/` in the workspace, if any, are copied in once; from then on
+the console's copy is in force: at each start it takes the profile's new mask
+rules (a tightening you made in the workspace and lock up reviewed), never
+what would loosen it (allow rules, removed masks), which you change at the
+console. A locksql image older than v0.11.0 ignores the variable and cannot
+write its first rule set: `lock add locksql <instance>` again pins a newer
+release.
+
+Several instances of one type share the type's profile directory; each
+serves the profile its `profile:` names in lockfamily.yaml (a profile of
+that directory's configuration, such as `[profiles.crm-prod]` and
+`[profiles.crm-uat]` of one `.locksql/config.toml`). A profile directory per
+instance is not supported (lockhub#44).
 
 `lock add` pins only releases that run under lock up (hub mode on lockkit
-v0.3.1): lockhub v0.1.1, locksql v0.10.0, lockmq v0.3.0, lockfile v0.4.0,
+v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
 lockhttp v0.3.0 or later.
 
 Locks resolve `host.docker.internal` to the host, as their launchers do
 (their profile wizards name a local database or broker so). A TOML file of a
 profile must be UTF-8 of at most 64 KiB: every line of it is in the review.
 
-Not yet: Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
+Not yet (lockhub#45): Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
 `-vault` image variant, which lock up does not pass or pin), and lockfile's
 shipped seccomp profile (lock up uses Docker's default).
 

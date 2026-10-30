@@ -74,6 +74,11 @@ var Kinds = map[string]Kind{
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 }
 
+// LocksqlPIIDir is where a locksql console keeps its PII rule sets
+// (LOCKSQL_PII_DIR, locksql v0.11.0 or later): its home volume, since the
+// copy of its profile is read-only.
+const LocksqlPIIDir = "/home/locksql/pii-rules"
+
 // The lockhttp gate's account in lockhttp's image (lockhttp-clients).
 const gateUID, gateGID = "10003", "10020"
 
@@ -183,6 +188,11 @@ func Compose(c *Config, p Paths) string {
 		w("    stdin_open: true")
 		w("    environment:")
 		w("      HOME: %s", q(home))
+		if l.Type == "locksql" {
+			// Its profile copy is read-only: the console keeps its PII
+			// rule sets in its own volume, seeded from the profile's.
+			w("      LOCKSQL_PII_DIR: %s", q(LocksqlPIIDir))
+		}
 		cmd := []string{"console"}
 		if prof := l.Profile; prof != "" || l.Type == "lockfile" {
 			if prof == "" {
