@@ -125,6 +125,13 @@ func openHub(data string) (*hub.Hub, func(), error) {
 		return nil, nil, err
 	}
 	h := hub.New(hub.Config{Store: st, Audit: al, Codec: codec, Key: key, Locks: locks, Routes: routes})
+	// Committed changes whose audit records a crash left in the outbox
+	// are logged before anything else happens.
+	if err := h.FlushAudit(context.Background()); err != nil {
+		al.Close()
+		st.Close()
+		return nil, nil, err
+	}
 	return h, func() { al.Close(); st.Close() }, nil
 }
 

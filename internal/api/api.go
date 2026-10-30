@@ -240,6 +240,8 @@ func fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", err.Error())
 	case errors.Is(err, hub.ErrTooMany):
 		writeErr(w, http.StatusTooManyRequests, "too_many_pending", err.Error())
+	case errors.Is(err, hub.ErrAuditDown):
+		writeErr(w, http.StatusServiceUnavailable, "audit_down", "the hub's audit log is not writable: retry later")
 	case errors.Is(err, hub.ErrExpired):
 		writeErr(w, http.StatusGone, "expired", err.Error())
 	case errors.Is(err, store.ErrNotFound):
