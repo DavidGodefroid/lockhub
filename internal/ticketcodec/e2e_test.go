@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DavidGodefroid/lockkit/hubclient"
 	"github.com/DavidGodefroid/lockkit/ticket"
 
 	"github.com/DavidGodefroid/lockhub/internal/api"
@@ -95,5 +96,49 @@ func TestLockkitEndToEnd(t *testing.T) {
 	}
 	if code, _ := do("POST", "/v1/tickets/"+tk.ID+"/consumed", nil); code != http.StatusNoContent {
 		t.Errorf("consumed: %d", code)
+	}
+}
+
+// TestHelloAnnouncesVersionsAndKey: the hello names the ticket versions
+// lockkit verifies and the hub key's id as lockkit computes it, and
+// lockkit's hub client still reads it.
+func TestHelloAnnouncesVersionsAndKey(t *testing.T) {
+	hubPub, hubPriv, _ := ed25519.GenerateKey(rand.Reader)
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	al, err := audit.Open(filepath.Join(dir, "tickets.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer al.Close()
+	h := hub.New(hub.Config{Store: st, Audit: al, Codec: ticketcodec.Codec{}, Key: hubPriv, Locks: map[string]ed25519.PublicKey{}})
+	srv := httptest.NewServer(api.LockHandler(h, "e2e"))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/v1/hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(raw["ticket_versions"]), "["+strconv.Itoa(ticket.Version)+"]"; got != want {
+		t.Errorf("ticket_versions %s, want %s", got, want)
+	}
+	if got, want := string(raw["hub_key_id"]), strconv.Quote(ticket.KeyID(hubPub)); got != want {
+		t.Errorf("hub_key_id %s, want %s", got, want)
+	}
+	_, lockPriv, _ := ed25519.GenerateKey(rand.Reader)
+	c, err := hubclient.New(hubclient.Config{URL: srv.URL, Instance: "crm-prod", Key: lockPriv, HubKey: hubPub, StateFile: filepath.Join(dir, "client.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hh, err := c.Hello(context.Background()); err != nil || hh.Name != "lockhub" || hh.API != 1 {
+		t.Errorf("lockkit hub client: %+v %v", hh, err)
 	}
 }

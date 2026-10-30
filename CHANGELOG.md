@@ -22,6 +22,13 @@ digest).
   fails. Not checked: records a hub-mode lock should not write at all
   (a local approval).
 
+- `GET /v1/hello` also answers `ticket_versions` (the ticket schema
+  versions the hub verifies: lockkit's `ticket.Version`) and `hub_key_id`
+  (lockkit `ticket.KeyID` of the hub key). Unsigned like the rest of the
+  hello: for display and diagnosis only, never to pick or pin a hub key
+  (a lock trusts only the key it pinned). An N-1 version appears once
+  lockkit verifies two ticket versions.
+
 - A rotated Slack or Telegram token (`lock add slack`/`telegram` again)
   is now a change `lock up` reviews and applies: the summary carries
   each chat secret's identity (a short hash, never the token), so the
