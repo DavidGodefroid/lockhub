@@ -154,10 +154,17 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("paired devices: %w", err)
 	}
+	// Every lock carries the paired devices' identity: a device paired or
+	// revoked recreates them (they read the file at start).
+	paths.DevicesID = fingerprint(append([]string{"devices"}, devicesSummary(devices)...))
 	if len(devices) > 0 {
 		paths.Devices = DevicesFile(u.State)
-	} else if m := c.Hub.Mobile; m != nil && (m.SealClear || len(m.RequireDevice) > 0) {
-		fmt.Fprintln(u.Out, "note: hub.mobile seal_clear and require_device take effect once a device is paired (lock mobile pair, then lock up)")
+	} else if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 {
+		// Fail closed: without a device, the locks would take the hub's
+		// approvals of these risk classes again.
+		return fmt.Errorf("hub.mobile.require_device needs a paired device: lock up without it, lock mobile pair, then set it again")
+	} else if m != nil && m.SealClear {
+		fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lock mobile pair, then lock up)")
 	}
 	// The compose file goes to docker on stdin: nothing on disk to swap
 	// before the human said yes. A copy is kept for reference afterwards.

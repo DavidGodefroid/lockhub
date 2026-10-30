@@ -191,8 +191,9 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "lockhub:", err)
 			return 1
 		}
+		// WriteTimeout above the queue's long poll (mobile.MaxWait).
 		msrv := &http.Server{Addr: *mobileListen, Handler: m.Handler(), ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
+			ReadTimeout: 30 * time.Second, WriteTimeout: mobile.MaxWait + 30*time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
 		go func() { errc <- msrv.ListenAndServe() }()
 		defer msrv.Close()
 		extra = append(extra, m.FacadeRoutes)

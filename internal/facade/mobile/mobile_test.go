@@ -1,7 +1,9 @@
 package mobile_test
 
 import (
+	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -215,6 +217,61 @@ func TestSessionAndDrafts(t *testing.T) {
 	}
 	if err := phone.Login(); err == nil {
 		t.Fatal("a revoked device signed in")
+	}
+}
+
+// A sign-in signs SHA-256(LoginContext || nonce), computed by the phone:
+// never a challenge the hub chose whole (which could be a decision's).
+func TestLoginChallengeIsThePhones(t *testing.T) {
+	e := newEnv(t, route.Rules{})
+	phone := e.phone("phone")
+	dev := e.pair(phone)
+	l := e.lock(dev)
+	_, id := l.submit(t, ticket.RiskWrite, false, "UPDATE x")
+	var b mobile.LoginBeginResult
+	if err := phone.Do("POST", "/m/v1/login/begin", struct{}{}, &b); err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ := base64.RawURLEncoding.DecodeString(b.Nonce)
+	// An assertion over the bare nonce (a hub-chosen challenge) is refused.
+	a := phone.Auth.Assert(nonce)
+	err := phone.Do("POST", "/m/v1/login/finish", mobile.LoginFinish{ID: b.ID,
+		Assertion: mobile.Assertion{Device: a.Device, AuthData: a.AuthData, ClientData: a.ClientData, Sig: a.Sig}}, nil)
+	if status(err) != http.StatusForbidden {
+		t.Fatalf("sign-in over the bare nonce: %v", err)
+	}
+	// And a sign-in's assertion is no decision: the lock refuses it.
+	if err := phone.Do("POST", "/m/v1/login/begin", struct{}{}, &b); err != nil {
+		t.Fatal(err)
+	}
+	nonce, _ = base64.RawURLEncoding.DecodeString(b.Nonce)
+	login := phone.Auth.Assert(mobile.LoginChallenge(nonce))
+	raw := ticketRaw(t, e, id)
+	var tk ticket.Ticket
+	json.Unmarshal(raw, &tk)
+	d := &ticket.Decision{V: 1, Ticket: tk.ID, Instance: inst, KeyID: tk.Source.KeyID, PlanHash: tk.PlanHash, Decision: ticket.Approved,
+		Approver: ticket.Approver{ID: dev.ID, Display: dev.Name}, Facade: ticket.FacadeMobile, At: tk.Created, Nonce: ticket.NewNonce(),
+		HubKeyID: ticket.KeyID(e.hubKey.Public().(ed25519.PublicKey)), Device: login}
+	if err := ticket.VerifyDevice(&dev, d, raw); err == nil {
+		t.Fatal("a sign-in assertion verified as a decision")
+	}
+}
+
+func TestPairingNameAndCodeOnce(t *testing.T) {
+	e := newEnv(t, route.Rules{})
+	phone := e.phone("phone")
+	e.pair(phone)
+	if c := e.host("POST", "/v1/mobile/pairings", mobile.PairStart{Name: "phone"}, nil); c != http.StatusConflict {
+		t.Fatalf("a second active device named phone: %d", c)
+	}
+	var start mobile.PairStartResult
+	e.host("POST", "/v1/mobile/pairings", mobile.PairStart{Name: "tablet"}, &start)
+	tablet := e.phone("tablet")
+	if err := tablet.Do("POST", "/m/v1/pair/begin", mobile.PairBegin{Code: start.Code}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := tablet.Do("POST", "/m/v1/pair/begin", mobile.PairBegin{Code: start.Code}, nil); status(err) != http.StatusForbidden {
+		t.Fatalf("a code begun twice: %v", err)
 	}
 }
 

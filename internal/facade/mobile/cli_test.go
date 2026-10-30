@@ -18,7 +18,7 @@ import (
 // lock mobile pair, list and revoke against the hub's facade socket: the
 // device is pinned only once the human said yes at the terminal.
 func TestLockMobilePair(t *testing.T) {
-	for _, answer := range []string{"n", "y"} {
+	for _, answer := range []string{"n", "y", "other origin"} {
 		t.Run("answer "+answer, func(t *testing.T) {
 			e := newEnv(t, route.Rules{})
 			state := t.TempDir() + "/state"
@@ -28,7 +28,11 @@ func TestLockMobilePair(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			go func() {
-				done <- mobilecli.Pair(ctx, c, "phone", state, bufio.NewReader(strings.NewReader(answer+"\n")), pw)
+				o := origin
+				if answer == "other origin" {
+					o = "https://other.example.net"
+				}
+				done <- mobilecli.Pair(ctx, c, "phone", o, state, bufio.NewReader(strings.NewReader(answer+"\n")), pw)
 				pw.Close()
 			}()
 			sc := bufio.NewScanner(pr)
@@ -49,7 +53,7 @@ func TestLockMobilePair(t *testing.T) {
 			go io.Copy(&rest, pr)
 			err = <-done
 			devs, _ := family.ReadDevices(state)
-			if answer == "n" {
+			if answer != "y" {
 				if err == nil || len(devs) != 0 {
 					t.Fatalf("declined: %v, pinned %v", err, devs)
 				}
@@ -68,7 +72,7 @@ func TestLockMobilePair(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			if err := mobilecli.List(ctx, c, state, &out); err != nil || !strings.Contains(out.String(), "pinned") {
+			if err := mobilecli.List(ctx, c, state, &out); err != nil || !strings.HasSuffix(strings.TrimSpace(out.String()), "  pinned") {
 				t.Fatalf("list: %v %s", err, out.String())
 			}
 			if err := mobilecli.Revoke(ctx, c, "phone", state, &out); err != nil {

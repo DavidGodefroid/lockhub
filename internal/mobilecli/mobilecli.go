@@ -72,7 +72,14 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 // Pair runs one pairing: the code, the wait for the phone, the human's
 // confirmation of the fingerprint, then the device pinned in state (lock
 // up's state directory of the workspace).
-func Pair(ctx context.Context, c *Client, name, state string, in *bufio.Reader, out io.Writer) error {
+//
+// origin is hub.mobile.origin from lockfamily.yaml: a device registered
+// at any other origin (a phishing page relaying the code) is refused.
+func Pair(ctx context.Context, c *Client, name, origin, state string, in *bufio.Reader, out io.Writer) error {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return fmt.Errorf("hub.mobile.origin %q: not an https origin", origin)
+	}
 	var start mobile.PairStartResult
 	if err := c.do(ctx, http.MethodPost, "/v1/mobile/pairings", mobile.PairStart{Name: name}, &start); err != nil {
 		return err
@@ -86,6 +93,8 @@ func Pair(ctx context.Context, c *Client, name, state string, in *bufio.Reader, 
 	var st mobile.PairStateResult
 	for {
 		if err := c.do(ctx, http.MethodGet, "/v1/mobile/pairings/"+url.PathEscape(start.ID)+"?wait=30", nil, &st); err != nil {
+			// Interrupted: the code stops working now, not in 5 minutes.
+			c.do(context.Background(), http.MethodPost, "/v1/mobile/pairings/"+url.PathEscape(start.ID)+"/confirm", mobile.PairConfirm{Confirm: false}, nil)
 			return err
 		}
 		if st.State != "waiting" {
@@ -100,7 +109,8 @@ func Pair(ctx context.Context, c *Client, name, state string, in *bufio.Reader, 
 	}
 	// The fingerprint shown is computed here, from the record itself.
 	fp, err := st.Device.Fingerprint()
-	if err != nil || st.Device.Validate() != nil || fp != st.Fingerprint || st.Device.Name != name {
+	if err != nil || st.Device.Validate() != nil || fp != st.Fingerprint || st.Device.Name != name ||
+		st.Device.Origin != origin || st.Device.RPID != u.Hostname() {
 		c.do(ctx, http.MethodPost, "/v1/mobile/pairings/"+url.PathEscape(start.ID)+"/confirm", mobile.PairConfirm{Confirm: false}, nil)
 		return errors.New("the hub sent an invalid device record: refused")
 	}
@@ -119,7 +129,7 @@ func Pair(ctx context.Context, c *Client, name, state string, in *bufio.Reader, 
 	if err != nil {
 		return fmt.Errorf("the hub recorded an invalid device: %w", err)
 	}
-	if got, _ := devs[0].Fingerprint(); got != fp {
+	if got, _ := devs[0].Fingerprint(); got != fp || devs[0].Origin != origin {
 		return errors.New("the hub recorded another device than the one confirmed: not pinned; revoke it with lock mobile revoke")
 	}
 	if err := family.PinDevice(state, devs[0]); err != nil {

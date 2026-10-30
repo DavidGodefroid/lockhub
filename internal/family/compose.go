@@ -19,8 +19,11 @@ type Paths struct {
 	// root is the host user).
 	User string
 	// Devices is the pinned devices file (host state dir), mounted
-	// read-only in every lock; "" when no device is paired.
-	Devices string
+	// read-only in every lock; "" when no device is paired. DevicesID
+	// names its content: as a label of every lock, a change of the
+	// paired devices recreates the locks, which read the file at start.
+	Devices   string
+	DevicesID string
 	// Config is the fingerprint of the applied configuration (keys,
 	// routing). As a label of the hub service, a change of it makes
 	// compose recreate the hub, which reads its config at start.
@@ -92,6 +95,10 @@ func Compose(c *Config, p Paths) string {
 		}
 		w("    networks: [lockhub, %s]", q("egress-"+name))
 		w("    depends_on: [lockhub]")
+		if p.DevicesID != "" {
+			w("    labels:")
+			w("      lockfamily.devices: %s", q(p.DevicesID))
+		}
 		w("    restart: unless-stopped")
 	}
 	w("networks:")

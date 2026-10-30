@@ -166,11 +166,12 @@ func (p *Phone) Login() error {
 	if err := p.Do(http.MethodPost, "/m/v1/login/begin", struct{}{}, &b); err != nil {
 		return err
 	}
-	ch, err := b64.DecodeString(b.Challenge)
+	nonce, err := b64.DecodeString(b.Nonce)
 	if err != nil {
 		return err
 	}
-	a := p.Auth.Assert(ch)
+	// The phone computes the challenge itself (never one the hub chose).
+	a := p.Auth.Assert(mobile.LoginChallenge(nonce))
 	return p.Do(http.MethodPost, "/m/v1/login/finish", mobile.LoginFinish{ID: b.ID,
 		Assertion: mobile.Assertion{Device: a.Device, AuthData: a.AuthData, ClientData: a.ClientData, Sig: a.Sig}}, nil)
 }

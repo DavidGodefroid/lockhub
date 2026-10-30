@@ -56,14 +56,19 @@ on the host and that forwards `origin` to that port: Tailscale Serve
 … WebAuthn needs https, and the origin's host is the WebAuthn relying party.
 The listener serves the web app and `/m/v1` only: never the lock API, never
 the facade socket. The hub trusts no forwarded header; the origin comes from
-`lockfamily.yaml`.
+`lockfamily.yaml`. The hub joins its own `mobile-hub` network for that port
+(a bridge, so the hub container has a route out there; the lock API stays on
+the internal `lockhub` network, which agents never join).
 
 **Pairing.** `lock mobile pair --name phone` prints a one-time code (5 min,
 wrong codes cancel it). Open the origin on the phone, enter the code,
 register; then compare the fingerprint the phone shows (computed from its own
 keys) with the one at the terminal and answer `y`. Run `lock up` to pin the
-phone at the locks: `lock up` reviews the device like any key. `lock mobile
-list`, `lock mobile revoke NAME`.
+phone at the locks: `lock up` reviews the device like any key and recreates
+the locks with it. `lock mobile list`, `lock mobile revoke NAME` (then `lock
+up`). The confirmation is only as strong as the facade socket: whoever can
+open it (your host account, never an agent container) can confirm a device.
+`require_device` needs a paired device: `lock up` refuses it otherwise.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
 secrets yet); production tickets ask for the instance name; `hub.routing`

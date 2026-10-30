@@ -56,8 +56,12 @@ var b64 = base64.RawURLEncoding
 
 // Limits and lifetimes.
 const (
-	PairingTTL      = 5 * time.Minute
-	PairingAttempts = 5 // wrong codes before every open pairing is cancelled
+	PairingTTL = 5 * time.Minute
+	// PairingAttempts wrong codes (from anyone) cancel every open pairing.
+	// A code is 8 of 31 symbols: 20 guesses in 5 minutes find it with a
+	// chance under 1e-10; more would let anyone on the origin block
+	// pairing more easily.
+	PairingAttempts = 20
 	maxPairings     = 4
 	ChallengeTTL    = 2 * time.Minute
 	maxChallenges   = 32
@@ -115,6 +119,7 @@ type pairing struct {
 	id, code, name string
 	expires        time.Time
 	state          pairingState
+	begun          bool // the code was used: one registration per code
 	session        *webauthn.SessionData
 	user           *user
 	device         *ticket.Device
@@ -381,7 +386,7 @@ func (s *Service) pairBegin(w http.ResponseWriter, r *http.Request) {
 	s.sweep(now)
 	var p *pairing
 	for _, q := range s.pairings {
-		if q.state == waiting && q.session == nil && subtle.ConstantTimeCompare([]byte(q.code), []byte(code)) == 1 {
+		if q.state == waiting && !q.begun && subtle.ConstantTimeCompare([]byte(q.code), []byte(code)) == 1 {
 			p = q
 		}
 	}
@@ -414,7 +419,7 @@ func (s *Service) pairBegin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal", "cannot start the registration")
 		return
 	}
-	p.session, p.user = sd, u
+	p.session, p.user, p.begun = sd, u, true
 	writeJSON(w, http.StatusOK, PairBeginResult{Pairing: p.id, Name: p.name, Options: creation.Response})
 }
 
@@ -524,16 +529,24 @@ func es256Point(cose []byte) ([]byte, error) {
 
 // --- login --------------------------------------------------------------
 
-// LoginBeginResult is a challenge for a login assertion.
+// LoginBeginResult is a sign-in: the phone signs LoginChallenge(Nonce),
+// which it computes itself. A challenge the hub chose whole could be a
+// decision's (ticket.DeviceStatement): the hub would get an approval from
+// a sign-in.
 type LoginBeginResult struct {
-	ID        string   `json:"id"`
-	Challenge string   `json:"challenge"`
-	RPID      string   `json:"rp_id"`
-	Allow     []string `json:"allow"` // credential ids of active devices
+	ID    string `json:"id"`
+	Nonce string `json:"nonce"`
+	RPID  string `json:"rp_id"`
 }
 
-// loginContext separates login challenges from decision challenges.
-const loginContext = "lockhub/mobile-login/v1\x00"
+// LoginContext prefixes the nonce of a sign-in challenge.
+const LoginContext = "lockhub/mobile-login/v1\x00"
+
+// LoginChallenge is the challenge a phone signs to sign in.
+func LoginChallenge(nonce []byte) []byte {
+	ch := sha256.Sum256(append([]byte(LoginContext), nonce...))
+	return ch[:]
+}
 
 func (s *Service) loginBegin(w http.ResponseWriter, r *http.Request) {
 	var req struct{}
@@ -541,39 +554,24 @@ func (s *Service) loginBegin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "body is {}")
 		return
 	}
-	devs, err := s.c.Hub.Store().Devices(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal", "cannot list devices")
-		return
-	}
-	res := LoginBeginResult{ID: randomID(16), RPID: s.rpID, Allow: []string{}}
-	for _, d := range devs {
-		if d.State != store.DeviceActive {
-			continue
-		}
-		var dev ticket.Device
-		if json.Unmarshal(d.Record, &dev) == nil {
-			res.Allow = append(res.Allow, dev.Credential)
-		}
-	}
-	if len(res.Allow) == 0 {
-		writeErr(w, http.StatusForbidden, "no_device", "no device is paired: run lock mobile pair on the host")
-		return
-	}
 	nonce := make([]byte, 32)
 	rand.Read(nonce)
-	ch := sha256.Sum256(append([]byte(loginContext), nonce...))
+	res := LoginBeginResult{ID: randomID(16), Nonce: b64.EncodeToString(nonce), RPID: s.rpID}
 	now := s.c.Now()
 	s.mu.Lock()
 	s.sweep(now)
-	if len(s.challenges) >= maxChallenges {
-		s.mu.Unlock()
-		writeErr(w, http.StatusTooManyRequests, "busy", "too many sign-ins in progress")
-		return
+	for len(s.challenges) >= maxChallenges {
+		// Evict the oldest: a flood of sign-ins cannot lock the human out.
+		oldest, at := "", time.Time{}
+		for id, c := range s.challenges {
+			if at.IsZero() || c.expires.Before(at) {
+				oldest, at = id, c.expires
+			}
+		}
+		delete(s.challenges, oldest)
 	}
-	s.challenges[res.ID] = challenge{raw: ch[:], expires: now.Add(ChallengeTTL)}
+	s.challenges[res.ID] = challenge{raw: LoginChallenge(nonce), expires: now.Add(ChallengeTTL)}
 	s.mu.Unlock()
-	res.Challenge = b64.EncodeToString(ch[:])
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -963,6 +961,18 @@ func (s *Service) pairStart(w http.ResponseWriter, r *http.Request, _ string) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "name: 1 to 32 of a-z, 0-9, -")
 		return
 	}
+	ds, err := s.c.Hub.Store().Devices(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "internal", "cannot list devices")
+		return
+	}
+	for _, d := range ds {
+		var dev ticket.Device
+		if d.State == store.DeviceActive && json.Unmarshal(d.Record, &dev) == nil && dev.Name == req.Name {
+			writeErr(w, http.StatusConflict, "name", "an active device is named "+req.Name+": revoke it first (lock mobile revoke "+req.Name+")")
+			return
+		}
+	}
 	now := s.c.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1046,6 +1056,15 @@ func (s *Service) pairConfirm(w http.ResponseWriter, r *http.Request, approver s
 	s.mu.Lock()
 	s.sweep(s.c.Now())
 	p := s.pairings[r.PathValue("id")]
+	if p != nil && p.state == waiting && !req.Confirm {
+		// The terminal gives up before the phone registered.
+		p.state = refused
+		s.changed(p)
+		delete(s.pairings, p.id)
+		s.mu.Unlock()
+		writeJSON(w, http.StatusOK, PairStateResult{State: string(refused)})
+		return
+	}
 	if p == nil || p.state != registered {
 		s.mu.Unlock()
 		writeErr(w, http.StatusConflict, "pairing", "no registered device waits for this pairing")

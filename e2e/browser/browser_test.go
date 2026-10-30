@@ -193,22 +193,51 @@ func TestWebAppApproves(t *testing.T) {
 
 	waitFor("page focus", `document.hasFocus() ? "ok" : ""`)
 
-	// Pairing: lock mobile pair's code, typed into the page.
-	var start mobile.PairStartResult
-	call("POST", "/v1/mobile/pairings", mobile.PairStart{Name: "phone"}, &start)
-	// Actions run inside an evaluation that waits for their outcome (the
-	// page has DevTools focus while one runs).
+	// focus gives the page DevTools focus again (headless Chrome refuses
+	// WebAuthn to a page without focus).
+	focus := func() {
+		chromedp.Call(ctx, page.BringToFront, cdp.Empty{})
+		chromedp.Call(ctx, emulation.SetFocusEmulationEnabled, emulation.SetFocusEmulationEnabledParams{Enabled: true})
+		time.Sleep(200 * time.Millisecond)
+	}
+	const noFocus = "does not have focus"
+	// act runs js inside an evaluation that waits for until (the page has
+	// focus while it runs) and returns its value; on a focus refusal of
+	// the headless browser it returns "".
 	act := func(what, js, until string) string {
 		t.Helper()
+		focus()
 		s := eval(`new Promise((ok) => { ` + js + `; const st = document.getElementById("status"); let n = 0;
-			const i = setInterval(() => { const v = (` + until + `); if (v || ++n > 300) { clearInterval(i); ok(v || ("timeout; status: " + st.textContent)); } }, 100); })`)
+			const i = setInterval(() => { const v = (` + until + `); const f = st.textContent.includes("` + noFocus + `");
+			if (v || f || ++n > 300) { clearInterval(i); ok(v || (f ? "" : "timeout; status: " + st.textContent)); } }, 100); })`)
 		if strings.HasPrefix(s, "timeout") {
 			t.Fatalf("%s: %s", what, s)
 		}
 		return s
 	}
-	pageFP := act("pairing", `document.getElementById("code").value = `+jsString(start.Code)+`; document.getElementById("pair-form").requestSubmit()`,
-		`document.getElementById("pair-done").hidden ? "" : document.getElementById("fp").textContent`)
+	retry := func(what string, f func() string) string {
+		t.Helper()
+		for i := 0; i < 5; i++ {
+			if s := f(); s != "" {
+				return s
+			}
+			eval(`(() => { document.getElementById("status").textContent = ""; return ""; })()`)
+		}
+		t.Fatalf("%s: the headless browser kept refusing focus", what)
+		return ""
+	}
+
+	// Pairing: lock mobile pair's code, typed into the page (a new code
+	// per attempt: one is used once).
+	var start mobile.PairStartResult
+	pageFP := retry("pairing", func() string {
+		if start.ID != "" {
+			call("POST", "/v1/mobile/pairings/"+start.ID+"/confirm", mobile.PairConfirm{Confirm: false}, nil)
+		}
+		call("POST", "/v1/mobile/pairings", mobile.PairStart{Name: "phone"}, &start)
+		return act("pairing", `document.getElementById("code").value = `+jsString(start.Code)+`; document.getElementById("pair-form").requestSubmit()`,
+			`document.getElementById("pair-done").hidden ? "" : document.getElementById("fp").textContent`)
+	})
 	var ps mobile.PairStateResult
 	call("GET", "/v1/mobile/pairings/"+start.ID, nil, &ps)
 	if ps.State != "registered" || ps.Fingerprint != pageFP {
@@ -254,7 +283,9 @@ func TestWebAppApproves(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor("the sign-in button", `document.getElementById("login").hidden ? "" : "ok"`)
-	act("sign-in", `document.getElementById("login-btn").click()`, `document.querySelector(".ticket .approve") ? "ok" : ""`)
+	retry("sign-in", func() string {
+		return act("sign-in", `document.getElementById("login-btn").click()`, `document.querySelector(".ticket .approve") ? "ok" : ""`)
+	})
 	got := waitFor("the clear values", `(() => { const c = document.querySelector(".ticket .clear"); return c && !c.hidden ? c.textContent : ""; })()`)
 	if !strings.Contains(got, pii) {
 		t.Fatalf("clear values on the page: %q", got)
@@ -265,8 +296,10 @@ func TestWebAppApproves(t *testing.T) {
 	if title := eval(`document.title`); title == "pwned" || eval(`String(document.querySelectorAll(".ticket img").length)`) != "0" {
 		t.Fatal("agent text was rendered as markup")
 	}
-	act("approval", `document.querySelector(".ticket .reason").value = "ok from the phone"; document.querySelector(".ticket .approve").click()`,
-		`document.getElementById("status").textContent === "Approved." ? "ok" : ""`)
+	retry("approval", func() string {
+		return act("approval", `document.querySelector(".ticket .reason").value = "ok from the phone"; document.querySelector(".ticket .approve").click()`,
+			`document.getElementById("status").textContent === "Approved." ? "ok" : ""`)
+	})
 
 	// The lock runs it: the device's signature verified at the lock.
 	if _, err := lc.Poll(context.Background(), 0); err != nil {

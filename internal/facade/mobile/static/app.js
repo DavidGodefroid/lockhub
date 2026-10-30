@@ -142,7 +142,9 @@ async function pair(code) {
   };
   const fp = await fingerprint(rec);
   if (fp !== fin.fingerprint) throw new Error("the hub registered another device record than this phone's: do not confirm");
-  await putKey("device", { rec, x25519: x.privateKey });
+  // Pending until it signs in once (the host confirmed it): a declined
+  // pairing does not replace a working one.
+  await putKey("pending", { rec, x25519: x.privateKey });
   $("fp").textContent = fp;
   $("pair-done").hidden = false;
   status("Registered. Confirm on the host, then sign in.");
@@ -163,14 +165,33 @@ async function assert(challenge, rec) {
   };
 }
 
-async function login() {
-  const dev = await getKey("device");
-  if (!dev) { show("pair"); return; }
-  status("Signing in…");
+// loginWith signs in as dev. The challenge is computed here from the
+// hub's nonce: a challenge the hub chose whole could be a decision's.
+async function loginWith(dev) {
   const b = await api("POST", "/m/v1/login/begin", {});
-  if (!b.allow.includes(dev.rec.credential)) throw new Error("this phone is not an active device of this hub");
-  const assertion = await assert(unb64u(b.challenge), dev.rec);
-  const r = await api("POST", "/m/v1/login/finish", { id: b.id, assertion });
+  const ch = await sha256(concat(enc.encode("lockhub/mobile-login/v1"), [0], unb64u(b.nonce)));
+  const assertion = await assert(ch, dev.rec);
+  return api("POST", "/m/v1/login/finish", { id: b.id, assertion });
+}
+
+async function login() {
+  status("Signing in…");
+  let r;
+  const pending = await getKey("pending");
+  if (pending) {
+    try {
+      r = await loginWith(pending);
+      await putKey("device", pending);
+      await kv("readwrite", (s) => s.delete("pending"));
+    } catch (e) {
+      if (!(await getKey("device"))) throw e;
+    }
+  }
+  if (!r) {
+    const dev = await getKey("device");
+    if (!dev) { show("pair"); return; }
+    r = await loginWith(dev);
+  }
   $("who").textContent = r.name;
   status("");
   show("queue");
@@ -218,17 +239,20 @@ async function poll() {
 function lines(el, xs) { el.textContent = (xs || []).join("\n"); }
 
 async function render(items) {
-  const dev = await getKey("device");
+  const dev = (await getKey("device")) || (await getKey("pending"));
   const ul = $("tickets");
   ul.replaceChildren();
   $("count").textContent = items.length ? "(" + items.length + ")" : "";
   for (const it of items) {
     const t = JSON.parse(it.ticket);
+    // What is shown and signed is the lock's signed ticket, not the hub's
+    // labels: an item whose labels disagree with it is not shown.
+    if (it.id !== t.id || it.instance !== t.source.instance || it.risk !== t.risk) continue;
     const li = $("ticket-tpl").content.firstElementChild.cloneNode(true);
     const q = (c) => li.querySelector(c);
     if (t.screen.red || t.flags.production) li.classList.add("red");
-    q(".risk").textContent = it.risk + (t.flags.production ? " · production" : "");
-    q(".where").textContent = t.source.lock + " / " + it.instance;
+    q(".risk").textContent = t.risk + (t.flags.production ? " · production" : "");
+    q(".where").textContent = t.source.lock + " / " + t.source.instance;
     q(".header").textContent = t.screen.header;
     q(".requester").textContent = "requested by unverified: " + t.requester.agent;
     q(".note").textContent = t.screen.note;
@@ -239,7 +263,7 @@ async function render(items) {
       if (clear) { lines(q(".clear-body"), [clear.header, clear.note, ...clear.body, ...clear.warnings].filter(Boolean)); q(".clear").hidden = false; }
     } catch (e) { q(".why").textContent = "The clear values did not open on this phone."; }
     if (!it.answerable) { q(".answer").hidden = true; q(".why").textContent = it.why; }
-    if (it.retype) q(".retype-l").hidden = false;
+    if (t.flags.production && t.flags.retype) q(".retype-l").hidden = false;
     q(".approve").onclick = () => answer(it, t, true, li);
     q(".deny").onclick = () => answer(it, t, false, li);
     ul.append(li);
@@ -296,7 +320,7 @@ async function start() {
 }
 
 async function route() {
-  if (location.hash === "#pair" || !(await getKey("device"))) { show("pair"); return; }
+  if (location.hash === "#pair" || !((await getKey("device")) || (await getKey("pending")))) { show("pair"); return; }
   show("login");
   // A session may still be valid: try the queue first.
   api("GET", "/m/v1/queue?since=0").then(() => { show("queue"); poll(); }).catch(() => {});

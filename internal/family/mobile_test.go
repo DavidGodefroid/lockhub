@@ -54,8 +54,15 @@ func TestComposeMobile(t *testing.T) {
 	if strings.Contains(out, "devices-file") || strings.Contains(out, "seal-clear") {
 		t.Error("device flags without a paired device")
 	}
-	paths.Devices = "/s/devices.json"
+	paths.Devices, paths.DevicesID = "/s/devices.json", "sha256:aa"
 	out = Compose(c, paths)
+	if strings.Count(out, `lockfamily.devices: "sha256:aa"`) != 2 {
+		t.Error("the locks do not carry the devices' identity")
+	}
+	paths.DevicesID = "sha256:bb"
+	if Compose(c, paths) == out {
+		t.Error("a change of the paired devices does not change the locks")
+	}
 	for _, want := range []string{
 		`"--devices-file", "/run/lockfamily/devices.json", "--seal-clear", "--require-device", "prod-write,policy-loosen"]`,
 		"source: \"/s/devices.json\"\n        target: /run/lockfamily/devices.json\n        read_only: true",
@@ -88,5 +95,22 @@ func TestPinnedDevicesAreReviewed(t *testing.T) {
 	}
 	if devs, _ := ReadDevices(state); len(devs) != 0 {
 		t.Fatal("still pinned")
+	}
+}
+
+// require_device without a paired device would let the locks take the
+// hub's approvals again: lock up refuses to apply it.
+func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
+	w := newWS(t, yamlConf(mobileConf))
+	if _, err := w.up("y\n", newFake()); err == nil || !strings.Contains(err.Error(), "require_device") {
+		t.Fatalf("lock up applied require_device with no device: %v", err)
+	}
+	a := devicetest.New("hub.example.net", "https://hub.example.net", "phone")
+	if err := PinDevice(filepath.Join(w.dir, "state"), a.Device()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := w.up("y\n", newFake())
+	if err != nil || !strings.Contains(out, "  device phone webauthn:") {
+		t.Fatalf("with a device: %v\n%s", err, out)
 	}
 }
