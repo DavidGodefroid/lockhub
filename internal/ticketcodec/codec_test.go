@@ -18,13 +18,20 @@ import (
 
 // fixtures reads lockkit's own signed fixtures from the module this
 // build uses: a format change in lockkit fails here.
+// fixtures are lockkit's signed ticket fixtures: those of the lockkit
+// this build uses, or of the one LOCKKIT_FIXTURES names (the directory of
+// a lockkit module; the CI compatibility matrix, scripts/compat.sh).
 func fixtures(t *testing.T) (dir string, lock, hubKey ed25519.PrivateKey) {
 	t.Helper()
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/DavidGodefroid/lockkit").Output()
-	if err != nil {
-		t.Skipf("go list: %v", err)
+	mod := os.Getenv("LOCKKIT_FIXTURES")
+	if mod == "" {
+		out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/DavidGodefroid/lockkit").Output()
+		if err != nil {
+			t.Skipf("go list: %v", err)
+		}
+		mod = strings.TrimSpace(string(out))
 	}
-	dir = filepath.Join(strings.TrimSpace(string(out)), "ticket", "testdata")
+	dir = filepath.Join(mod, "ticket", "testdata")
 	b, err := os.ReadFile(filepath.Join(dir, "keys.json"))
 	if err != nil {
 		t.Fatal(err)
