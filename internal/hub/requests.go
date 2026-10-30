@@ -99,7 +99,7 @@ type openReq struct {
 	raw              []byte
 	expires          time.Time
 	delivered        bool
-	seq              uint64      // Hub.reqSeq when opened
+	given            uint64      // Hub.giveSeq when first given to a lock
 	done             chan Answer // buffered: one answer
 }
 
@@ -123,9 +123,9 @@ func (a Asker) check() error {
 }
 
 // openRequests lists instance's open requests, oldest first, and reports
-// whether one is fresh for a poll that began at request sequence start:
-// never given to a lock yet, or opened after that poll began. All are
-// given now. The second rule is for two pollers of one instance (a lock
+// whether one is fresh for a poll that began at give sequence start:
+// never given to a lock yet, or first given after that poll began. All
+// are given now. The second rule is for two pollers of one instance (a lock
 // restarted while its old process still polls, a product with two
 // clients): the first to return takes the request, and the other, woken
 // by the same notify, must return too rather than wait out its poll with
@@ -145,8 +145,12 @@ func (h *Hub) openRequests(instance string, start uint64) ([][]byte, bool) {
 	var out [][]byte
 	fresh := false
 	for _, r := range rs {
-		fresh = fresh || !r.delivered || r.seq > start
-		r.delivered = true
+		if !r.delivered {
+			h.giveSeq++
+			r.given, r.delivered = h.giveSeq, true
+			fresh = true
+		}
+		fresh = fresh || r.given > start
 		out = append(out, r.raw)
 	}
 	return out, fresh
@@ -203,8 +207,6 @@ func (h *Hub) ask(ctx context.Context, q Request) (Answer, error) {
 		h.mu.Unlock()
 		return Answer{}, ErrBusy
 	}
-	h.reqSeq++
-	r.seq = h.reqSeq
 	m[q.ID] = r
 	h.mu.Unlock()
 	h.notify(q.Instance) // wakes the lock's long poll

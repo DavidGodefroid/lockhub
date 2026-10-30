@@ -150,7 +150,7 @@ type Hub struct {
 	waiters   map[string]chan struct{}       // instance → closed on a new decision or request
 	queueVer  uint64                         // bumped on every change of the pending queue
 	reqs      map[string]map[string]*openReq // instance → id → open hub request
-	reqSeq    uint64                         // bumped on every hub request opened
+	giveSeq   uint64                         // bumped on every first give of a hub request to a lock
 	onPending []func(Pending)
 }
 
@@ -534,7 +534,7 @@ func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.
 	deadline := time.NewTimer(wait)
 	defer deadline.Stop()
 	h.mu.Lock()
-	start := h.reqSeq // requests opened after this are fresh for this poll
+	start := h.giveSeq // requests first given after this are fresh for this poll
 	h.mu.Unlock()
 	for {
 		ch := h.waiter(instance) // before the query: no lost wake-up

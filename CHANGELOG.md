@@ -15,10 +15,11 @@ refuse). A renewal's `unchecked` inputs (lockkit v0.6.0: the lock
 could not check them now) are shown as such, and never allow one click.
 
 - Hub requests (reveal, renew) and two pollers of one instance (a lock
-  restarted while its old process still polls): a new request now ends
-  every long poll that was waiting when it opened, not only the first to
-  take it; the others no longer sleep out their poll with it (a lost
-  wake-up). A poll that begins after the request was given still waits.
+  restarted while its old process still polls): a request now ends every
+  long poll that began before it was first given to a lock, not only the
+  first to take it; the others no longer sleep out their poll with it (a
+  lost wake-up). A poll that begins after the request was given still
+  waits.
 - `lock up` no longer overwrites the per-user `facades/locks.json` with the
   current workspace's lock keys: each workspace's keys go to
   `facades/locks.d/<project>.json` (with the workspace's path) and
