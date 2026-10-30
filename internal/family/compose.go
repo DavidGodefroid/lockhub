@@ -171,15 +171,15 @@ func Compose(c *Config, p Paths) string {
 		}
 		hardening(w)
 		w("    volumes:")
-		w("      - %s:/run/%s", q(name+"-run"), l.Type)
-		w("      - %s:%s", q(name+"-home"), home)
+		w("      - %s", q(name+"-run:/run/"+l.Type))
+		w("      - %s", q(name+"-home:"+home))
 		w("      - hubkey:%s:ro", HubKeyDir)
 		// The reviewed copy of the lock's profile, never the workspace's
 		// directory itself (agents can write it).
 		if k.Project {
-			w("      - %s:%s:ro", q("profile-"+l.Type), profileDir(p.Workspace, l.Type))
+			w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
 		} else {
-			w("      - %s:%s:ro", q("profile-"+l.Type), home+"/.config/"+l.Type)
+			w("      - %s", q("profile-"+l.Type+":"+home+"/.config/"+l.Type+":ro"))
 		}
 		if k.Gate {
 			// The gate asks the hub, from lea's proxy: the console only
@@ -203,7 +203,7 @@ func Compose(c *Config, p Paths) string {
 			hardening(w)
 			w("    cap_add: [CHOWN]")
 			w("    volumes:")
-			w("      - %s:/g", q(name+"-gate"))
+			w("      - %s", q(name+"-gate:/g"))
 			w("  gatekey-%s:", name)
 			w("    image: %s", q(l.Image))
 			w("    profiles: [setup]")
@@ -212,7 +212,7 @@ func Compose(c *Config, p Paths) string {
 			w("    network_mode: none")
 			hardening(w)
 			w("    volumes:")
-			w("      - %s:/g", q(name+"-gate"))
+			w("      - %s", q(name+"-gate:/g"))
 		}
 	}
 	// profile-<type> copies the reviewed profile into its volume (lock
@@ -226,7 +226,7 @@ func Compose(c *Config, p Paths) string {
 		w("    network_mode: none")
 		hardening(w)
 		w("    volumes:")
-		w("      - %s:/p", q("profile-"+t))
+		w("      - %s", q("profile-"+t+":/p"))
 	}
 	w("networks:")
 	w("  lockhub:")
