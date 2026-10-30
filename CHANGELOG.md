@@ -12,6 +12,17 @@ its approvals, denials and renewals of approved tickets against the hub's
 signed decisions (older locksql records approvals unsigned, and does not
 record denials or renewals, which show as decisions not in the log).
 
+- Every production ticket needs its instance name typed to be approved,
+  on every facade that may answer it: `lock approve`, the deck and the
+  phone (#64). The hub, `lock approve` and the mobile web app used to ask
+  for lockkit's `flags.retype` instead, and only when it was set: lockkit
+  sets it to the console's "retype values" answer (such as `r`), never to
+  the instance name, so most production tickets were approved with a
+  plain `y`. Chat facades still never answer production. Upgrade note: a
+  deck that sends `flags.retype` (lea v0.3.1 or older) can no longer
+  approve production tickets through this hub; use `lock approve` or the
+  phone, or upgrade lea to a release with DavidGodefroid/lea#222 (planned
+  for lea v0.3.2).
 - A hub started without `routing.json` (or with one that lists no
   `facades`) now routes tickets to the local facades only (terminal,
   deck, phone), never to Slack or Telegram (#61, invariant I9). It used

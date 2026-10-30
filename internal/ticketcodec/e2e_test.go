@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -61,7 +62,7 @@ func TestLockkitEndToEnd(t *testing.T) {
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm-prod"}, ticket.RiskProdWrite,
 		"sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), time.Now(), 0)
 	tk.Workspace, tk.Requester = "~/Documents", ticket.Requester{Agent: "dev-1", Session: "s1"}
-	tk.Flags = ticket.Flags{Production: true, Retype: "crm-prod"}
+	tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	tk.Screen = ticket.Screen{Header: "UPDATE on crm-prod", Body: []string{"UPDATE customers SET tier = $1 WHERE id = $2"}}
 	if err := tk.Sign(lockPriv); err != nil {
 		t.Fatal(err)
@@ -74,6 +75,10 @@ func TestLockkitEndToEnd(t *testing.T) {
 	ref := store.Ref{Instance: "crm-prod", ID: tk.ID}
 	if _, err := h.Decide(context.Background(), ref, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: "tty"}); err == nil {
 		t.Fatal("production ticket approved without the retype")
+	}
+	// lockkit's Retype flag is not what the human types: the instance name is.
+	if _, err := h.Decide(context.Background(), ref, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: "tty", Retype: "r"}); !errors.Is(err, hub.ErrRetype) {
+		t.Fatalf("production ticket approved with the lockkit retype flag typed: %v", err)
 	}
 	if _, err := h.Decide(context.Background(), ref, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: "tty", Retype: "crm-prod"}); err != nil {
 		t.Fatal(err)

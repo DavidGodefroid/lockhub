@@ -782,7 +782,8 @@ func (s *Service) queue(w http.ResponseWriter, r *http.Request) {
 		}
 		var tk ticket.Ticket
 		if err := json.Unmarshal(t.Raw, &tk); err == nil {
-			it.Retype = tk.Flags.Production && tk.Flags.Retype != ""
+			// Every production ticket asks for its instance name.
+			it.Retype = tk.Flags.Production
 		}
 		if err := rules.Allowed(t.Instance, route.Mobile, t.Risk); err != nil {
 			it.Why = err.Error()

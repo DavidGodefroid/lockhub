@@ -59,3 +59,42 @@ func TestWebAppApproves(t *testing.T) {
 		t.Fatalf("decision %+v", d)
 	}
 }
+
+// A production ticket on the phone asks for the instance name, though
+// the ticket has no lockkit Retype flag (#64): approving without it
+// signs nothing and decides nothing; with it, the lock runs the plan.
+func TestWebAppProductionAsksTheInstanceName(t *testing.T) {
+	e := newEnv(t)
+	dev := e.confirm(e.pair("phone"))
+	l := e.lock(dev)
+	p, tk := l.newPlan(t)
+	tk.Flags = ticket.Flags{Production: true}
+	masked := render.MaskScreen(render.ScreenSource{Header: "crm / shop · write", Body: []render.Line{{{Text: "UPDATE customers SET tier = 2"}}}}, render.Masking{})
+	id, err := l.c.SubmitClear(context.Background(), l.st, p.ID, l.caller, tk, masked, &ticket.Screen{Header: "crm / shop · write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if who, _ := e.signIn(); who != "phone" {
+		t.Fatalf("signed in as %q", who)
+	}
+	e.waitFor("the ticket", `document.querySelector(".ticket .approve") ? "ok" : ""`)
+	if e.eval(`String(document.querySelector(".ticket .retype-l").hidden)`) != "false" {
+		t.Fatal("the instance name field is hidden on a production ticket")
+	}
+	before := e.signCount()
+	for _, typed := range []string{"", "r", inst + "x"} {
+		e.clearStatus()
+		e.act("approval with "+typed, `document.querySelector(".ticket .retype").value = `+jsString(typed)+`; document.querySelector(".ticket .approve").click()`,
+			`document.getElementById("status").textContent.startsWith("Type the instance name") ? "ok" : ""`)
+	}
+	if e.signCount() != before || e.ticketState(id) != "pending" {
+		t.Fatalf("approved or signed without the instance name: %s", e.ticketState(id))
+	}
+	e.retry("approval", func() string {
+		return e.act("approval", `document.querySelector(".ticket .retype").value = `+jsString(inst)+`; document.querySelector(".ticket .approve").click()`,
+			`document.getElementById("status").textContent === "Approved." ? "ok" : ""`)
+	})
+	if pl, _, err := l.run(t, id); err != nil || pl.ID != p.ID {
+		t.Fatalf("the lock did not run the phone's approval: %v", err)
+	}
+}

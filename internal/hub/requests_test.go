@@ -335,12 +335,12 @@ func TestRenewOneClick(t *testing.T) {
 			a := hubtest.NewLock("crm")
 			e := hubtest.New(t, 0, a)
 			e.Hub.Push(ctx, "crm", a.TicketWith("OLD", "write", e.Clock.T, time.Hour, func(t *hubtest.Ticket) {
-				t.Production, t.Retype = c.production, "crm"
+				t.Production, t.Retype = c.production, "r"
 			}))
 			old := store.Ref{Instance: "crm", ID: "OLD"}
 			renewal := func() {
 				e.Hub.Push(ctx, "crm", a.TicketWith("NEW", "write", e.Clock.T, time.Hour, func(t *hubtest.Ticket) {
-					t.RenewsOf, t.Unchanged, t.Production, t.Retype = "OLD", c.unchanged, c.production, "crm"
+					t.RenewsOf, t.Unchanged, t.Production, t.Retype = "OLD", c.unchanged, c.production, "r"
 				}))
 			}
 			var asked atomic.Int32
