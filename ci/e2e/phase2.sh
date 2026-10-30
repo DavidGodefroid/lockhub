@@ -74,9 +74,11 @@ CREATE TABLE people (id int PRIMARY KEY, email text NOT NULL, label text NOT NUL
 INSERT INTO people VALUES (1, 'alice@example.com', 'alpha'), (2, 'bob@example.com', 'beta');
 GRANT SELECT ON people TO ro;" >/dev/null
 	# No PII rule set: the console writes its first one in its own
-	# volume (LOCKSQL_PII_DIR), the profile's copy being read-only.
+	# volume (LOCKSQL_PII_DIR), the profile's copy being read-only. The
+	# throwaway server has no TLS (host.docker.internal is not local to
+	# locksql, whose default is then verify-full).
 	mkdir -p .locksql
-	printf '[profiles.e2e]\nengine = "postgres"\nhost = "host.docker.internal"\nport = %s\nuser = "ro"\ndatabase = "app"\n' "${PGPORT:-5432}" >.locksql/config.toml
+	printf '[profiles.e2e]\nengine = "postgres"\nhost = "host.docker.internal"\nport = %s\nuser = "ro"\ndatabase = "app"\ntls = "disable"\n' "${PGPORT:-5432}" >.locksql/config.toml
 	chmod 0644 .locksql/config.toml
 fi
 mkdir -p .lockhttp
