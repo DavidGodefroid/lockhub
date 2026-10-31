@@ -5,9 +5,13 @@ digest).
 
 ## Unreleased
 
-- The host CLI is renamed `lock` → `lox` (#79), without an alias: `lock`
-  is taken (GNOME's "Lock" in Nix, AUR, Guix and ALT, FreeBSD's
-  `lock(1)`) and too generic to be found. `lox up`, `lox add`, `lox
+## v0.3.0 (2026-10-31)
+
+Supported locks: as v0.2.7.
+
+- Breaking: the host CLI is renamed `lock` → `lox` (#79), without an
+  alias: `lock` is taken (GNOME's "Lock" in Nix, AUR, Guix and ALT,
+  FreeBSD's `lock(1)`) and too generic to be found. `lox up`, `lox add`, `lox
   import`, `lox attach`, `lox doctor`, `lox approve`, `lox mobile`, `lox
   audit verify`, `lox version` (prints `lox X.Y.Z`); every message, help
   text and error prefix says `lox`. The release archives are
