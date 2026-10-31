@@ -12,7 +12,8 @@ digest).
   (`hub.image`, `hub.facades`, `hub.routing`, `hub.mobile.origin`,
   `require_device`, `allowed_uids`, the slack and telegram allowlists, and
   instance names, and yaml errors, whose quoted value (a type error, an
-  explicit tag, an alias to an unknown anchor) is dropped for the line and
+  explicit tag, an alias to an unknown anchor, an unknown or repeated key
+  not shaped like one) is dropped for the line and
   key path), chat.json, locks.json, routing.json, `lockhub serve
   --mobile-origin` and `--facade-socket-mode`, `lock up --pin` and
   `--rotate`, `lock add --version`, and `lock add telegram --chat`/`--from`

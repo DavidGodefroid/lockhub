@@ -49,6 +49,11 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 			"explicit bool tag":     {yamlConf("  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    seal_clear: !!bool " + q + "\n"), "hub.mobile.seal_clear"},
 			"instance name":         {strings.Replace(yamlConf(""), "crm-prod:", q+":", 1), "locks"},
 			"routing instance":      {yamlConf("  routing:\n    " + q + ": [tty]\n"), "hub.routing"},
+			"flow mapping value":    {strings.Replace(yamlConf(""), "image: "+hubImg, "image: {"+c+"}", 1), "hub.image"},
+			"unknown key":           {strings.Replace(yamlConf(""), "version: 1", "version: 1\n"+q+": 1", 1), "unknown key"},
+			"unknown lock key":      {strings.Replace(yamlConf(""), "type: locksql", "type: locksql\n    "+q+": 1", 1), "unknown key"},
+			"key twice":             {strings.Replace(yamlConf(""), "type: locksql", "type: locksql\n    "+q+": 1\n    "+q+": 2", 1), "already defined"},
+			"tagged key":            {strings.Replace(yamlConf(""), "version: 1", "version: 1\n!!int \"x`"+c+"\": 1", 1), "explicit tag"},
 			"hub.telegram.chats":    {yamlConf("  facades: [tty, telegram]\n  telegram:\n    chats:\n      - {chat: " + q + ", from: 7}\n"), "hub.telegram.chats"},
 		} {
 			p := filepath.Join(t.TempDir(), "lockfamily.yaml")

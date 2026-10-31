@@ -13,7 +13,12 @@ var (
 	yamlTypeErr = regexp.MustCompile(`^line (\d+): cannot unmarshal .* into (\S+)$`)
 	// yamlQuoted is what yaml.v3 quotes of the input in its other
 	// errors: 'anchor' or `value`.
-	yamlQuoted = regexp.MustCompile("'[^']*'|`[^`]*`")
+	yamlQuoted = regexp.MustCompile("(?s)'.*'|`.*`|\".*\"")
+	yamlField  = regexp.MustCompile(`^line (\d+): field (.*) not found in type (\S+)$`)
+	yamlDup    = regexp.MustCompile(`^line (\d+): mapping key .* already defined at line (\d+)$`)
+	// safeKey is a key short and plain enough to show: a lockfamily.yaml
+	// key or an instance name, not a value pasted into a flow mapping.
+	safeKey = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]{0,62}$`)
 	// aliasLine is a "key: *alias" or "- *alias" line.
 	aliasLine = regexp.MustCompile(`^\s*(?:-\s+)*(?:([^\s:#'"][^:#]*?)\s*:\s+)?\*`)
 )
@@ -38,7 +43,7 @@ func scrubYAML(err error, b []byte) error {
 			for i, l := range strings.Split(string(b), "\n") {
 				if m := aliasLine.FindStringSubmatch(l); m != nil {
 					where = "line " + strconv.Itoa(i+1) + ": "
-					if m[1] != "" {
+					if safeKey.MatchString(m[1]) {
 						where += m[1] + ": "
 					}
 					break
@@ -49,6 +54,9 @@ func scrubYAML(err error, b []byte) error {
 			if where := badTag(&doc); where != "" {
 				return errors.New("yaml: " + where + ": a value that is not of its explicit tag")
 			}
+			return errors.New("yaml: a value or key that is not of its explicit tag")
+		case strings.Contains(msg, "cannot decode"):
+			return errors.New("yaml: a value or key that is not of its explicit tag")
 		}
 		return errors.New(yamlQuoted.ReplaceAllString(msg, "(value)"))
 	}
@@ -58,7 +66,19 @@ func scrubYAML(err error, b []byte) error {
 	}
 	out := make([]string, len(te.Errors))
 	for i, e := range te.Errors {
-		m := yamlTypeErr.FindStringSubmatch(strings.ReplaceAll(e, "\n", " "))
+		e1 := strings.ReplaceAll(e, "\n", " ")
+		m := yamlTypeErr.FindStringSubmatch(e1)
+		if f := yamlField.FindStringSubmatch(e1); f != nil {
+			out[i] = "line " + f[1] + ": an unknown key in " + f[3]
+			if safeKey.MatchString(f[2]) {
+				out[i] = "line " + f[1] + ": unknown key " + f[2] + " in " + f[3]
+			}
+			continue
+		}
+		if d := yamlDup.FindStringSubmatch(e1); d != nil {
+			out[i] = "line " + d[1] + ": a key already defined at line " + d[2]
+			continue
+		}
 		switch {
 		case m == nil && strings.Contains(e, "cannot unmarshal"):
 			out[i] = "a value of the wrong type"
@@ -103,7 +123,7 @@ func walkYAML(n *yaml.Node, path string, fn func(*yaml.Node, string)) {
 		}
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			p := n.Content[i].Value
+			p := showKey(n.Content[i].Value)
 			if path != "" {
 				p = path + "." + p
 			}
@@ -128,7 +148,7 @@ func keyLines(n *yaml.Node, path string, out map[int]string) {
 		return
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			p := n.Content[i].Value
+			p := showKey(n.Content[i].Value)
 			if path != "" {
 				p = path + "." + p
 			}
@@ -154,4 +174,12 @@ func leaf(n *yaml.Node, path, parent string, out map[int]string) {
 		return
 	}
 	out[n.Line] = path
+}
+
+// showKey is k if it is safe to show, "(key)" otherwise.
+func showKey(k string) string {
+	if safeKey.MatchString(k) {
+		return k
+	}
+	return "(key)"
 }
