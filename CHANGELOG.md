@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- Configuration errors no longer echo the value given (a token pasted
+  into the wrong key would have shown in the terminal, the hub's logs and
+  an agent's output): they name the key, the list entry (`hub.facades[1]`)
+  and the values allowed, never the value. Covers lockfamily.yaml
+  (`hub.image`, `hub.facades`, `hub.routing`, `hub.mobile.origin`,
+  `require_device`, `allowed_uids`, the slack and telegram allowlists, and
+  yaml type errors, whose quoted value is dropped for the key path),
+  chat.json, routing.json, `lockhub serve --mobile-origin` and
+  `--facade-socket-mode`, and `lock up --pin` and `--rotate`.
+
 ## v0.2.5 (2026-10-31)
 
 Supported locks: as v0.2.4, plus locksql v0.11.2 (lockkit v0.7.1), the

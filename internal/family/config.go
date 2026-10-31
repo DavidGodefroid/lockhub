@@ -5,6 +5,7 @@ package family
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -91,7 +92,7 @@ type Mobile struct {
 func (m *Mobile) validate() error {
 	u, err := url.Parse(m.Origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.User != nil || u.String() != m.Origin || strings.ToLower(m.Origin) != m.Origin || u.Port() == "443" {
-		return fmt.Errorf("mobile.origin: want an https origin as a browser writes it (https://host[:port], lowercase, no path), got %q", m.Origin)
+		return errors.New("mobile.origin: want an https origin as a browser writes it (https://host[:port], lowercase, no path, no user info)")
 	}
 	if m.Port == 0 {
 		m.Port = 8444
@@ -99,9 +100,9 @@ func (m *Mobile) validate() error {
 	if m.Port < 1024 || m.Port > 65535 {
 		return fmt.Errorf("mobile.port: want 1024-65535, got %d", m.Port)
 	}
-	for _, r := range m.RequireDevice {
+	for i, r := range m.RequireDevice {
 		if !route.KnownRisk(r) {
-			return fmt.Errorf("mobile.require_device: unknown risk class %q", r)
+			return fmt.Errorf("mobile.require_device[%d]: unknown risk class (want one of %s)", i, strings.Join(route.Risks(), ", "))
 		}
 	}
 	return nil
@@ -148,13 +149,13 @@ func (u *UIDList) UnmarshalYAML(n *yaml.Node) error {
 		return fmt.Errorf("line %d: allowed_uids: want a list of uids, [1000]", n.Line)
 	}
 	var out UIDList
-	for _, e := range n.Content {
+	for i, e := range n.Content {
 		if e.Kind != yaml.ScalarNode || e.Tag != "!!int" || !plainUID.MatchString(e.Value) {
-			return fmt.Errorf("line %d: allowed_uids: %q is not a uid (decimal, no sign, no leading zero)", e.Line, e.Value)
+			return fmt.Errorf("line %d: allowed_uids[%d]: not a uid (decimal, no sign, no leading zero)", e.Line, i)
 		}
 		v, err := strconv.ParseInt(e.Value, 10, 64)
 		if err != nil {
-			return fmt.Errorf("line %d: allowed_uids: %q is not a uid", e.Line, e.Value)
+			return fmt.Errorf("line %d: allowed_uids[%d]: not a uid", e.Line, i)
 		}
 		out = append(out, int(v))
 	}
@@ -241,12 +242,87 @@ func decode(b []byte, path string, needLocks bool) (*Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
-		return nil, fmt.Errorf("%s: %w (a lock's target, production flag and credentials belong to its own profile, never here)", path, err)
+		return nil, fmt.Errorf("%s: %w (a lock's target, production flag and credentials belong to its own profile, never here)", path, scrubYAML(err, b))
 	}
 	if err := c.validate(needLocks); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &c, nil
+}
+
+var yamlTypeErr = regexp.MustCompile(`^line (\d+): cannot unmarshal .* into (\S+)$`)
+
+// scrubYAML drops the values yaml.v3 quotes in its type errors ("cannot
+// unmarshal !!str `glsa_Ca...` into int": up to ten characters of what
+// was typed, maybe a pasted secret): the line, the key (found in b) and
+// the wanted type stay.
+func scrubYAML(err error, b []byte) error {
+	var te *yaml.TypeError
+	if !errors.As(err, &te) {
+		return err
+	}
+	var doc yaml.Node
+	keys := map[int]string{}
+	if yaml.Unmarshal(b, &doc) == nil {
+		keyLines(&doc, "", keys)
+	}
+	out := make([]string, len(te.Errors))
+	for i, e := range te.Errors {
+		m := yamlTypeErr.FindStringSubmatch(strings.ReplaceAll(e, "\n", " "))
+		switch {
+		case m == nil && strings.Contains(e, "cannot unmarshal"):
+			out[i] = "a value of the wrong type"
+		case m == nil:
+			out[i] = e
+		default:
+			out[i] = "line " + m[1] + ": "
+			if n, _ := strconv.Atoi(m[1]); keys[n] != "" {
+				out[i] += keys[n] + ": "
+			}
+			out[i] += "a value of the wrong type, want " + m[2]
+		}
+	}
+	return &yaml.TypeError{Errors: out}
+}
+
+// keyLines maps the line of each value under n to its key path
+// (hub.mobile.port, locks.crm.allowed_uids[0]); a line of several values
+// (a flow list or mapping) to the path of the collection holding them.
+func keyLines(n *yaml.Node, path string, out map[int]string) {
+	switch n.Kind {
+	case yaml.DocumentNode:
+		for _, c := range n.Content {
+			keyLines(c, path, out)
+		}
+		return
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			p := n.Content[i].Value
+			if path != "" {
+				p = path + "." + p
+			}
+			leaf(n.Content[i+1], p, path, out)
+		}
+	case yaml.SequenceNode:
+		for i, c := range n.Content {
+			leaf(c, path+"["+strconv.Itoa(i)+"]", path, out)
+		}
+	}
+	if _, ok := out[n.Line]; !ok && path != "" {
+		out[n.Line] = path
+	}
+}
+
+func leaf(n *yaml.Node, path, parent string, out map[int]string) {
+	if n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode {
+		keyLines(n, path, out)
+		return
+	}
+	if p, ok := out[n.Line]; ok && p != path {
+		out[n.Line] = parent
+		return
+	}
+	out[n.Line] = path
 }
 
 // Validate checks c and fills defaults.
@@ -257,14 +333,14 @@ func (c *Config) validate(needLocks bool) error {
 		return fmt.Errorf("version: want 1, got %d", c.Version)
 	}
 	if m := digestRef.FindStringSubmatch(c.Hub.Image); m == nil || m[1] != "lockhub" {
-		return fmt.Errorf("hub.image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>, got %q", c.Hub.Image)
+		return errors.New("hub.image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
 	}
 	if len(c.Hub.Facades) == 0 {
 		c.Hub.Facades = []string{route.TTY, route.Deck}
 	}
-	for _, f := range c.Hub.Facades {
+	for i, f := range c.Hub.Facades {
 		if !route.KnownFacade(f) {
-			return fmt.Errorf("hub.facades: unknown facade %q", f)
+			return fmt.Errorf("hub.facades[%d]: unknown facade (want one of %s)", i, strings.Join(route.Facades(), ", "))
 		}
 	}
 	switch on := slices.Contains(c.Hub.Facades, route.Slack); {
@@ -333,9 +409,9 @@ func (c *Config) validate(needLocks bool) error {
 		if len(fs) == 0 {
 			return fmt.Errorf("hub.routing.%s: no facade could answer it (list at least one)", inst)
 		}
-		for _, f := range fs {
+		for i, f := range fs {
 			if !slices.Contains(c.Hub.Facades, f) {
-				return fmt.Errorf("hub.routing.%s: facade %q is not enabled in hub.facades", inst, f)
+				return fmt.Errorf("hub.routing.%s[%d]: not a facade enabled in hub.facades (%s)", inst, i, strings.Join(c.Hub.Facades, ", "))
 			}
 		}
 	}

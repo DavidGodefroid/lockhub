@@ -107,7 +107,7 @@ func encodeValid(doc *yaml.Node) ([]byte, *Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(out.Bytes()))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
-		return nil, nil, err
+		return nil, nil, scrubYAML(err, out.Bytes())
 	}
 	if err := c.Validate(); err != nil {
 		return nil, nil, err

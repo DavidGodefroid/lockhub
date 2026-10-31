@@ -36,6 +36,16 @@ func TestNewRefusesBadOrigins(t *testing.T) {
 	}
 }
 
+func TestNewDoesNotEchoTheOrigin(t *testing.T) {
+	e := newEnv(t, route.Rules{})
+	for _, o := range []string{"glsa_CanarySecretToken123", "https://user:glsa_Canary@h"} {
+		_, err := mobile.New(mobile.Config{Hub: e.hub, Origin: o})
+		if err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "origin") {
+			t.Errorf("origin %s: %v", o, err)
+		}
+	}
+}
+
 func TestPostNeedsOriginAndHeader(t *testing.T) {
 	e := newEnv(t, route.Rules{})
 	for name, mod := range map[string]func(*http.Request){

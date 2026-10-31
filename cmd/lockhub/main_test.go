@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +144,20 @@ func TestLoadRoutes(t *testing.T) {
 		if _, err := loadRoutes(p, locks); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
+	}
+}
+
+func TestLoadRoutesDoesNotEchoValues(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "routing.json")
+	for _, c := range []string{"glsa_CanarySecretToken123", "https://user:glsa_Canary@h"} {
+		os.WriteFile(p, []byte(`{"facades":["tty",`+strconv.Quote(c)+`]}`), 0o600)
+		_, err := loadRoutes(p, nil)
+		if err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "facades[1]") {
+			t.Errorf("%s: %v", c, err)
+		}
+	}
+	if _, err := listenFacade(nil, filepath.Join(t.TempDir(), "s"), "glsa_CanarySecretToken123", nil); err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "--facade-socket-mode") {
+		t.Errorf("mode: %v", err)
 	}
 }
 

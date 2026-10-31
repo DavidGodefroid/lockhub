@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -520,9 +521,9 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 	if err := dec.Decode(&r); err != nil {
 		return route.Rules{}, fmt.Errorf("%s: %w", path, err)
 	}
-	for _, f := range r.Enabled {
+	for i, f := range r.Enabled {
 		if !route.KnownFacade(f) {
-			return route.Rules{}, fmt.Errorf("%s: unknown facade %q", path, f)
+			return route.Rules{}, fmt.Errorf("%s: facades[%d]: unknown facade (want one of %s)", path, i, strings.Join(route.Facades(), ", "))
 		}
 	}
 	for inst := range r.Only {
@@ -539,7 +540,7 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...func(*http.ServeMux)) (*http.Server, error) {
 	m, err := strconv.ParseUint(mode, 8, 32)
 	if err != nil || m&0o007 != 0 {
-		return nil, fmt.Errorf("mode %q: an octal mode without access for others", mode)
+		return nil, errors.New("--facade-socket-mode: want an octal mode without access for others (0600)")
 	}
 	// The socket's directory must be private: the socket is reachable
 	// through it only, whatever the socket's own mode in the instant

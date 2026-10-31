@@ -45,7 +45,7 @@ func PinRef(pin string) (string, error) {
 	if m := digestRef.FindStringSubmatch(pin); m != nil && m[1] == "lockhub" {
 		return pin, nil
 	}
-	return "", fmt.Errorf("--pin: want sha256:<64 hex> or ghcr.io/davidgodefroid/lockhub@sha256:<64 hex>, got %q", pin)
+	return "", errors.New("--pin: want sha256:<64 hex> or ghcr.io/davidgodefroid/lockhub@sha256:<64 hex>")
 }
 
 // setHubImage is raw with hub.image set to ref (the rest of the file as
@@ -106,7 +106,7 @@ func parseRotate(c *Config, vals []string) (rotation, error) {
 			case slices.Contains(insts, n):
 				r.locks = append(r.locks, n)
 			default:
-				return r, fmt.Errorf("--rotate %q: not hub, all, or a lock of this workspace (%s)", n, strings.Join(insts, ", "))
+				return r, fmt.Errorf("--rotate: an entry is not hub, all, or a lock of this workspace (%s)", strings.Join(insts, ", "))
 			}
 		}
 	}
