@@ -17,8 +17,8 @@ digest).
   --mobile-origin` and `--facade-socket-mode`, `lock up --pin` and
   `--rotate`, `lock add --version`, and `lock add telegram --chat`/`--from`
   and `lock audit verify --lock` (Go's flag package still quotes a refused
-  flag value once). `lock add --hub-image` is written as a quoted string:
-  it can no longer make other keys of a fresh lockfamily.yaml.
+  flag value once). `lock add --hub-image` is checked before it is written
+  in a fresh lockfamily.yaml: it can no longer make other keys there.
 
 ## v0.2.5 (2026-10-31)
 

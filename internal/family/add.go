@@ -2,7 +2,6 @@ package family
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -34,13 +33,12 @@ func Add(path string, o AddOptions) error {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
 		}
-		// A JSON string is a YAML double-quoted scalar: nothing typed in
-		// --hub-image makes other keys, an alias or a tag.
-		q, err := json.Marshal(o.HubImage)
-		if err != nil {
-			return err
+		// Checked before it is written in: nothing typed in --hub-image
+		// makes other keys, an alias or a tag.
+		if m := digestRef.FindStringSubmatch(o.HubImage); m == nil || m[1] != "lockhub" {
+			return errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
 		}
-		b = []byte("version: 1\nhub:\n  image: " + string(q) + "\n")
+		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
 		return err
 	}

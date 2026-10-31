@@ -86,7 +86,7 @@ func TestWritersDoNotEchoValues(t *testing.T) {
 		dir := t.TempDir()
 		fresh := filepath.Join(dir, "fresh.yaml")
 		err := Add(fresh, AddOptions{Type: "locksql", Name: "crm", Image: sqlImg, HubImage: "*" + c})
-		if err == nil || leaked(err.Error(), c) || !strings.Contains(err.Error(), "hub.image") {
+		if err == nil || leaked(err.Error(), c) || !strings.Contains(err.Error(), "--hub-image") {
 			t.Errorf("add --hub-image *%s: %v", c, err)
 		}
 		if _, err := os.Stat(fresh); err == nil {
