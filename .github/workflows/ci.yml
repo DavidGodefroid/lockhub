@@ -32,17 +32,18 @@ jobs:
         run: go test ./...
 
   # Compatibility with lockkit (plan H0): lockhub, built on the pinned
-  # lockkit, checked against the signed ticket fixtures of the pinned
-  # lockkit, of the release before it and of the newest one: the tickets
-  # of locks built on each (scripts/compat.sh). Not built on the release
-  # before the pin: lockhub uses lockkit v0.6.0's API (ticket
-  # ChangeUnchecked); `sh scripts/compat.sh prev …` tries it by hand.
+  # lockkit and on the release before it, checked against the signed
+  # ticket fixtures of the pinned lockkit, of the release before it and of
+  # the newest one: the tickets of locks built on each (scripts/compat.sh).
+  # With the pin at v0.8.1, the release before it is v0.8.0, which has
+  # every lockkit API lockhub uses. A pin whose previous release lacks one
+  # drops prev from `build` and says why here.
   compat:
     name: compat (build ${{ matrix.build }}, fixtures ${{ matrix.fixtures }})
     strategy:
       fail-fast: false
       matrix:
-        build: [pinned]
+        build: [pinned, prev]
         fixtures: [pinned, prev, latest]
     runs-on: ubuntu-latest
     env:

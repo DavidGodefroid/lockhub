@@ -46,21 +46,18 @@ the unanchored window.
 **Plan.** The CI compat check was to be the matrix {pinned lockkit,
 lockkit N-1} × the signed ticket fixtures of `lockkit/ticket/testdata`.
 
-**Code.** The `compat` job of `.github/workflows/ci.yml` builds lockhub only
-on the pinned lockkit (go.mod: v0.6.0). It checks the codec against the
-fixtures of three lockkit releases: the pinned one, the release before it
-(v0.5.0), and the newest one (v0.7.1 as of 2026-10-30). Together these stand for the
-tickets of locks built on an older, the same, or a newer lockkit
-(`scripts/compat.sh pinned pinned|prev|latest`).
+**Code.** The `compat` job of `.github/workflows/ci.yml` is the plan's full
+grid: lockhub built on the pinned lockkit (go.mod: v0.8.1) and on the
+release before it (v0.8.0), its codec checked against the fixtures of three
+lockkit releases: the pinned one, the release before it, and the newest one
+(v0.8.1 as of 2026-10-31). Together these stand for the tickets of locks
+built on an older, the same, or a newer lockkit (`scripts/compat.sh
+pinned|prev pinned|prev|latest`).
 
-lockhub is not built on N-1, because it uses lockkit v0.6.0 APIs that
-v0.5.0 does not have: for instance `ticket.ChangeUnchecked`, for a renewal's
-unchecked inputs (`internal/approve`). A lockhub built on N-1 does not
-compile, so that cell could only fail. To try it by hand, run
-`sh scripts/compat.sh prev pinned` (or `prev latest`) on a copy: the script
-rewrites go.mod and go.sum. The fixture side of the matrix, which is what
-the locks in the field send, is still covered for pinned, previous and
-latest.
-
-When a later lockhub pins a lockkit whose previous release has every API it
-uses, `build: [pinned, prev]` in the matrix restores the plan's full grid.
+From lockhub v0.2.0 to v0.2.6 (pinned on lockkit v0.6.0) the job built on
+the pinned lockkit only: lockhub used lockkit v0.6.0 APIs that v0.5.0 did
+not have (`ticket.ChangeUnchecked`, for a renewal's unchecked inputs in
+`internal/approve`), so a build on N-1 could only fail. If a later pin's
+previous release lacks an API lockhub uses again, `build: [pinned]` and a
+note here say so; `sh scripts/compat.sh prev pinned` (on a copy: the script
+rewrites go.mod and go.sum) tries it by hand.
