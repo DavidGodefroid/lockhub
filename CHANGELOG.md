@@ -5,12 +5,19 @@ digest).
 
 ## Unreleased
 
+## v0.2.7 (2026-10-31)
+
+Supported locks: as v0.2.6.
+
 - Builds on lockkit v0.8.1 (was v0.6.0). Nothing changes for the hub's
   own API or for the locks it supports: the hub URL lock up gives a lock
   (`http://lockhub:8443`, up.json's `hub_url`) is already the
   `http(s)://host[:port]` form lockkit v0.7.2 and later require. A ticket
   the hub refuses (`bad_ticket`) no longer quotes the value lockkit found
   wrong in it (an unknown risk class).
+- CI's lockkit compatibility check also builds lockhub on the lockkit
+  release before the pin (v0.8.0), against the same three sets of
+  fixtures.
 
 ## v0.2.6 (2026-10-31)
 
