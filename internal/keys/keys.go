@@ -171,7 +171,7 @@ func LoadLocks(path string) (map[string]ed25519.PublicKey, error) {
 	seen := map[string]string{}
 	for name, l := range f.Locks {
 		if !ValidInstance(name) {
-			return nil, fmt.Errorf("%s: bad instance name %q", path, name)
+			return nil, fmt.Errorf("%s: locks: a bad instance name", path)
 		}
 		k, err := base64.StdEncoding.DecodeString(l.PublicKey)
 		if err != nil || len(k) != ed25519.PublicKeySize {

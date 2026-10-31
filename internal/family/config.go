@@ -250,81 +250,6 @@ func decode(b []byte, path string, needLocks bool) (*Config, error) {
 	return &c, nil
 }
 
-var yamlTypeErr = regexp.MustCompile(`^line (\d+): cannot unmarshal .* into (\S+)$`)
-
-// scrubYAML drops the values yaml.v3 quotes in its type errors ("cannot
-// unmarshal !!str `glsa_Ca...` into int": up to ten characters of what
-// was typed, maybe a pasted secret): the line, the key (found in b) and
-// the wanted type stay.
-func scrubYAML(err error, b []byte) error {
-	var te *yaml.TypeError
-	if !errors.As(err, &te) {
-		return err
-	}
-	var doc yaml.Node
-	keys := map[int]string{}
-	if yaml.Unmarshal(b, &doc) == nil {
-		keyLines(&doc, "", keys)
-	}
-	out := make([]string, len(te.Errors))
-	for i, e := range te.Errors {
-		m := yamlTypeErr.FindStringSubmatch(strings.ReplaceAll(e, "\n", " "))
-		switch {
-		case m == nil && strings.Contains(e, "cannot unmarshal"):
-			out[i] = "a value of the wrong type"
-		case m == nil:
-			out[i] = e
-		default:
-			out[i] = "line " + m[1] + ": "
-			if n, _ := strconv.Atoi(m[1]); keys[n] != "" {
-				out[i] += keys[n] + ": "
-			}
-			out[i] += "a value of the wrong type, want " + m[2]
-		}
-	}
-	return &yaml.TypeError{Errors: out}
-}
-
-// keyLines maps the line of each value under n to its key path
-// (hub.mobile.port, locks.crm.allowed_uids[0]); a line of several values
-// (a flow list or mapping) to the path of the collection holding them.
-func keyLines(n *yaml.Node, path string, out map[int]string) {
-	switch n.Kind {
-	case yaml.DocumentNode:
-		for _, c := range n.Content {
-			keyLines(c, path, out)
-		}
-		return
-	case yaml.MappingNode:
-		for i := 0; i+1 < len(n.Content); i += 2 {
-			p := n.Content[i].Value
-			if path != "" {
-				p = path + "." + p
-			}
-			leaf(n.Content[i+1], p, path, out)
-		}
-	case yaml.SequenceNode:
-		for i, c := range n.Content {
-			leaf(c, path+"["+strconv.Itoa(i)+"]", path, out)
-		}
-	}
-	if _, ok := out[n.Line]; !ok && path != "" {
-		out[n.Line] = path
-	}
-}
-
-func leaf(n *yaml.Node, path, parent string, out map[int]string) {
-	if n.Kind == yaml.MappingNode || n.Kind == yaml.SequenceNode {
-		keyLines(n, path, out)
-		return
-	}
-	if p, ok := out[n.Line]; ok && p != path {
-		out[n.Line] = parent
-		return
-	}
-	out[n.Line] = path
-}
-
 // Validate checks c and fills defaults.
 func (c *Config) Validate() error { return c.validate(true) }
 
@@ -378,7 +303,7 @@ func (c *Config) validate(needLocks bool) error {
 	}
 	for name, l := range c.Locks {
 		if !keys.ValidInstance(name) {
-			return fmt.Errorf("locks: bad instance name %q (lower case, digits and -)", name)
+			return errors.New("locks: a bad instance name (lower case, digits and -, at most 63 characters)")
 		}
 		if name == "hub" {
 			return fmt.Errorf("locks: %q is reserved (the hub's own network is egress-hub)", name)
@@ -404,7 +329,7 @@ func (c *Config) validate(needLocks bool) error {
 	}
 	for inst, fs := range c.Hub.Routing {
 		if _, ok := c.Locks[inst]; !ok {
-			return fmt.Errorf("hub.routing: unknown instance %q", inst)
+			return fmt.Errorf("hub.routing: an instance not in locks (%s)", strings.Join(c.Instances(), ", "))
 		}
 		if len(fs) == 0 {
 			return fmt.Errorf("hub.routing.%s: no facade could answer it (list at least one)", inst)

@@ -240,7 +240,7 @@ func (f *lockLogFlag) String() string { return "" }
 func (f *lockLogFlag) Set(v string) error {
 	inst, path, ok := strings.Cut(v, "=")
 	if !ok || !keys.ValidInstance(inst) || path == "" {
-		return fmt.Errorf("want INSTANCE=PATH, got %q", v)
+		return errors.New("want INSTANCE=PATH")
 	}
 	for _, l := range *f {
 		if l.Instance == inst {
@@ -668,7 +668,7 @@ func (s *int64sFlag) String() string { return fmt.Sprint(*s) }
 func (s *int64sFlag) Set(v string) error {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return err
+		return errors.New("want a decimal integer id")
 	}
 	*s = append(*s, n)
 	return nil

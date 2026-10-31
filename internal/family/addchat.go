@@ -51,7 +51,7 @@ func addChat(path, state, facade string, allow any, secrets map[string]string) e
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", path, scrubYAML(err, b))
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("%s: not a lockfamily.yaml mapping", path)

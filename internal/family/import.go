@@ -149,7 +149,7 @@ func Import(path string, srcs []string) ([]string, error) {
 		}
 	}
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return nil, err
+		return nil, scrubYAML(err, b)
 	}
 	merged, mn := Merge(base, srcs, others)
 	notes = append(notes, mn...)

@@ -111,7 +111,7 @@ var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "l
 // by repo's release workflow run for tag.
 func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) {
 	if !semverTag.MatchString(tag) {
-		return "", fmt.Errorf("%q is not a release tag (vX.Y.Z)", tag)
+		return "", errors.New("not a release tag (vX.Y.Z)")
 	}
 	if min, ok := MinRelease[repo]; ok && semverLess(tag, min) {
 		return "", fmt.Errorf("%s %s cannot run under lock up (no hub mode): %s or later is needed", repo, tag, min)

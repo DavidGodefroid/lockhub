@@ -53,7 +53,7 @@ func PinRef(pin string) (string, error) {
 func setHubImage(raw []byte, ref string) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, err
+		return nil, scrubYAML(err, raw)
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, errors.New("not a lockfamily.yaml mapping")

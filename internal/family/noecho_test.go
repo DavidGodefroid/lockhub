@@ -44,6 +44,11 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 			"hub.slack.team":        {yamlConf("  facades: [tty, slack]\n  slack:\n    team: " + q + "\n    channel: C02\n    users: [U03]\n"), "slack.team"},
 			"hub.slack.channel":     {yamlConf("  facades: [tty, slack]\n  slack:\n    team: T01\n    channel: " + q + "\n    users: [U03]\n"), "slack.channel"},
 			"hub.slack.users":       {yamlConf("  facades: [tty, slack]\n  slack:\n    team: T01\n    channel: C02\n    users: [U03, " + q + "]\n"), "slack.users[1]"},
+			"alias":                 {strings.Replace(yamlConf(""), "image: "+hubImg, "image: *"+c, 1), "line 3: image"},
+			"explicit tag":          {strings.Replace(yamlConf(""), "version: 1", "version: !!int "+q, 1), "version"},
+			"explicit bool tag":     {yamlConf("  facades: [mobile]\n  mobile:\n    origin: https://hub.example.net\n    seal_clear: !!bool " + q + "\n"), "hub.mobile.seal_clear"},
+			"instance name":         {strings.Replace(yamlConf(""), "crm-prod:", q+":", 1), "locks"},
+			"routing instance":      {yamlConf("  routing:\n    " + q + ": [tty]\n"), "hub.routing"},
 			"hub.telegram.chats":    {yamlConf("  facades: [tty, telegram]\n  telegram:\n    chats:\n      - {chat: " + q + ", from: 7}\n"), "hub.telegram.chats"},
 		} {
 			p := filepath.Join(t.TempDir(), "lockfamily.yaml")
@@ -70,6 +75,35 @@ func TestFlagErrorsDoNotEchoValues(t *testing.T) {
 		}
 		if _, err := parseRotate(c, []string{v}); err == nil || leaked(err.Error(), v) || !strings.Contains(err.Error(), "--rotate") {
 			t.Errorf("--rotate %s: %v", v, err)
+		}
+	}
+}
+
+// TestWritersDoNotEchoValues: lock add, add slack, import and --pin
+// parse the file too.
+func TestWritersDoNotEchoValues(t *testing.T) {
+	for _, c := range canaries {
+		dir := t.TempDir()
+		fresh := filepath.Join(dir, "fresh.yaml")
+		err := Add(fresh, AddOptions{Type: "locksql", Name: "crm", Image: sqlImg, HubImage: "*" + c})
+		if err == nil || leaked(err.Error(), c) || !strings.Contains(err.Error(), "hub.image") {
+			t.Errorf("add --hub-image *%s: %v", c, err)
+		}
+		if _, err := os.Stat(fresh); err == nil {
+			t.Errorf("add --hub-image *%s: file written", c)
+		}
+		bad := filepath.Join(dir, "lockfamily.yaml")
+		if err := os.WriteFile(bad, []byte(strings.Replace(yamlConf(""), "image: "+hubImg, "image: *"+c, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := Add(bad, AddOptions{Type: "locksql", Name: "crm", Image: sqlImg}); err == nil || leaked(err.Error(), c) || !strings.Contains(err.Error(), "line 3: image") {
+			t.Errorf("add to an alias: %v", err)
+		}
+		if _, err := setHubImage([]byte("hub:\n  image: *"+c+"\n"), hubImg); err == nil || leaked(err.Error(), c) || !strings.Contains(err.Error(), "image") {
+			t.Errorf("setHubImage: %v", err)
+		}
+		if _, err := (&Releases{}).Image(t.Context(), "locksql", c); err == nil || leaked(err.Error(), c) {
+			t.Errorf("release tag %s: %v", c, err)
 		}
 	}
 }

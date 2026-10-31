@@ -528,7 +528,7 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 	}
 	for inst := range r.Only {
 		if _, ok := locks[inst]; !ok {
-			return route.Rules{}, fmt.Errorf("%s: unknown instance %q", path, inst)
+			return route.Rules{}, fmt.Errorf("%s: only: an instance the hub does not know", path)
 		}
 	}
 	return r, nil

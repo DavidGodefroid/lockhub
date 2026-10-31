@@ -11,9 +11,14 @@ digest).
   and the values allowed, never the value. Covers lockfamily.yaml
   (`hub.image`, `hub.facades`, `hub.routing`, `hub.mobile.origin`,
   `require_device`, `allowed_uids`, the slack and telegram allowlists, and
-  yaml type errors, whose quoted value is dropped for the key path),
-  chat.json, routing.json, `lockhub serve --mobile-origin` and
-  `--facade-socket-mode`, and `lock up --pin` and `--rotate`.
+  instance names, and yaml errors, whose quoted value (a type error, an
+  explicit tag, an alias to an unknown anchor) is dropped for the line and
+  key path), chat.json, locks.json, routing.json, `lockhub serve
+  --mobile-origin` and `--facade-socket-mode`, `lock up --pin` and
+  `--rotate`, `lock add --version`, and `lock add telegram --chat`/`--from`
+  and `lock audit verify --lock` (Go's flag package still quotes a refused
+  flag value once). `lock add --hub-image` is written as a quoted string:
+  it can no longer make other keys of a fresh lockfamily.yaml.
 
 ## v0.2.5 (2026-10-31)
 

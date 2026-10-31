@@ -150,10 +150,17 @@ func TestLoadRoutes(t *testing.T) {
 func TestLoadRoutesDoesNotEchoValues(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "routing.json")
 	for _, c := range []string{"glsa_CanarySecretToken123", "https://user:glsa_Canary@h"} {
-		os.WriteFile(p, []byte(`{"facades":["tty",`+strconv.Quote(c)+`]}`), 0o600)
-		_, err := loadRoutes(p, nil)
-		if err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "facades[1]") {
-			t.Errorf("%s: %v", c, err)
+		for conf, key := range map[string]string{
+			`{"facades":["tty",` + strconv.Quote(c) + `]}`: "facades[1]",
+			`{"only":{` + strconv.Quote(c) + `:["tty"]}}`:  "only",
+		} {
+			if err := os.WriteFile(p, []byte(conf), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadRoutes(p, nil)
+			if err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), key) {
+				t.Errorf("%s: %v", conf, err)
+			}
 		}
 	}
 	if _, err := listenFacade(nil, filepath.Join(t.TempDir(), "s"), "glsa_CanarySecretToken123", nil); err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "--facade-socket-mode") {

@@ -2,6 +2,7 @@ package family
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -33,13 +34,19 @@ func Add(path string, o AddOptions) error {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
 		}
-		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
+		// A JSON string is a YAML double-quoted scalar: nothing typed in
+		// --hub-image makes other keys, an alias or a tag.
+		q, err := json.Marshal(o.HubImage)
+		if err != nil {
+			return err
+		}
+		b = []byte("version: 1\nhub:\n  image: " + string(q) + "\n")
 	} else if err != nil {
 		return err
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", path, scrubYAML(err, b))
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("%s: not a lockfamily.yaml mapping", path)
