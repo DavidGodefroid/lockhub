@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- Host agents reach `lox up`'s locks (#78): the locks' launchers
+  (`locksql mcp` and the other agent commands, as `<lock> init` writes them
+  in `.mcp.json`; lockmq and lockfile alike) mount the socket volume
+  up.json names, read-only, after lea's checks
+  ([docs/lox-up.md](docs/lox-up.md#host-agents-the-locks-launchers),
+  with the threat model). up.json keeps its two-space indented layout,
+  which they read. The e2e (phase 2) drives a host `locksql mcp` from plan
+  to rows through a facade approval, and the refusals of a tampered
+  up.json or a read-write squatter on the socket volume.
+
 ## v0.3.0 (2026-10-31)
 
 Supported locks: as v0.2.7.

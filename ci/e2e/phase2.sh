@@ -14,6 +14,12 @@
 #
 #   ci/e2e/phase2.sh LOX_BIN
 #
+# With LOCKSQL_LAUNCHER (locksql's scripts/locksql), a host agent too:
+# `locksql mcp` from the workspace, as .mcp.json starts it, plans, runs,
+# and after the approval through the facade gets the rows, through the
+# socket volume up.json names (lockhub#78); a tampered up.json, or a
+# socket volume another container mounts read-write, is refused.
+#
 # Locks: LOCKS="name:type ..." (default: locksql db, LockHTTP web and api);
 # a lockhttp named "web" is the gate, "api" the control gate without
 # --hub-net, a locksql named "db" serves Postgres at PGHOST:PGPORT
@@ -43,7 +49,9 @@ pg() { docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:17 ps
 # What this run created on the Postgres server, dropped at exit.
 made_db="" made_role=""
 cleanup() {
-	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" >/dev/null 2>&1 || true
+	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" "$E2E_ID-squat-rw" >/dev/null 2>&1 || true
+	# A run that died with up.json tampered with (the host agent's checks).
+	if [ -f "$ws/up.json.orig" ]; then cat "$ws/up.json.orig" >"$ws/.lockfamily/up.json" || true; chmod g-w "$ws/.lockfamily/up.json" || true; fi
 	# A run that died while .lockfamily was moved aside (the link check).
 	if [ ! -f "$ws/.lockfamily/up.json" ] && [ -f "$ws/lf-real/up.json" ]; then
 		rm -f "$ws/.lockfamily" || true
@@ -364,6 +372,74 @@ if [ -n "$sql" ]; then
 	docker run --rm --network none -v "${p}_profile-locksql:/p:ro" alpine:3.22 sh -c '! ls -A /p/pii 2>/dev/null | grep -q .' ||
 		die "the profile copy holds a rule set (it is read-only: the console's set belongs in its volume)"
 	decisions=2
+
+	if [ -n "${LOCKSQL_LAUNCHER:-}" ]; then
+		say "a host agent: locksql's launcher, as .mcp.json starts it (locksql mcp), reaches lox up's lock through up.json"
+		# Claude Code on the host runs `locksql mcp` from the workspace
+		# (lockhub#78): the launcher finds .lockfamily/up.json, checks it
+		# and the socket volume with Docker, and mounts it read-only. The
+		# image is the lock's own (the release lox add pinned).
+		hostmcp() { LOCKSQL_IMAGE="$sqlimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKSQL_LAUNCHER" mcp; }
+		hostmcp locksql_plan '{"profile":"e2e","db":"app","sql":"SELECT id, label FROM people ORDER BY id LIMIT 10","intent":"e2e host agent"}' >hplan.json ||
+			{ cat hplan.json; die "host locksql_plan failed"; }
+		cat hplan.json
+		hplan=$(jq -r .plan_id hplan.json)
+		[ -n "$hplan" ] && [ "$hplan" != null ] || die "host agent: no plan id"
+		hostmcp locksql_run "{\"profile\":\"e2e\",\"plan_id\":\"$hplan\"}" >hrun1.json || { cat hrun1.json; die "host locksql_run failed"; }
+		cat hrun1.json
+		[ "$(jq -r .status hrun1.json)" = pending ] || die "host agent: the run did not answer pending"
+		hticket=$(jq -r .ticket hrun1.json)
+		[ -n "$hticket" ] && [ "$hticket" != null ] || die "host agent: no ticket"
+		ok=""
+		for i in $(seq 1 30); do
+			tty 'y\n' "$lox" approve --once >approve3.out 2>&1 || true
+			if tr -d '\r' <approve3.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
+			sleep 2
+		done
+		cat approve3.out
+		[ -n "$ok" ] || die "the host agent's ticket was not approved"
+		tr -d '\r' <approve3.out | grep -q "$hticket" || die "the approved ticket is not the host agent's ($hticket)"
+		ok=""
+		for i in $(seq 1 30); do
+			if hostmcp locksql_run "{\"profile\":\"e2e\",\"ticket\":\"$hticket\"}" >hrun2.json && [ "$(jq -r '.rows | length' hrun2.json 2>/dev/null)" = 2 ]; then ok=1; break; fi
+			grep -q "no decision yet" hrun2.json || break
+			sleep 2
+		done
+		cat hrun2.json
+		[ -n "$ok" ] || die "the host agent's approved ticket did not run"
+		[ "$(jq -r '.rows[0][1]' hrun2.json)" = alpha ] || die "host agent: want label alpha in the first row"
+		decisions=3
+
+		say "a host agent: up.json or the socket volume tampered with, the launcher refuses (exit 2) and runs nothing"
+		# hostsql: the launcher's exit code and stderr of locksql status.
+		hostsql() { rc=0; LOCKSQL_IMAGE="$sqlimg" sh "$LOCKSQL_LAUNCHER" status --profile e2e >/dev/null 2>"$1" || rc=$?; cat "$1"; }
+		cp -p .lockfamily/up.json up.json.orig
+		# Another volume of the lock (its home, with its private key).
+		jq --arg v "${p}_db-home" '.locks.db.socket_volume = $v' up.json.orig >up.json.new
+		cat up.json.new >.lockfamily/up.json
+		hostsql tamper1.err
+		[ "$rc" = 2 ] && grep -q "socket volume ${p}_db-home is not lox up's ${p}_db-run" tamper1.err || die "the launcher took a tampered socket_volume (exit $rc)"
+		# Another workspace's.
+		jq '.workspace = "/elsewhere"' up.json.orig >up.json.new
+		cat up.json.new >.lockfamily/up.json
+		hostsql tamper2.err
+		[ "$rc" = 2 ] && grep -q "not this workspace's" tamper2.err || die "the launcher took another workspace's up.json (exit $rc)"
+		cat up.json.orig >.lockfamily/up.json
+		# Writable by the group.
+		chmod g+w .lockfamily/up.json
+		hostsql tamper3.err
+		chmod g-w .lockfamily/up.json
+		[ "$rc" = 2 ] && grep -q "others than you may write it" tamper3.err || die "the launcher took a group-writable up.json (exit $rc)"
+		# A container lox up did not start, mounting the socket volume
+		# read-write: it could listen on the socket's path.
+		docker create --name "$E2E_ID-squat-rw" -v "${p}_db-run:/r" alpine:3.22 true >/dev/null
+		hostsql tamper4.err
+		docker rm "$E2E_ID-squat-rw" >/dev/null
+		[ "$rc" = 2 ] && grep -q "is mounted read-write by container" tamper4.err || die "the launcher took a socket volume another container mounts read-write (exit $rc)"
+		cmp up.json.orig .lockfamily/up.json || die "up.json not restored"
+		hostsql restored.err
+		[ "$rc" = 0 ] || die "the launcher refuses lox up's own state once restored (exit $rc)"
+	fi
 fi
 "$lox" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lox audit verify failed"; }
 cat audit.out
