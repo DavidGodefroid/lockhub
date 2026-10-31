@@ -131,3 +131,14 @@ func loadConf(t *testing.T, conf string) *Config {
 	}
 	return c
 }
+
+func TestUnquoteKeepsPunctuation(t *testing.T) {
+	for _, m := range []string{"yaml: line 3: did not find expected ',' or ']'", "yaml: line 2: could not find expected ':'"} {
+		if got := unquote(m); got != m {
+			t.Errorf("%s became %s", m, got)
+		}
+	}
+	if got := unquote("x 'glsa_Canary' y"); strings.Contains(got, "Canary") {
+		t.Errorf("%s", got)
+	}
+}

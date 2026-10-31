@@ -17,8 +17,10 @@ var (
 	// yamlQuoted is what yaml.v3 quotes of the input in its other
 	// errors: 'anchor' or `value`.
 	yamlQuoted = regexp.MustCompile("(?s)'.*'|`.*`|\".*\"")
-	// yamlLong is a quoted span of more than one character (the parser
-	// quotes single punctuation, ':' or ']', which may stay).
+	// yamlOne is a quoted single character: the parser quotes
+	// punctuation, ':' or ']', which may stay.
+	yamlOne = regexp.MustCompile("'[^']'")
+	// yamlLong is a quoted span of more than one character.
 	yamlLong  = regexp.MustCompile("(?s)'[^']{2,}'|`[^`]{2,}`|\"[^\"]{2,}\"|'[^']*$|`[^`]*$|\"[^\"]*$")
 	yamlField = regexp.MustCompile(`^line (\d+): field (.*) not found in type (\S+)$`)
 	yamlDup   = regexp.MustCompile(`^line (\d+): mapping key .* already defined at line (\d+)$`)
@@ -212,7 +214,7 @@ func yamlFields(t reflect.Type, seen map[string]bool) map[string]bool {
 
 // unquote drops what msg quotes, unless it quotes single characters only.
 func unquote(msg string) string {
-	if !yamlLong.MatchString(msg) {
+	if !yamlLong.MatchString(yamlOne.ReplaceAllString(msg, "")) {
 		return msg
 	}
 	return yamlQuoted.ReplaceAllString(msg, "(value)")

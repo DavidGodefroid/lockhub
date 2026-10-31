@@ -136,7 +136,11 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *anchorsFile != "" && len(lockLogs) == 0 {
+	if lockLogs.err != nil {
+		fmt.Fprintln(stderr, "lock audit verify:", lockLogs.err)
+		return 2
+	}
+	if *anchorsFile != "" && len(lockLogs.logs) == 0 {
 		fmt.Fprintln(stderr, "lock audit verify: --anchors needs --lock")
 		return 2
 	}
@@ -173,10 +177,10 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	if r.Outboxed > 0 {
 		fmt.Fprintf(stdout, "%d audit record(s) of committed changes not yet in the log: the hub appends them at its next start or change\n", r.Outboxed)
 	}
-	if len(lockLogs) == 0 {
+	if len(lockLogs.logs) == 0 {
 		return 0
 	}
-	return verifyLocks(*data, pubs, lockLogs, *anchorsFile, stdout, stderr)
+	return verifyLocks(*data, pubs, lockLogs.logs, *anchorsFile, stdout, stderr)
 }
 
 // verifyLocks is lock audit verify --lock: each lock's chain, against its
@@ -232,22 +236,26 @@ func verifyLocks(data string, pub []ed25519.PublicKey, logs []verify.LockLog, an
 	return code
 }
 
-// lockLogFlag is the repeatable --lock INSTANCE=PATH.
-type lockLogFlag []verify.LockLog
+// lockLogFlag is the repeatable --lock INSTANCE=PATH. A bad value is
+// noted, not refused: the flag package would quote it in its error.
+type lockLogFlag struct {
+	logs []verify.LockLog
+	err  error
+}
 
 func (f *lockLogFlag) String() string { return "" }
 
 func (f *lockLogFlag) Set(v string) error {
 	inst, path, ok := strings.Cut(v, "=")
-	if !ok || !keys.ValidInstance(inst) || path == "" {
-		return errors.New("want INSTANCE=PATH")
+	switch {
+	case f.err != nil:
+	case !ok || !keys.ValidInstance(inst) || path == "":
+		f.err = errors.New("--lock: want INSTANCE=PATH")
+	case slices.ContainsFunc(f.logs, func(l verify.LockLog) bool { return l.Instance == inst }):
+		f.err = fmt.Errorf("--lock %s given twice", inst)
+	default:
+		f.logs = append(f.logs, verify.LockLog{Instance: inst, Path: path})
 	}
-	for _, l := range *f {
-		if l.Instance == inst {
-			return fmt.Errorf("--lock %s given twice", inst)
-		}
-	}
-	*f = append(*f, verify.LockLog{Instance: inst, Path: path})
 	return nil
 }
 
@@ -661,16 +669,22 @@ func tokenPrompt(stdin *os.File, stdout io.Writer) (func(string) (string, error)
 	}, nil
 }
 
-// int64sFlag is a repeatable integer flag.
-type int64sFlag []int64
+// int64sFlag is a repeatable integer flag. A bad value is noted, not
+// refused: the flag package would quote it (a token pasted there) in its
+// error.
+type int64sFlag struct {
+	ids []int64
+	bad bool
+}
 
-func (s *int64sFlag) String() string { return fmt.Sprint(*s) }
+func (s *int64sFlag) String() string { return fmt.Sprint(s.ids) }
 func (s *int64sFlag) Set(v string) error {
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return errors.New("want a decimal integer id")
+		s.bad = true
+		return nil
 	}
-	*s = append(*s, n)
+	s.ids = append(s.ids, n)
 	return nil
 }
 
@@ -685,13 +699,19 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 	if err != nil {
 		return 2
 	}
-	if len(pos) != 0 || len(chats) == 0 || len(chats) != len(froms) {
+	for name, f := range map[string]*int64sFlag{"--chat": &chats, "--from": &froms} {
+		if f.bad {
+			fmt.Fprintf(stderr, "lock add telegram: %s: want a decimal integer id\n", name)
+			return 2
+		}
+	}
+	if len(pos) != 0 || len(chats.ids) == 0 || len(chats.ids) != len(froms.ids) {
 		fmt.Fprintln(stderr, "usage: lock add telegram --chat ID --from ID [--chat ID --from ID …]")
 		return 2
 	}
 	var tg chatconf.Telegram
-	for i := range chats {
-		tg.Chats = append(tg.Chats, chatconf.TelegramChat{Chat: chats[i], From: froms[i]})
+	for i := range chats.ids {
+		tg.Chats = append(tg.Chats, chatconf.TelegramChat{Chat: chats.ids[i], From: froms.ids[i]})
 	}
 	if err := tg.Validate(); err != nil {
 		fmt.Fprintln(stderr, "lock add telegram:", err)

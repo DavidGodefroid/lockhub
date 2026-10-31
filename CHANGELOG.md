@@ -10,21 +10,26 @@ digest).
   an agent's output): they name the key, the list entry (`hub.facades[1]`)
   and the values allowed, never the value. Covers lockfamily.yaml
   (`hub.image`, `hub.facades`, `hub.routing`, `hub.mobile.origin`,
-  `require_device`, `allowed_uids`, the slack and telegram allowlists, and
-  instance names, and yaml errors, whose quoted value (a type error, an
-  explicit tag, an alias to an unknown anchor, an unknown or repeated key;
-  a key is shown only if lockfamily.yaml knows it, or as an instance name
-  under `locks` and `hub.routing`) is dropped for the line and
-  key path), chat.json, locks.json, routing.json, `lockhub serve
-  --mobile-origin` and `--facade-socket-mode`, `lock up --pin` and
-  `--rotate`, `lock add --version`, and `lock add telegram --chat`/`--from`
-  and `lock audit verify --lock` (Go's flag package still quotes a refused
-  flag value once). `lock add --hub-image` is checked before it is written
-  in a fresh lockfamily.yaml: it can no longer make other keys there.
+  `require_device`, `allowed_uids`, the slack and telegram allowlists,
+  instance names that are not valid), the yaml errors of `lock up`, `lock
+  add`, `lock import` and `--pin` (type errors, explicit tags, aliases to
+  an unknown anchor, unknown or repeated keys: the line and the key path
+  stay, and a key is shown only when lockfamily.yaml knows it or as a
+  valid instance name under `locks` and `hub.routing`), chat.json,
+  locks.json and routing.json, `lockhub serve --mobile-origin` and
+  `--facade-socket-mode`, `lock up --pin` and `--rotate`, `lock add
+  --version`, `lock add telegram --chat`/`--from` and `lock audit verify
+  --lock`. Still shown: valid instance names (a lowercase hex token pasted
+  as a lock's name is one), positional arguments, and a bad value of a
+  boolean flag (Go's flag package quotes it).
+- `lock add --hub-image` is checked before it is written in a fresh
+  lockfamily.yaml: it can no longer make other keys there.
 - The telegram facade no longer lets a bot token that is not a valid URL
   part (a `%`, a control character) reach the hub's logs in a URL parse
-  error; the lock keys warnings of `lock up` name an invalid instance name
-  no more.
+  error; the lock keys warnings of `lock up` no longer quote an invalid
+  instance name.
+- Error texts changed: those above, and the hub's refusal of an unknown
+  facade or risk class (`route`), which now lists the known ones.
 
 ## v0.2.5 (2026-10-31)
 
