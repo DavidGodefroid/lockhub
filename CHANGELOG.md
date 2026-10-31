@@ -5,6 +5,10 @@ digest).
 
 ## Unreleased
 
+## v0.2.6 (2026-10-31)
+
+Supported locks: as v0.2.5.
+
 - Configuration errors no longer echo the value given (a token pasted
   into the wrong key would have shown in the terminal, the hub's logs and
   an agent's output): they name the key, the list entry (`hub.facades[1]`)
