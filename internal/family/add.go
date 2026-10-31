@@ -33,13 +33,18 @@ func Add(path string, o AddOptions) error {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
 		}
+		// Checked before it is written in: nothing typed in --hub-image
+		// makes other keys, an alias or a tag.
+		if m := digestRef.FindStringSubmatch(o.HubImage); m == nil || m[1] != "lockhub" {
+			return errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
+		}
 		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
 		return err
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", path, scrubYAML(err, b))
 	}
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return fmt.Errorf("%s: not a lockfamily.yaml mapping", path)
@@ -107,7 +112,7 @@ func encodeValid(doc *yaml.Node) ([]byte, *Config, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(out.Bytes()))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
-		return nil, nil, err
+		return nil, nil, scrubYAML(err, out.Bytes())
 	}
 	if err := c.Validate(); err != nil {
 		return nil, nil, err

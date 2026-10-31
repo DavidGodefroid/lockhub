@@ -22,6 +22,7 @@ package route
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Facades.
@@ -54,6 +55,12 @@ var (
 	mobileRisks = []string{Read, ReadPII, Write, ProdWrite, PolicyLoosen}
 )
 
+// Facades returns the facade names.
+func Facades() []string { return slices.Clone(facades) }
+
+// Risks returns the risk class names.
+func Risks() []string { return slices.Clone(risks) }
+
 // KnownFacade reports whether f is a facade name.
 func KnownFacade(f string) bool { return slices.Contains(facades, f) }
 
@@ -78,9 +85,9 @@ type Rules struct {
 func (r Rules) Allowed(inst, f, risk string) error {
 	switch {
 	case !KnownFacade(f):
-		return fmt.Errorf("unknown facade %q", f)
+		return fmt.Errorf("unknown facade (want one of %s)", strings.Join(facades, ", "))
 	case !KnownRisk(risk):
-		return fmt.Errorf("unknown risk class %q", risk)
+		return fmt.Errorf("unknown risk class (want one of %s)", strings.Join(risks, ", "))
 	case f == Mobile && !slices.Contains(mobileRisks, risk):
 		return fmt.Errorf("%s tickets cannot be answered on %s; use the terminal or the deck", risk, f)
 	case !slices.Contains(local, f) && !slices.Contains(chatRisks, risk):

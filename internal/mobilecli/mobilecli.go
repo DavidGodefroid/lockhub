@@ -78,7 +78,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 func Pair(ctx context.Context, c *Client, name, origin, state string, in *bufio.Reader, out io.Writer) error {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
-		return fmt.Errorf("hub.mobile.origin %q: not an https origin", origin)
+		return errors.New("hub.mobile.origin: not an https origin")
 	}
 	var start mobile.PairStartResult
 	if err := c.do(ctx, http.MethodPost, "/v1/mobile/pairings", mobile.PairStart{Name: name}, &start); err != nil {

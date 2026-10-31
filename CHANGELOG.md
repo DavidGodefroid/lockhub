@@ -5,6 +5,32 @@ digest).
 
 ## Unreleased
 
+- Configuration errors no longer echo the value given (a token pasted
+  into the wrong key would have shown in the terminal, the hub's logs and
+  an agent's output): they name the key, the list entry (`hub.facades[1]`)
+  and the values allowed, never the value. Covers lockfamily.yaml
+  (`hub.image`, `hub.facades`, `hub.routing`, `hub.mobile.origin`,
+  `require_device`, `allowed_uids`, the slack and telegram allowlists,
+  instance names that are not valid), the yaml errors of `lock up`, `lock
+  add`, `lock import` and `--pin` (type errors, explicit tags, aliases to
+  an unknown anchor, unknown or repeated keys: the line and the key path
+  stay, and a key is shown only when lockfamily.yaml knows it or as a
+  valid instance name under `locks` and `hub.routing`), chat.json,
+  locks.json and routing.json, `lockhub serve --mobile-origin` and
+  `--facade-socket-mode`, `lock up --pin` and `--rotate`, `lock add
+  --version`, `lock add telegram --chat`/`--from` and `lock audit verify
+  --lock`. Still shown: valid instance names (a lowercase hex token pasted
+  as a lock's name is one), positional arguments, and a bad value of a
+  boolean flag (Go's flag package quotes it).
+- `lock add --hub-image` is checked before it is written in a fresh
+  lockfamily.yaml: it can no longer make other keys there.
+- The telegram facade no longer lets a bot token that is not a valid URL
+  part (a `%`, a control character) reach the hub's logs in a URL parse
+  error; the lock keys warnings of `lock up` no longer quote an invalid
+  instance name.
+- Error texts changed: those above, and the hub's refusal of an unknown
+  facade or risk class (`route`), which now lists the known ones.
+
 ## v0.2.5 (2026-10-31)
 
 Supported locks: as v0.2.4, plus locksql v0.11.2 (lockkit v0.7.1), the

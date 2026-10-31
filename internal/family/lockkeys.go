@@ -100,7 +100,11 @@ func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, err
 		for n, l := range f.Locks {
 			k, err := base64.StdEncoding.DecodeString(l.PublicKey)
 			if !keys.ValidInstance(n) || err != nil || len(k) != ed25519.PublicKeySize {
-				warns = append(warns, fmt.Sprintf("%s: instance %q has no valid name or key, left out", filepath.Join(LockKeysDir, e.Name()), n))
+				what := "an instance without a valid name"
+				if keys.ValidInstance(n) {
+					what = fmt.Sprintf("instance %q has no valid key", n)
+				}
+				warns = append(warns, fmt.Sprintf("%s: %s, left out", filepath.Join(LockKeysDir, e.Name()), what))
 				continue
 			}
 			// The canonical spelling: two spellings of one key are one key.

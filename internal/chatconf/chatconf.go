@@ -49,12 +49,12 @@ func (t *Telegram) Validate() error {
 		return errors.New("telegram.chats: list the chat and sender ids who may answer")
 	}
 	seen := map[TelegramChat]bool{}
-	for _, c := range t.Chats {
+	for i, c := range t.Chats {
 		if c.Chat == 0 || c.From <= 0 {
-			return fmt.Errorf("telegram.chats: want a chat id and a user id (from > 0), got %+v", c)
+			return fmt.Errorf("telegram.chats[%d]: want a chat id and a user id (from > 0)", i)
 		}
 		if seen[c] {
-			return fmt.Errorf("telegram.chats: %+v listed twice", c)
+			return fmt.Errorf("telegram.chats[%d]: listed twice", i)
 		}
 		seen[c] = true
 	}
@@ -77,17 +77,17 @@ var (
 // Validate checks the ids' shapes.
 func (s *Slack) Validate() error {
 	if !teamID.MatchString(s.Team) {
-		return fmt.Errorf("slack.team: want a workspace id (T…), got %q", s.Team)
+		return errors.New("slack.team: want a workspace id (T…)")
 	}
 	if !channelID.MatchString(s.Channel) {
-		return fmt.Errorf("slack.channel: want a channel id (C…), got %q", s.Channel)
+		return errors.New("slack.channel: want a channel id (C… or G…)")
 	}
 	if len(s.Users) == 0 {
 		return errors.New("slack.users: list the member ids (U…) who may answer")
 	}
-	for _, u := range s.Users {
+	for i, u := range s.Users {
 		if !userID.MatchString(u) {
-			return fmt.Errorf("slack.users: want member ids (U…), got %q", u)
+			return fmt.Errorf("slack.users[%d]: want a member id (U… or W…)", i)
 		}
 	}
 	return nil

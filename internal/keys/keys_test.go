@@ -115,3 +115,13 @@ func TestRetired(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLocksDoesNotEchoNames(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "locks.json")
+	if err := os.WriteFile(p, []byte(`{"locks":{"glsa_CanarySecretToken123":{"public_key":"x"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadLocks(p); err == nil || strings.Contains(err.Error(), "Canary") || !strings.Contains(err.Error(), "instance name") {
+		t.Errorf("%v", err)
+	}
+}
