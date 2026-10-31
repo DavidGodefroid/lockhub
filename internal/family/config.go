@@ -1,4 +1,4 @@
-// Package family is `lock up`: it reads a workspace's lockfamily.yaml,
+// Package family is `lox up`: it reads a workspace's lockfamily.yaml,
 // reviews every change of configuration or keys with the human, and runs
 // the hub and the declared locks with Docker Compose.
 package family
@@ -210,7 +210,7 @@ func (l Lock) AllowedUIDsFlag() string {
 
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
-// Types are the lock types lock up knows, and their image repositories.
+// Types are the lock types lox up knows, and their image repositories.
 var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
 
 var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-9a-f]{64}$`)
@@ -236,7 +236,7 @@ func readConfig(path string) ([]byte, error) {
 }
 
 // decode parses and validates a lockfamily.yaml; needLocks refuses one
-// without locks (lock up has nothing to run then).
+// without locks (lox up has nothing to run then).
 func decode(b []byte, path string, needLocks bool) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -270,7 +270,7 @@ func (c *Config) validate(needLocks bool) error {
 	}
 	switch on := slices.Contains(c.Hub.Facades, route.Slack); {
 	case on && c.Hub.Slack == nil:
-		return fmt.Errorf("hub.slack: the slack facade needs its allowlist (team, channel, users): run lock add slack")
+		return fmt.Errorf("hub.slack: the slack facade needs its allowlist (team, channel, users): run lox add slack")
 	case !on && c.Hub.Slack != nil:
 		return fmt.Errorf("hub.slack: set, but slack is not in hub.facades")
 	case on:
@@ -280,7 +280,7 @@ func (c *Config) validate(needLocks bool) error {
 	}
 	switch on := slices.Contains(c.Hub.Facades, route.Telegram); {
 	case on && c.Hub.Telegram == nil:
-		return fmt.Errorf("hub.telegram: the telegram facade needs its allowlist (chats): run lock add telegram")
+		return fmt.Errorf("hub.telegram: the telegram facade needs its allowlist (chats): run lox add telegram")
 	case !on && c.Hub.Telegram != nil:
 		return fmt.Errorf("hub.telegram: set, but telegram is not in hub.facades")
 	case on:

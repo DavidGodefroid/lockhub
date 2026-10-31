@@ -10,7 +10,7 @@ import (
 // Dir is the Lock Family's directory of a workspace. lea mounts it
 // read-only in its agents' containers (and creates it, owned by the
 // host user, before it does), so that no agent can change what the hub
-// and the locks trust: lockfamily.yaml lives there, and lock up writes
+// and the locks trust: lockfamily.yaml lives there, and lox up writes
 // there what lea needs to reach the locks (up.json).
 const Dir = ".lockfamily"
 
@@ -53,7 +53,7 @@ func LegacyWarning(file string) string {
 
 // Locate finds the lockfamily.yaml of the workspace dir:
 // dir/.lockfamily/lockfamily.yaml, else the legacy dir/lockfamily.yaml,
-// else (none yet) the first, where lock add and lock import create it.
+// else (none yet) the first, where lox add and lox import create it.
 func Locate(dir string) string {
 	// Once .lockfamily exists (lea makes it), only its lockfamily.yaml
 	// counts: one an agent plants at the root is never adopted.
@@ -90,7 +90,7 @@ func ensureDir(file string) error {
 }
 
 // SubProjects are the lockfamily.yaml files of the sub-projects of the
-// workspace ws (lock import's default): each */.lockfamily/lockfamily.yaml,
+// workspace ws (lox import's default): each */.lockfamily/lockfamily.yaml,
 // or a legacy */lockfamily.yaml, sorted.
 func SubProjects(ws string) []string {
 	dirs, _ := filepath.Glob(filepath.Join(ws, "*"))

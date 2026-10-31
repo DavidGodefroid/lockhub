@@ -15,7 +15,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
 
-// FacadeHandler returns the routes for local facades (`lock approve`, the
+// FacadeHandler returns the routes for local facades (`lox approve`, the
 // lea deck). It is served only on the host facade socket, never on the
 // hub network: whoever can open that socket is the human of this host.
 // The approver is recorded from the socket peer's uid.

@@ -90,7 +90,7 @@ func TestFlagErrorsDoNotEchoValues(t *testing.T) {
 	}
 }
 
-// TestWritersDoNotEchoValues: lock add, add slack, import and --pin
+// TestWritersDoNotEchoValues: lox add, add slack, import and --pin
 // parse the file too.
 func TestWritersDoNotEchoValues(t *testing.T) {
 	for _, c := range canaries {

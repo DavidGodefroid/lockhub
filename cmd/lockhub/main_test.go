@@ -195,7 +195,7 @@ func TestChatFacades(t *testing.T) {
 		t.Errorf("slack configured, not enabled: %v", err)
 	}
 	w("routing.json", `{"facades":["tty","slack"]}`, 0o600)
-	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lock add slack") {
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lox add slack") {
 		t.Errorf("missing app token: %v", err)
 	}
 	w("slack-app-token", "xapp-1", 0o600)
@@ -211,7 +211,7 @@ func TestChatFacades(t *testing.T) {
 		t.Errorf("telegram enabled without settings: %v", err)
 	}
 	w("chat.json", `{"slack":{"team":"T01","channel":"C02","users":["U03"]},"telegram":{"chats":[{"chat":42,"from":42}]}}`, 0o600)
-	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lock add telegram") {
+	if _, err := open(); err == nil || !strings.Contains(err.Error(), "lox add telegram") {
 		t.Errorf("missing telegram token: %v", err)
 	}
 	w("telegram-bot-token", "123:abc", 0o600)
@@ -436,7 +436,7 @@ func TestRotateKeyRefusesLiveHub(t *testing.T) {
 	}
 }
 
-// I9 (hub plan): a hub whose configuration (routing.json, as lock up
+// I9 (hub plan): a hub whose configuration (routing.json, as lox up
 // writes it) enables no chat facade reads no chat secret, runs no chat
 // facade, and routes no ticket to one. The secret files are planted
 // unreadable (directories): a read whose error reaches the caller fails
@@ -465,10 +465,10 @@ func TestI9NoChatFacadeNoSecretNoRoute(t *testing.T) {
 		fs, err := chatFacades(h, data, io.Discard)
 		return h, fs, err
 	}
-	// What lock up writes for a lockfamily.yaml without slack or telegram;
+	// What lox up writes for a lockfamily.yaml without slack or telegram;
 	// then a routing.json without "facades"; then none at all (a hub
-	// started without lock up, #61): no chat route in any case.
-	for name, routing := range map[string]string{"lock up": `{"facades":["tty","deck"]}`, "no facades": `{}`, "no routing.json": ""} {
+	// started without lox up, #61): no chat route in any case.
+	for name, routing := range map[string]string{"lox up": `{"facades":["tty","deck"]}`, "no facades": `{}`, "no routing.json": ""} {
 		os.Remove(filepath.Join(data, "routing.json"))
 		if routing != "" {
 			os.WriteFile(filepath.Join(data, "routing.json"), []byte(routing), 0o600)

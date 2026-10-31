@@ -28,7 +28,7 @@ func loadUnion(t *testing.T, dir string) map[string]string {
 	return out
 }
 
-// Each workspace's lock up keeps the others' lock keys: locks.json is the
+// Each workspace's lox up keeps the others' lock keys: locks.json is the
 // union of locks.d; an instance with two keys, or a key on two instances,
 // is left out with a warning naming both workspaces; a workspace with no
 // lock leaves the union.
@@ -90,7 +90,7 @@ func TestPinLockKeysUnion(t *testing.T) {
 }
 
 // Another workspace's file that does not parse, or a key that is not one,
-// is left out with a warning; the lock up goes on and the rest of the
+// is left out with a warning; the lox up goes on and the rest of the
 // union stands. Two spellings of one key are one key.
 func TestPinLockKeysBadFiles(t *testing.T) {
 	dir := t.TempDir()
@@ -158,8 +158,8 @@ func TestPinLockKeysConcurrent(t *testing.T) {
 	}
 }
 
-// Two workspaces under one user's facade keys: the second lock up keeps
-// the first one's lock keys in locks.json (lock approve and lea's deck
+// Two workspaces under one user's facade keys: the second lox up keeps
+// the first one's lock keys in locks.json (lox approve and lea's deck
 // check both workspaces' reveals).
 func TestLockUpTwoWorkspacesKeepEachOthersLockKeys(t *testing.T) {
 	root, _ := filepath.EvalSymlinks(t.TempDir())

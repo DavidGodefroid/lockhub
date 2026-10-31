@@ -19,7 +19,7 @@ import (
 const Owner = "DavidGodefroid"
 
 // Releases finds the image of a lock's (or the hub's) signed release, by
-// digest, for lock add: the newest release of its repository, its image
+// digest, for lox add: the newest release of its repository, its image
 // in ghcr.io, and the image's cosign signature by that release's own
 // workflow run for that very tag.
 type Releases struct {
@@ -102,7 +102,7 @@ func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error
 	return "", false, fmt.Errorf("%s has no published release", repo)
 }
 
-// MinRelease is each repository's first release that runs under lock up
+// MinRelease is each repository's first release that runs under lox up
 // (hub mode, lockkit v0.3.1: --hub-plain-http, hub-key).
 var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "lockmq": "v0.3.0", "lockfile": "v0.4.0", "lockhttp": "v0.3.0"}
 
@@ -111,10 +111,10 @@ var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "l
 // by repo's release workflow run for tag.
 func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) {
 	if !semverTag.MatchString(tag) {
-		return "", errors.New("release tag: want vX.Y.Z (lock add --version)")
+		return "", errors.New("release tag: want vX.Y.Z (lox add --version)")
 	}
 	if min, ok := MinRelease[repo]; ok && semverLess(tag, min) {
-		return "", fmt.Errorf("%s %s cannot run under lock up (no hub mode): %s or later is needed", repo, tag, min)
+		return "", fmt.Errorf("%s %s cannot run under lox up (no hub mode): %s or later is needed", repo, tag, min)
 	}
 	name := "davidgodefroid/" + repo
 	// The release workflows tag the image with the version without the v.

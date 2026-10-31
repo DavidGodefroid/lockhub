@@ -15,7 +15,7 @@ import (
 // Merge folds the lockfamily.yaml configurations of sub-workspaces into
 // base. An instance declared in several keeps its first declaration and
 // the strictest routing (the facades that may answer it are those every
-// declaration allows), and every difference is reported, for the human to read before lock up applies anything.
+// declaration allows), and every difference is reported, for the human to read before lox up applies anything.
 // The hub section comes from base; others are taken in the order of srcs.
 func Merge(base *Config, srcs []string, others map[string]*Config) (*Config, []string) {
 	out := *base
@@ -106,7 +106,7 @@ func sameSet(a, b []string) bool {
 // one at path, creating it from the first source's hub section when it
 // does not exist. The result is validated before it is written; comments
 // outside the locks and the routing are kept. It returns the notes to
-// show the human; lock up reviews the change before applying it.
+// show the human; lox up reviews the change before applying it.
 func Import(path string, srcs []string) ([]string, error) {
 	if len(srcs) == 0 {
 		return nil, errors.New("no lockfamily.yaml to import")
@@ -131,13 +131,13 @@ func Import(path string, srcs []string) ([]string, error) {
 	case fresh:
 		first := srcs[0]
 		h := others[first].Hub
-		// Chat facades need their own allowlist (lock add slack), the
+		// Chat facades need their own allowlist (lox add slack), the
 		// mobile facade its origin (hub.mobile): not carried over.
 		fs := slices.DeleteFunc(slices.Clone(h.Facades), func(f string) bool { return isChat(f) || f == route.Mobile })
 		base = &Config{Version: 1, Hub: Hub{Image: h.Image, Facades: fs}}
 		notes = append(notes, fmt.Sprintf("%s does not exist: hub section from %s", path, first))
 		if len(fs) != len(h.Facades) {
-			notes = append(notes, "chat and mobile facades not enabled here: run lock add slack / lock add telegram, or set hub.mobile, to enable them")
+			notes = append(notes, "chat and mobile facades not enabled here: run lox add slack / lox add telegram, or set hub.mobile, to enable them")
 		}
 		b = []byte("version: 1\nhub:\n  image: " + h.Image + "\n  facades: [" + strings.Join(fs, ", ") + "]\n")
 	case err != nil:

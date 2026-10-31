@@ -8,12 +8,12 @@ import (
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
-// UpFile is the name of what lock up tells lea, in the workspace's
+// UpFile is the name of what lox up tells lea, in the workspace's
 // .lockfamily directory (which lea's agents only read): how to reach the
 // locks it runs. Nothing in it is secret.
 const UpFile = "up.json"
 
-// UpState is lock up's contract with lea (version 1): lea mounts in its
+// UpState is lox up's contract with lea (version 1): lea mounts in its
 // agents' containers each lock's socket volume, after checking that the
 // volume carries compose's project label and the socket role (it never
 // mounts any other volume of a lock), on /run/<type>; for a lockhttp
@@ -30,7 +30,7 @@ type UpState struct {
 	// FacadeKeys are the host facades' keys the locks pin (lockkit
 	// ticket.FacadeSet, public keys only): lea's lockhttp gate writes
 	// them to a read-only file of its own and passes --facade-keys-file,
-	// as lock up does for the consoles it runs. Absent before the first
+	// as lox up does for the consoles it runs. Absent before the first
 	// apply.
 	FacadeKeys *ticket.FacadeSet `json:"facade_keys,omitempty"`
 	// LockHTTPGate 1: the locks below say what a lockhttp lock's gate
@@ -39,7 +39,7 @@ type UpState struct {
 	// from 1 on (before, a lock's devices: true would not reach it).
 	LockHTTPGate int `json:"lockhttp_gate"`
 	// Devices are the paired devices the locks with UpLock.Devices pin
-	// (lockkit ticket.DeviceSet, public keys only), as lock up mounts
+	// (lockkit ticket.DeviceSet, public keys only), as lox up mounts
 	// them for its consoles. Absent while no device is paired.
 	Devices *ticket.DeviceSet `json:"devices,omitempty"`
 	Locks   map[string]UpLock `json:"locks"`
@@ -63,7 +63,7 @@ type UpLock struct {
 	// Devices: the lock pins the paired devices (lockfamily.yaml
 	// locks.<name>.devices: true). For a lockhttp instance, lea's gate
 	// then pins UpState.Devices (--devices-file) and RequireDevice and
-	// SealClear, which come from hub.mobile, as lock up passes them to the
+	// SealClear, which come from hub.mobile, as lox up passes them to the
 	// consoles it runs (--require-device, --seal-clear). Without Devices,
 	// neither is set.
 	Devices       bool     `json:"devices,omitempty"`

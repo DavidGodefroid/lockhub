@@ -36,7 +36,7 @@ type Exec struct{ Stderr io.Writer }
 func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Nothing of the user's compose settings (COMPOSE_PROFILES would
-	// start the setup services, COMPOSE_FILE add a file): lock up passes
+	// start the setup services, COMPOSE_FILE add a file): lox up passes
 	// everything compose needs.
 	cmd.Env = slices.DeleteFunc(os.Environ(), func(e string) bool { return strings.HasPrefix(e, "COMPOSE_") })
 	if stdin != nil {
@@ -50,11 +50,11 @@ func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string
 	return out, nil
 }
 
-// Up is one `lock up`.
+// Up is one `lox up`.
 type Up struct {
 	// File is lockfamily.yaml; its directory is the workspace.
 	File string
-	// State is the host directory lock up keeps per workspace
+	// State is the host directory lox up keeps per workspace
 	// ($XDG_STATE_HOME/lockfamily/<id>), outside the projects directory.
 	State string
 	// Runtime is $XDG_RUNTIME_DIR (the facade socket's parent).
@@ -68,10 +68,10 @@ type Up struct {
 	In     *bufio.Reader
 	Out    io.Writer
 	DryRun bool
-	// Pin sets the hub image by digest (lock up --pin: a previous version
+	// Pin sets the hub image by digest (lox up --pin: a previous version
 	// restored); lockfamily.yaml takes it once applied.
 	Pin string
-	// Rotate names the keys lock up --rotate replaces: "hub", lock
+	// Rotate names the keys lox up --rotate replaces: "hub", lock
 	// instances, "all".
 	Rotate []string
 	// Now is the clock (nil: time.Now).
@@ -84,7 +84,7 @@ func Project(workspace string) string {
 	return "lockfamily-" + hex.EncodeToString(s[:4])
 }
 
-// Applied is what the last confirmed lock up applied.
+// Applied is what the last confirmed lox up applied.
 type Applied struct {
 	Fingerprint string   `json:"fingerprint"`
 	Summary     []string `json:"summary"`
@@ -177,7 +177,7 @@ func diff(old, new []string) []string {
 // ErrNotConfirmed is the human declining the review.
 var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
 
-// Do runs lock up.
+// Do runs lox up.
 func (u *Up) Do(ctx context.Context) error {
 	// Read once: what is reviewed is what a legacy file is adopted as.
 	raw, err := readConfig(u.File)
@@ -234,13 +234,13 @@ func (u *Up) Do(ctx context.Context) error {
 		gid, _ := strconv.Atoi(k.GID)
 		pr, err := ReadProfile(profileDir(ws, t), uid, gid)
 		if err != nil {
-			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lock up)", t, err, t)
+			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lox up)", t, err, t)
 		}
 		profiles[t] = pr
 	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
-	// Everything lock up writes and runs from lives in host-only
+	// Everything lox up writes and runs from lives in host-only
 	// directories it owns: never in the workspace, which agents can write.
 	facadeKeys := u.Facades
 	if facadeKeys == "" {
@@ -259,11 +259,11 @@ func (u *Up) Do(ctx context.Context) error {
 	stage := filepath.Join(hubData, "rotate")
 	attempted := filepath.Join(stage, "attempted")
 	if _, err := os.Stat(attempted); err == nil && !rot.hub {
-		return errors.New("a hub key rotation did not finish (the hub stays stopped): run lock up --rotate hub again to finish it")
+		return errors.New("a hub key rotation did not finish (the hub stays stopped): run lox up --rotate hub again to finish it")
 	}
 	if rot.any() {
 		if _, err := os.Stat(appliedPath); err != nil {
-			return errors.New("--rotate: nothing to rotate before the first lock up of this workspace")
+			return errors.New("--rotate: nothing to rotate before the first lox up of this workspace")
 		}
 	}
 	facadesPath := filepath.Join(u.State, FacadesFile)
@@ -286,9 +286,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
 			// Fail closed: without a device, the locks would take the hub's
 			// approvals of these risk classes again.
-			return fmt.Errorf("hub.mobile.require_device needs a paired device: lock up without it, lock mobile pair, then set it again")
+			return fmt.Errorf("hub.mobile.require_device needs a paired device: lox up without it, lox mobile pair, then set it again")
 		} else if m != nil && m.SealClear {
-			fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lock mobile pair, then lock up)")
+			fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lox mobile pair, then lox up)")
 		}
 	}
 	// The compose file goes to docker on stdin: nothing on disk to swap
@@ -335,7 +335,7 @@ func (u *Up) Do(ctx context.Context) error {
 		return fmt.Errorf("hub key %s: not a base64 Ed25519 public key", hubPubPath)
 	}
 	oldHP := hp
-	// Until the human's yes, a key made for --rotate is dropped when lock
+	// Until the human's yes, a key made for --rotate is dropped when lox
 	// up stops (declined, dry run, error): nothing of it is applied.
 	confirmed := false
 	defer func() {
@@ -361,7 +361,7 @@ func (u *Up) Do(ctx context.Context) error {
 				if err != nil {
 					why = fmt.Sprintf(" (%v)", err)
 				}
-				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lock up --pin a newer lockhub first", c.Hub.Image, why)
+				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lox up --pin a newer lockhub first", c.Hub.Image, why)
 			}
 			return fmt.Errorf("--pin: %s predates hub key rotation and would refuse this hub's audit log (its key was rotated)", c.Hub.Image)
 		}
@@ -457,13 +457,13 @@ func (u *Up) Do(ctx context.Context) error {
 		} else {
 			fmt.Fprintln(u.Out, "  The rotated locks restart.")
 		}
-		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lock attach).")
+		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lox attach).")
 	}
 	var prev Applied
 	b, err := os.ReadFile(appliedPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		fmt.Fprintln(u.Out, "First lock up of this workspace. Review the whole configuration:")
+		fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
 		for _, l := range sum {
 			fmt.Fprintln(u.Out, "  "+l)
 		}
@@ -475,10 +475,10 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	if prev.Fingerprint == fp {
-		fmt.Fprintln(u.Out, "configuration unchanged since the last lock up")
+		fmt.Fprintln(u.Out, "configuration unchanged since the last lox up")
 	} else {
 		if prev.Fingerprint != "" {
-			fmt.Fprintln(u.Out, "The configuration changed since the last lock up:")
+			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
 			for _, l := range diff(prev.Summary, sum) {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
@@ -620,12 +620,12 @@ func (u *Up) Do(ctx context.Context) error {
 	st := NewUpState(c, project, ws, hp, devices)
 	fs := facadeSet(facadePubs)
 	st.FacadeKeys = &fs
-	// The authoritative copy is lock up's own (host only); lea reads the
+	// The authoritative copy is lox up's own (host only); lea reads the
 	// workspace's, checks it is the user's and that no one else can write
 	// it, and checks every volume's labels with docker before mounting it.
 	sb, _ := json.MarshalIndent(st, "", "  ")
 	// A gate kind's devices are lea's gate's, read at its start: a phone
-	// paired or revoked reaches it only once lea restarts it (lock up
+	// paired or revoked reaches it only once lea restarts it (lox up
 	// recreates only its own consoles).
 	var devNotes []string
 	var prevUp UpState
@@ -651,7 +651,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
 	if rot.hub {
-		fmt.Fprintf(u.Out, "hub key rotated: lock audit verify takes --hub-key-file %s (every hub key, oldest first)\n", filepath.Join(u.State, HubKeysFile))
+		fmt.Fprintf(u.Out, "hub key rotated: lox audit verify takes --hub-key-file %s (every hub key, oldest first)\n", filepath.Join(u.State, HubKeysFile))
 	}
 	for _, n := range c.Instances() {
 		if Kinds[c.Locks[n].Type].Gate && (rot.hub || slices.Contains(rot.locks, n)) {
@@ -663,7 +663,7 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
 	for _, n := range c.Instances() {
-		fmt.Fprintf(u.Out, "  lock attach %s\n", n)
+		fmt.Fprintf(u.Out, "  lox attach %s\n", n)
 	}
 	return nil
 }
@@ -705,7 +705,7 @@ func Routes(c *Config) route.Rules {
 }
 
 // anyDevices reports whether a lock pins the paired devices: a console
-// lock up runs (--devices-file), or a lockhttp lock, whose gate (lea's,
+// lox up runs (--devices-file), or a lockhttp lock, whose gate (lea's,
 // from up.json's devices; lockhttp v0.4.0 or later) pins them, since its
 // console only serves the policy.
 func (c *Config) anyDevices() bool {

@@ -1,4 +1,4 @@
-// Package chatconf is chat.json, the chat facades' settings that lock up
+// Package chatconf is chat.json, the chat facades' settings that lox up
 // writes in the hub's data directory from lockfamily.yaml (the allowlist;
 // never a secret), and the secret files next to it.
 package chatconf
@@ -17,7 +17,7 @@ import (
 const File = "chat.json"
 
 // Secret files in the hub's data directory (0600, written by
-// `lock add slack`).
+// `lox add slack`).
 const (
 	SlackAppToken = "slack-app-token"
 	SlackBotToken = "slack-bot-token"

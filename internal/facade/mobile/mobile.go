@@ -2,7 +2,7 @@
 // human opens on their phone, served by the hub on a listener of its own
 // behind the human's TLS reverse proxy or tunnel.
 //
-// A phone becomes an approval device by pairing: `lock mobile pair` on the
+// A phone becomes an approval device by pairing: `lox mobile pair` on the
 // host asks for a one-time code, the phone enters it and registers a
 // WebAuthn credential and an X25519 sealing key, and the human confirms at
 // the host's terminal that both screens show the same fingerprint. Each
@@ -933,7 +933,7 @@ func (s *Service) decide(w http.ResponseWriter, r *http.Request) {
 // --- pairing and devices, host side (facade socket) -------------------
 
 // FacadeRoutes adds the host-side routes to the facade socket's mux:
-// pairing (lock mobile pair), listing and revoking devices.
+// pairing (lox mobile pair), listing and revoking devices.
 func (s *Service) FacadeRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/mobile/pairings", s.host(s.pairStart))
 	mux.HandleFunc("GET /v1/mobile/pairings/{id}", s.host(s.pairState))
@@ -986,7 +986,7 @@ func (s *Service) pairStart(w http.ResponseWriter, r *http.Request, _ string) {
 		return
 	}
 	if s.activeName(r.Context(), req.Name) {
-		writeErr(w, http.StatusConflict, "name", "an active device is named "+req.Name+": revoke it first (lock mobile revoke "+req.Name+")")
+		writeErr(w, http.StatusConflict, "name", "an active device is named "+req.Name+": revoke it first (lox mobile revoke "+req.Name+")")
 		return
 	}
 	now := s.c.Now()

@@ -1,4 +1,4 @@
-// Package mobilecli is `lock mobile`: pairing a phone with the hub's
+// Package mobilecli is `lox mobile`: pairing a phone with the hub's
 // mobile facade at the host's terminal, listing and revoking devices,
 // over the facade socket.
 //
@@ -51,12 +51,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("hub facade socket: %w (is the hub up, with the mobile facade? lock up)", err)
+		return fmt.Errorf("hub facade socket: %w (is the hub up, with the mobile facade? lox up)", err)
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound && strings.HasPrefix(path, "/v1/mobile/pairings") && method == http.MethodPost && !strings.Contains(path, "confirm") {
-		return errors.New("the hub runs no mobile facade: add mobile to hub.facades with hub.mobile.origin, then lock up")
+		return errors.New("the hub runs no mobile facade: add mobile to hub.facades with hub.mobile.origin, then lox up")
 	}
 	if resp.StatusCode/100 != 2 {
 		var e struct{ Error, Message string }
@@ -70,7 +70,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 }
 
 // Pair runs one pairing: the code, the wait for the phone, the human's
-// confirmation of the fingerprint, then the device pinned in state (lock
+// confirmation of the fingerprint, then the device pinned in state (lox
 // up's state directory of the workspace).
 //
 // origin is hub.mobile.origin from lockfamily.yaml: a device registered
@@ -105,7 +105,7 @@ func Pair(ctx context.Context, c *Client, name, origin, state string, in *bufio.
 		}
 	}
 	if st.State != "registered" || st.Device == nil {
-		return fmt.Errorf("pairing %s: start again with lock mobile pair", st.State)
+		return fmt.Errorf("pairing %s: start again with lox mobile pair", st.State)
 	}
 	// The fingerprint shown is computed here, from the record itself.
 	fp, err := st.Device.Fingerprint()
@@ -130,16 +130,16 @@ func Pair(ctx context.Context, c *Client, name, origin, state string, in *bufio.
 		return fmt.Errorf("the hub recorded an invalid device: %w", err)
 	}
 	if got, _ := devs[0].Fingerprint(); got != fp || devs[0].Origin != origin {
-		return errors.New("the hub recorded another device than the one confirmed: not pinned; revoke it with lock mobile revoke")
+		return errors.New("the hub recorded another device than the one confirmed: not pinned; revoke it with lox mobile revoke")
 	}
 	if err := family.PinDevice(state, devs[0]); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Paired %s. Run lock up to pin it at the locks: until then they refuse its decisions.\n", name)
+	fmt.Fprintf(out, "Paired %s. Run lox up to pin it at the locks: until then they refuse its decisions.\n", name)
 	return nil
 }
 
-// List prints the hub's devices and whether lock up pins them.
+// List prints the hub's devices and whether lox up pins them.
 func List(ctx context.Context, c *Client, state string, out io.Writer) error {
 	var ds []mobile.DeviceInfo
 	if err := c.do(ctx, http.MethodGet, "/v1/mobile/devices", nil, &ds); err != nil {
@@ -154,7 +154,7 @@ func List(ctx context.Context, c *Client, state string, out io.Writer) error {
 		isPinned[d.ID] = true
 	}
 	if len(ds) == 0 {
-		fmt.Fprintln(out, "no device paired (lock mobile pair --name NAME)")
+		fmt.Fprintln(out, "no device paired (lox mobile pair --name NAME)")
 	}
 	for _, d := range ds {
 		p := "not pinned at the locks"
@@ -195,7 +195,7 @@ func Revoke(ctx context.Context, c *Client, which, state string, out io.Writer) 
 	if _, err := family.UnpinDevice(state, id); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Revoked %s at the hub. Run lock up to unpin it at the locks.\n", id)
+	fmt.Fprintf(out, "Revoked %s at the hub. Run lox up to unpin it at the locks.\n", id)
 	return nil
 }
 

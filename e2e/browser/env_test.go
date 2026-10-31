@@ -125,7 +125,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(lockAPI.Close)
 	e.lockAPI = lockAPI.URL
 
-	// The facade socket, for lock mobile pair's side.
+	// The facade socket, for lox mobile pair's side.
 	sdir, _ := os.MkdirTemp("", "lhb")
 	t.Cleanup(func() { os.RemoveAll(sdir) })
 	ln, err := net.Listen("unix", filepath.Join(sdir, "f.sock"))
@@ -342,7 +342,7 @@ func (e *env) clearStatus() {
 
 func (e *env) status() string { return e.eval(`document.getElementById("status").textContent`) }
 
-// pair runs lock mobile pair --name name and types its code into the page
+// pair runs lox mobile pair --name name and types its code into the page
 // (a new code per attempt: one is used once); it returns the pairing, in
 // the registered state, and checks the page's fingerprint is the
 // terminal's.
@@ -391,7 +391,7 @@ func (e *env) decline(id string) {
 	}
 }
 
-// devices is lock mobile devices.
+// devices is lox mobile devices.
 func (e *env) devices() []mobile.DeviceInfo {
 	e.t.Helper()
 	var ds []mobile.DeviceInfo

@@ -25,8 +25,8 @@ jobs:
       - name: go test
         run: go test ./...
 
-  # The lock CLI as static archives for the Lock Family install.sh
-  # (lockfamily.dev/install.sh): lock_X.Y.Z_<os>_<arch>.tar.gz and
+  # The lox CLI as static archives for the Lock Family install.sh
+  # (lockfamily.dev/install.sh): lox_X.Y.Z_<os>_<arch>.tar.gz and
   # checksums.txt, signed with cosign (keyless, bundle
   # checksums.txt.sigstore.json) by this workflow run for this tag, the same
   # identity as the image. The GitHub release is created here.
@@ -53,12 +53,12 @@ jobs:
           sh scripts/release-cli.sh "$v" dist
           cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" \
-            --notes "See CHANGELOG.md. Install the lock CLI with https://lockfamily.dev/install.sh (cosign-verified)." \
-            dist/lock_"$v"_*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json
+            --notes "See CHANGELOG.md. Install the lox CLI with https://lockfamily.dev/install.sh (cosign-verified)." \
+            dist/lox_"$v"_*.tar.gz dist/checksums.txt dist/checksums.txt.sigstore.json
 
   # ghcr.io/davidgodefroid/lockhub:X.Y.Z, for amd64 and arm64, each built on
   # a native runner, then joined in one manifest and signed with cosign
-  # (keyless, by digest). `lock up` pins and verifies that digest.
+  # (keyless, by digest). `lox up` pins and verifies that digest.
   image:
     name: image ${{ matrix.arch }}
     needs: test

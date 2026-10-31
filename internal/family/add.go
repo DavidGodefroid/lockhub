@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AddOptions is one `lock add`.
+// AddOptions is one `lox add`.
 type AddOptions struct {
 	Type, Name string
 	// Image is the lock's image, pinned by digest.
@@ -25,7 +25,7 @@ type AddOptions struct {
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
 // comments and order, or creates the file. What would be written is
 // validated first: a refusal leaves the file as it was. Nothing is
-// started (run lock up, which reviews the change).
+// started (run lox up, which reviews the change).
 func Add(path string, o AddOptions) error {
 	b, err := os.ReadFile(path)
 	fresh := errors.Is(err, os.ErrNotExist)
@@ -73,7 +73,7 @@ func Add(path string, o AddOptions) error {
 	if !slices.Contains(c.Instances(), o.Name) {
 		return fmt.Errorf("lock %q not added", o.Name)
 	}
-	// Only now: a refused lock add leaves no empty .lockfamily behind.
+	// Only now: a refused lox add leaves no empty .lockfamily behind.
 	if fresh {
 		if err := ensureDir(path); err != nil {
 			return err

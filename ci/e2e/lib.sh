@@ -1,10 +1,10 @@
-# Helpers of the lock up end-to-end scripts (sourced). The scripts remove
+# Helpers of the lox up end-to-end scripts (sourced). The scripts remove
 # only what they create: their compose project, gate and network.
 set -eu
 E2E_ID=${E2E_ID:-e2e$$}
 say() { printf '\n=== %s\n' "$*"; }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-# tty INPUT CMD...: runs CMD at a pseudo-terminal (lock up, approve and
+# tty INPUT CMD...: runs CMD at a pseudo-terminal (lox up, approve and
 # attach refuse a pipe), INPUT typed in. Output goes to stdout.
 tty() {
 	in=$1
@@ -15,9 +15,9 @@ tty() {
 ws_project() { jq -r .project "$1/.lockfamily/up.json"; }
 # local_hub FILE: the hub of FILE (a lockfamily.yaml) becomes this
 # commit's build (E2E_HUB_IMAGE, from local-hub.sh): the released hub
-# lock add pins would not test this commit. The released ref is kept for
-# the cosign shim: lock up's check of the hub's signer identity runs, with
-# lock up's own flags, on that release.
+# lox add pins would not test this commit. The released ref is kept for
+# the cosign shim: lox up's check of the hub's signer identity runs, with
+# lox up's own flags, on that release.
 # Outside CI: export E2E_HUB_IMAGE and E2E_COSIGN_SHIM as ci/e2e/ci-hub.sh
 # does, with SHIM_DIR first in PATH.
 local_hub() {
@@ -36,9 +36,9 @@ hub_is_local() {
 	want=$(docker image inspect -f '{{.Id}}' "$E2E_HUB_IMAGE") || die "$E2E_HUB_IMAGE does not resolve"
 	[ "$got" = "$want" ] || die "the hub runs image $got, not this commit's build $want ($E2E_HUB_IMAGE)"
 }
-# hub_cosigned OUT: lock up (output OUT) asked cosign about this commit's
-# hub, and the shim had the released hub verified with lock up's flags.
+# hub_cosigned OUT: lox up (output OUT) asked cosign about this commit's
+# hub, and the shim had the released hub verified with lox up's flags.
 hub_cosigned() {
-	grep -qF "e2e: $E2E_HUB_IMAGE is this commit's hub build: cosign verifies the released hub $(cat "$E2E_COSIGN_SHIM/released") with lock up's flags" "$1" ||
-		die "lock up did not check the hub's signer identity (no cosign shim line in $1)"
+	grep -qF "e2e: $E2E_HUB_IMAGE is this commit's hub build: cosign verifies the released hub $(cat "$E2E_COSIGN_SHIM/released") with lox up's flags" "$1" ||
+		die "lox up did not check the hub's signer identity (no cosign shim line in $1)"
 }

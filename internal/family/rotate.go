@@ -17,15 +17,15 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
 
-// lock up --pin and --rotate (plan D.5): a previous hub image restored by
+// lox up --pin and --rotate (plan D.5): a previous hub image restored by
 // digest, and new hub or lock keys, both through the review.
 
 // HubKeysFile is every hub public key the workspace's hub was signed
-// with, oldest first, the current one last (state directory): what lock
+// with, oldest first, the current one last (state directory): what lox
 // audit verify --hub-key-file takes once the hub key was rotated.
 const HubKeysFile = "hub-keys.pub"
 
-// HubImagesFile lists the hub images lock up applied (state directory),
+// HubImagesFile lists the hub images lox up applied (state directory),
 // one "<RFC 3339 time> <image>" line each, oldest first: the digests
 // --pin can go back to.
 const HubImagesFile = "hub-images.log"
@@ -196,8 +196,8 @@ func recordHubImage(state, img string, now time.Time) error {
 
 // stageHubKey makes the new hub key in the hub's data directory (stage,
 // /var/lib/lockhub/rotate in the hub) and returns its public half. A key
-// staged by an earlier lock up --rotate hub is reused; done reports one
-// the hub took already (that lock up stopped after it), whose rotation
+// staged by an earlier lox up --rotate hub is reused; done reports one
+// the hub took already (that lox up stopped after it), whose rotation
 // only needs finishing.
 func (u *Up) stageHubKey(ctx context.Context, composeYAML []byte, compose func(...string) []string, stage string) (string, bool, error) {
 	if b, err := os.ReadFile(filepath.Join(stage, "hub.pub")); err == nil {
@@ -231,7 +231,7 @@ func (u *Up) stageHubKey(ctx context.Context, composeYAML []byte, compose func(.
 
 // stageLockKey makes lock n's new key in its own volume, under
 // rotateDir (the lock's hub-key with that home), and returns its public
-// half. A key left there by an earlier lock up is dropped first.
+// half. A key left there by an earlier lox up is dropped first.
 func (u *Up) stageLockKey(ctx context.Context, c *Config, n string, composeYAML []byte, compose func(...string) []string) (string, error) {
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "rotkey-"+n, "clear")...); err != nil {
 		return "", err
@@ -268,14 +268,14 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 			if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("stop", "lockhub")...); err != nil {
 				return fmt.Errorf("hub key rotation: stopping the hub: %w", err)
 			}
-			// Durable before the hub's key can change: a lock up after a
+			// Durable before the hub's key can change: a lox up after a
 			// crash then knows a rotation is under way.
 			if err := writeDurable(attempted, nil); err != nil {
 				return err
 			}
 			out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "rotate-key", "--data", "/var/lib/lockhub", "--new", "/var/lib/lockhub/rotate/hub.key")...)
 			if err != nil {
-				return fmt.Errorf("hub key rotation: %w (the hub stays stopped: run lock up --rotate hub again to finish it)", err)
+				return fmt.Errorf("hub key rotation: %w (the hub stays stopped: run lox up --rotate hub again to finish it)", err)
 			}
 			if strings.TrimSpace(string(out)) != hp {
 				return fmt.Errorf("hub key rotation: the hub took %q, not the reviewed key (the hub stays stopped)", strings.TrimSpace(string(out)))
@@ -293,7 +293,7 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 	}
 	for _, n := range rot.locks {
 		if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "rotkey-"+n, "swap")...); err != nil {
-			return fmt.Errorf("key of %s: %w (its old key stays: run lock up --rotate %s again)", n, err, n)
+			return fmt.Errorf("key of %s: %w (its old key stays: run lox up --rotate %s again)", n, err, n)
 		}
 	}
 	return nil

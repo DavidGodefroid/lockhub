@@ -82,7 +82,7 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if strings.Contains(line, " lockhub pubkey ") {
 		return []byte(f.keys["hub/held"] + "\n"), nil
 	}
-	// lock up --rotate: the new keys (rotate.go) are keys["<name>/new"].
+	// lox up --rotate: the new keys (rotate.go) are keys["<name>/new"].
 	if strings.Contains(line, " rotate-key ") || strings.Contains(line, "keygen --data /var/lib/lockhub/rotate") {
 		return []byte(f.keys["hub/new"] + "\n"), nil
 	}
@@ -150,7 +150,7 @@ func TestFirstRunReviewsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"First lock up", "lock crm-prod type locksql", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
+	for _, want := range []string{"First lox up", "lock crm-prod type locksql", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
 		}
@@ -204,7 +204,7 @@ func TestPreexistingDirStillFullReview(t *testing.T) {
 	os.MkdirAll(filepath.Join(filepath.Dir(w.file), ".lockfamily", "keys"), 0o755)
 	os.WriteFile(filepath.Join(filepath.Dir(w.file), ".lockfamily", "applied.json"), []byte(`{"fingerprint":"x"}`), 0o644)
 	out, _ := w.up("n\n", newFake())
-	if !strings.Contains(out, "First lock up") {
+	if !strings.Contains(out, "First lox up") {
 		t.Errorf("planted state trusted:\n%s", out)
 	}
 }
@@ -454,7 +454,7 @@ func TestConfigChangeRecreatesHub(t *testing.T) {
 	}
 }
 
-// lock up pins the host facades' keys in every lock: created once,
+// lox up pins the host facades' keys in every lock: created once,
 // private on the host, reviewed like any key, mounted read-only.
 func TestFacadeKeys(t *testing.T) {
 	// crm-prod opts in to reveals (its image takes --facade-keys-file);
@@ -525,7 +525,7 @@ func TestFacadeKeys(t *testing.T) {
 }
 
 // piiSet gives the workspace ws's locksql profile a PII rule set (the
-// console writes its first one in its profile, which lock up copies
+// console writes its first one in its profile, which lox up copies
 // read-only).
 func piiSet(ws string) {
 	os.MkdirAll(filepath.Join(ws, ".locksql", "pii"), 0o755)

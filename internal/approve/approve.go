@@ -1,4 +1,4 @@
-// Package approve is `lock approve`: the terminal facade. It follows the
+// Package approve is `lox approve`: the terminal facade. It follows the
 // hub's queue over the host facade socket, shows each ticket's screen (as
 // the lock masked it) and sends the human's answer.
 package approve
@@ -217,7 +217,7 @@ func RenderClear(s ticket.Screen) string {
 // lockCodes are the human words of a lock's answer codes (lockkit
 // hubclient Code*). A lock's own text never reaches the terminal.
 var lockCodes = map[string]string{
-	"facade_refused":  "the lock does not pin this terminal's facade key (run lock up)",
+	"facade_refused":  "the lock does not pin this terminal's facade key (run lox up)",
 	"not_pending":     "the ticket is no longer pending at the lock: nothing to reveal",
 	"no_clear_screen": "the lock kept no clear screen for this ticket",
 	"not_renewable":   "the lock cannot ask again for this ticket (not expired there, or gone)",
@@ -245,7 +245,7 @@ func Explain(err error) string {
 	return sanitize.Terminal(he.Message, false)
 }
 
-// Session is one `lock approve` run.
+// Session is one `lox approve` run.
 type Session struct {
 	C       *Client
 	In      *bufio.Reader
@@ -257,7 +257,7 @@ type Session struct {
 	// FacadeKey is this terminal's facade key (tty), which the locks pin:
 	// with it, Ctrl-O shows a ticket's clear values. Nil: no reveal.
 	FacadeKey ed25519.PrivateKey
-	// LockKeys are the lock keys pinned by lock up, by instance: a
+	// LockKeys are the lock keys pinned by lox up, by instance: a
 	// revealed screen opens only if its lock signed it.
 	LockKeys map[string]ed25519.PublicKey
 }
@@ -417,12 +417,12 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 // dropped once shown.
 func (s *Session) reveal(ctx context.Context, it api.QueueItem, t *ticket.Ticket) {
 	if s.FacadeKey == nil {
-		fmt.Fprintln(s.Out, "no facade key: clear values cannot be shown here (run lock up)")
+		fmt.Fprintln(s.Out, "no facade key: clear values cannot be shown here (run lox up)")
 		return
 	}
 	lockPub := s.LockKeys[it.Instance]
 	if lockPub == nil || ticket.KeyID(lockPub) != t.Source.KeyID {
-		fmt.Fprintln(s.Out, "this lock's key is not the one lock up pinned: clear values cannot be shown")
+		fmt.Fprintln(s.Out, "this lock's key is not the one lox up pinned: clear values cannot be shown")
 		return
 	}
 	rk, priv, err := ticket.NewRevealKey(s.FacadeKey, ticket.FacadeTTY, t, s.Now())

@@ -5,6 +5,20 @@ digest).
 
 ## Unreleased
 
+- The host CLI is renamed `lock` → `lox` (#79), without an alias: `lock`
+  is taken (GNOME's "Lock" in Nix, AUR, Guix and ALT, FreeBSD's
+  `lock(1)`) and too generic to be found. `lox up`, `lox add`, `lox
+  import`, `lox attach`, `lox doctor`, `lox approve`, `lox mobile`, `lox
+  audit verify`, `lox version` (prints `lox X.Y.Z`); every message, help
+  text and error prefix says `lox`. The release archives are
+  `lox_X.Y.Z_<os>_<arch>.tar.gz` holding `lox`; the hub image ships
+  `/usr/local/bin/lox`; the source is `cmd/lox`, and docs/lock-up.md is
+  now docs/lox-up.md. Unchanged: the `lockhub` binary, image and service,
+  `$XDG_STATE_HOME/lockfamily`, `.lockfamily/lockfamily.yaml`, up.json,
+  the compose project `lockfamily-<sha8>`, the `dev.lockfamily.*` labels
+  and `/run/lockfamily*`. The Lock Family install.sh must install `lox`
+  from this release on (lockfamily ships in lockstep).
+
 ## v0.2.7 (2026-10-31)
 
 Supported locks: as v0.2.6.

@@ -145,7 +145,7 @@ func newWorld(t *testing.T, routes route.Rules) *world {
 	go fsrv.Serve(ln)
 	t.Cleanup(func() { fsrv.Close() })
 
-	// The lock, as lock up runs it: it pins the hub key and the tty
+	// The lock, as lox up runs it: it pins the hub key and the tty
 	// facade's key (facades.json).
 	w.plans, err = plans.Open(filepath.Join(dir, "plans"), plans.WithClock(w.clk.now))
 	if err != nil {
@@ -323,7 +323,7 @@ func TestRevealRefusals(t *testing.T) {
 	rk, _, _ = ticket.NewRevealKey(other, ticket.FacadeDeck, tk, w.clk.now())
 	kb, _ = json.Marshal(rk)
 	_, err := c.Reveal(context.Background(), "crm", id, api.RevealRequest{Facade: "deck", Key: kb})
-	if approve.Explain(err) != "the lock does not pin this terminal's facade key (run lock up)" {
+	if approve.Explain(err) != "the lock does not pin this terminal's facade key (run lox up)" {
 		t.Errorf("unpinned deck key: %v (%s)", err, approve.Explain(err))
 	}
 }
