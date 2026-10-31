@@ -3,7 +3,7 @@ module github.com/DavidGodefroid/lockhub
 go 1.26.0
 
 require (
-	github.com/DavidGodefroid/lockkit v0.6.0
+	github.com/DavidGodefroid/lockkit v0.8.1
 	github.com/chromedp/cdproto v0.157.8
 	github.com/chromedp/chromedp v0.20.1
 	github.com/coder/websocket v1.8.14
@@ -34,6 +34,7 @@ require (
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
