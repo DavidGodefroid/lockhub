@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Answers a lock console's start-up questions through `lock attach`.
+"""Answers a lock console's start-up questions through `lox attach`.
 
     attach.py TIMEOUT FIRST UNTIL [PATTERN ANSWER]... -- CMD...
 
-CMD (lock attach NAME) runs at a pseudo-terminal. The question pending
+CMD (lox attach NAME) runs at a pseudo-terminal. The question pending
 when it attaches is not replayed (the consoles have no log): FIRST is
 typed once attached. Then each later PATTERN seen in the output is answered
 with ANSWER, once; once UNTIL is seen, the terminal is detached (Ctrl-P

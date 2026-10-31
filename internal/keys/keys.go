@@ -8,7 +8,7 @@
 //	retired-keys.pub  the hub keys used before hub.key, oldest first, one
 //	            base64 public key per line (lockhub rotate-key appends)
 //
-// lock up writes hub.key and locks.json; lockhub keygen writes hub.key
+// lox up writes hub.key and locks.json; lockhub keygen writes hub.key
 // alone.
 package keys
 

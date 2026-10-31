@@ -15,7 +15,7 @@ import (
 )
 
 // AddSlack enables the Slack facade: the allowlist goes to lockfamily.yaml
-// (reviewed at the next lock up), the tokens to 0600 files in the hub's
+// (reviewed at the next lox up), the tokens to 0600 files in the hub's
 // data directory under state, never in the workspace. Everything is
 // checked before anything is written.
 func AddSlack(path, state string, s chatconf.Slack, appToken, botToken string) error {

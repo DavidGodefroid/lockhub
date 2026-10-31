@@ -15,20 +15,20 @@ func TestRun(t *testing.T) {
 		out, err string
 	}{
 		{nil, 2, "", "Usage:"},
-		{[]string{"version"}, 0, "lock dev", ""},
-		{[]string{"help"}, 0, "lock approve", ""},
+		{[]string{"version"}, 0, "lox dev", ""},
+		{[]string{"help"}, 0, "lox approve", ""},
 		{[]string{"down"}, 2, "", `unknown command "down"`},
 		{[]string{"approve", "--bogus"}, 2, "", "flag provided but not defined"},
-		{[]string{"audit"}, 2, "", "usage: lock audit verify"},
+		{[]string{"audit"}, 2, "", "usage: lox audit verify"},
 		{[]string{"up", "--nope"}, 2, "", "flag provided but not defined"},
 		{[]string{"up"}, 1, "", "stdin is not one"},
 		{[]string{"up", "--dry-run", "extra"}, 2, "", "unexpected arguments"},
 		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
-		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lock add slack"},
+		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lox add slack"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "#gen", "--user", "U1x"}, 2, "", "slack.channel"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "C01", "--user", "U01"}, 1, "", "stdin is not one"},
-		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lock add telegram"},
+		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lox add telegram"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "0"}, 2, "", "telegram.chats"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "42"}, 1, "", "stdin is not one"},
 	} {
@@ -77,11 +77,11 @@ func TestAddImportDoctor(t *testing.T) {
 		code := run(args, devNull(t), &out, &errb)
 		return code, out.String(), errb.String()
 	}
-	if code, _, e := call("add", "locksql"); code != 2 || !strings.Contains(e, "usage: lock add") {
+	if code, _, e := call("add", "locksql"); code != 2 || !strings.Contains(e, "usage: lox add") {
 		t.Errorf("add without instance: %d %q", code, e)
 	}
 	// Flags after the positional arguments, as people type them.
-	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lock up") {
+	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lox up") {
 		t.Fatalf("add: %d %q %q", code, o, e)
 	}
 	if code, _, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg); code != 1 || !strings.Contains(e, "already declared") {
@@ -91,15 +91,15 @@ func TestAddImportDoctor(t *testing.T) {
 	os.MkdirAll(sub, 0o755)
 	os.WriteFile(filepath.Join(sub, "lockfamily.yaml"), []byte("version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  events:\n    type: lockmq\n    image: "+mqImg+"\n"), 0o644)
 	// No argument: every sub-project's lockfamily.yaml.
-	if code, o, e := call("import", "--file", file); code != 0 || !strings.Contains(o, "adds lock events") || !strings.Contains(o, "lock up") {
+	if code, o, e := call("import", "--file", file); code != 0 || !strings.Contains(o, "adds lock events") || !strings.Contains(o, "lox up") {
 		t.Fatalf("import: %d %q %q", code, o, e)
 	}
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "crm:") {
 		t.Errorf("file:\n%s", b)
 	}
-	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lock up") {
-		t.Errorf("doctor before lock up: %d %q", code, o)
+	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lox up") {
+		t.Errorf("doctor before lox up: %d %q", code, o)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "state", "lockfamily")); !os.IsNotExist(err) {
 		t.Error("doctor created the state directory")

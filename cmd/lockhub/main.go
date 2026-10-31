@@ -48,7 +48,7 @@ const usage = `lockhub: the Lock Family approval hub
 Usage:
   lockhub serve [--listen ADDR] [--data DIR] [--facade-socket PATH] [--mobile-listen ADDR --mobile-origin URL [--mobile-push]]
                                                serve the lock API (default :8443, /var/lib/lockhub),
-                                               the facade API on a unix socket (lock approve, lea deck)
+                                               the facade API on a unix socket (lox approve, lea deck)
                                                and the mobile web app on its own listener, reached through
                                                the human's TLS reverse proxy or tunnel at URL; with
                                                --mobile-push, payload-less Web Push to paired phones
@@ -172,7 +172,7 @@ func rotateKeyCmd(args []string, stdout, stderr io.Writer) int {
 }
 
 // rotateKey hands the hub of data over to the key at next. The hub must
-// be stopped (lock up stops it). The audit outbox is flushed into the log
+// be stopped (lox up stops it). The audit outbox is flushed into the log
 // under the current key, then a key_rotated record signed by both keys
 // ends the current key's part of the log, the current key is listed in
 // retired-keys.pub, and next replaces hub.key (next's file is moved). Run
@@ -392,7 +392,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	var extra []func(*http.ServeMux)
 	if *mobileListen != "" {
 		if !h.Routes().On(route.Mobile) {
-			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lock up)")
+			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lox up)")
 			return 1
 		}
 		mc := mobile.Config{Hub: h, Origin: *mobileOrigin, HubKeyID: ticket.KeyID(h.PublicKey()), Log: stderr}
@@ -419,7 +419,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		extra = append(extra, m.FacadeRoutes)
 		fmt.Fprintf(stderr, "lockhub %s: mobile facade on %s for %s (web push: %t)\n", version, *mobileListen, *mobileOrigin, m.Push())
 	} else if r := h.Routes(); slices.Contains(r.Enabled, route.Mobile) {
-		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lock up)")
+		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lox up)")
 		return 1
 	}
 	if *facadeSock != "" {
@@ -457,7 +457,7 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 	secret := func(name, what, add string) (string, error) {
 		v, err := chatconf.ReadSecret(filepath.Join(data, name))
 		if err != nil {
-			return "", fmt.Errorf("%s: %w (run lock add %s)", what, err, add)
+			return "", fmt.Errorf("%s: %w (run lox add %s)", what, err, add)
 		}
 		return v, nil
 	}
@@ -465,9 +465,9 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 		on := slices.Contains(h.Routes().Enabled, f)
 		switch {
 		case on && !configured:
-			return false, fmt.Errorf("%s is enabled but chat.json has no %s section (run lock up)", f, f)
+			return false, fmt.Errorf("%s is enabled but chat.json has no %s section (run lox up)", f, f)
 		case !on && configured:
-			return false, fmt.Errorf("chat.json configures %s but routing.json has it not enabled (run lock up)", f)
+			return false, fmt.Errorf("chat.json configures %s but routing.json has it not enabled (run lox up)", f)
 		}
 		return on, nil
 	}
@@ -505,7 +505,7 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 	return out, nil
 }
 
-// loadRoutes reads routing.json (written by lock up); missing: the zero
+// loadRoutes reads routing.json (written by lox up); missing: the zero
 // Rules, which route to the local facades only, never to a chat facade
 // (route.Rules.On).
 func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, error) {
@@ -535,7 +535,7 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 }
 
 // listenFacade serves the facade API on a unix socket created with mode
-// (0600 by default: the hub's own account only; lock up maps that account
+// (0600 by default: the hub's own account only; lox up maps that account
 // to the host user).
 func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...func(*http.ServeMux)) (*http.Server, error) {
 	m, err := strconv.ParseUint(mode, 8, 32)

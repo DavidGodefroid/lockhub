@@ -1,4 +1,4 @@
 /lockhub
-/lock
+/lox
 *.test
 __pycache__/

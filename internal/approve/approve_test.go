@@ -72,7 +72,7 @@ func (e env) push(t *testing.T, risk ticket.Risk, prod bool, body string) string
 	tk.Screen = ticket.Screen{Header: "query on crm", Body: []string{body}, Warnings: []string{"touches 3 rows"}}
 	if prod {
 		// lockkit's Retype is the console's "retype values" answer, never
-		// what the human types: lock approve asks for the instance name.
+		// what the human types: lox approve asks for the instance name.
 		tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	}
 	if err := tk.Sign(e.lock); err != nil {
@@ -214,7 +214,7 @@ func TestScreenShowsRenewalChanges(t *testing.T) {
 	}
 }
 
-// An expired ticket (lock approve renew) says how long ago, never a
+// An expired ticket (lox approve renew) says how long ago, never a
 // negative "expires in".
 func TestScreenExpiredTicket(t *testing.T) {
 	now := time.Now()

@@ -57,7 +57,7 @@ jobs:
       - name: compat
         run: sh scripts/compat.sh ${{ matrix.build }} ${{ matrix.fixtures }}
 
-  # The release archives of the lock CLI (scripts/release-cli.sh), as the
+  # The release archives of the lox CLI (scripts/release-cli.sh), as the
   # release workflow builds them, without signing: layout, version, and
   # reproducibility (two builds, same checksums).
   cli-archives:
@@ -75,9 +75,9 @@ jobs:
           cmp a/checksums.txt b/checksums.txt
           test "$(wc -l <a/checksums.txt)" = 4
           (cd a && sha256sum -c checksums.txt)
-          test "$(tar -tzf a/lock_0.0.0-ci_linux_amd64.tar.gz | sort | tr '\n' ' ')" = "LICENSE lock "
-          tar -xzf a/lock_0.0.0-ci_linux_amd64.tar.gz -C a lock
-          test "$(a/lock version)" = "lock 0.0.0-ci"
+          test "$(tar -tzf a/lox_0.0.0-ci_linux_amd64.tar.gz | sort | tr '\n' ' ')" = "LICENSE lox "
+          tar -xzf a/lox_0.0.0-ci_linux_amd64.tar.gz -C a lox
+          test "$(a/lox version)" = "lox 0.0.0-ci"
 
   image:
     name: image (build only)
@@ -89,4 +89,4 @@ jobs:
       - name: smoke
         run: |
           docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges lockhub:ci version
-          docker run --rm --read-only --cap-drop ALL --entrypoint lock lockhub:ci version
+          docker run --rm --read-only --cap-drop ALL --entrypoint lox lockhub:ci version

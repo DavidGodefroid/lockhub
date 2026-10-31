@@ -20,7 +20,7 @@ func (o *okRunner) Run(_ context.Context, _ []byte, name string, args ...string)
 	return nil, nil
 }
 
-// lock add without --image pins the lock's (and, for a new workspace,
+// lox add without --image pins the lock's (and, for a new workspace,
 // the hub's) latest release by digest, once cosign verified it, in
 // .lockfamily/lockfamily.yaml.
 func TestAddResolvesLatestSignedRelease(t *testing.T) {

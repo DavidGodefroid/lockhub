@@ -107,11 +107,11 @@ func TestPinnedDevicesAreReviewed(t *testing.T) {
 }
 
 // require_device without a paired device would let the locks take the
-// hub's approvals again: lock up refuses to apply it.
+// hub's approvals again: lox up refuses to apply it.
 func TestRequireDeviceWithoutDeviceFailsClosed(t *testing.T) {
 	w := newWS(t, mobileYAML())
 	if _, err := w.up("y\n", newFake()); err == nil || !strings.Contains(err.Error(), "require_device") {
-		t.Fatalf("lock up applied require_device with no device: %v", err)
+		t.Fatalf("lox up applied require_device with no device: %v", err)
 	}
 	a := devicetest.New("hub.example.net", "https://hub.example.net", "phone")
 	if err := PinDevice(filepath.Join(w.dir, "state"), a.Device()); err != nil {
@@ -224,7 +224,7 @@ func TestMobilePushComposeAndReview(t *testing.T) {
 	}
 }
 
-// up.json says what lea's lockhttp gate must pin, as lock up passes it to
+// up.json says what lea's lockhttp gate must pin, as lox up passes it to
 // the consoles it runs (deviceArgs): the paired devices, and for a lock
 // with devices: true, hub.mobile's require_device and seal_clear; the
 // profile the console serves (lockhub#40).
@@ -320,7 +320,7 @@ func TestLockhttpDevicesGoToTheGate(t *testing.T) {
 		t.Errorf("up.json does not give the gate its devices: %+v %+v", l, s.Devices)
 	}
 	// lea's gate reads them at its start: a second phone needs its
-	// restart, which lock up says; an unchanged set says nothing.
+	// restart, which lox up says; an unchanged set says nothing.
 	if err := PinDevice(state, devicetest.New("hub.example.net", "https://hub.example.net", "tablet").Device()); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestLockhttpDevicesGoToTheGate(t *testing.T) {
 	}
 }
 
-// refake is a new fake for a second lock up, with f's keys.
+// refake is a new fake for a second lox up, with f's keys.
 func refake(f *fake) *fake {
 	g := newFake()
 	for k, v := range f.keys {

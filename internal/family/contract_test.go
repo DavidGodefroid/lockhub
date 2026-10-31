@@ -26,7 +26,7 @@ import (
 
 const httpImg = "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
 
-// lock up tells lea, in .lockfamily/up.json, which volumes carry each
+// lox up tells lea, in .lockfamily/up.json, which volumes carry each
 // lock's socket; the volumes are labelled so that lea can check them.
 func TestUpWritesLeaContract(t *testing.T) {
 	conf := yamlConf("") + "  web:\n    type: lockhttp\n    image: " + httpImg + "\n"
@@ -165,7 +165,7 @@ func TestEnsureDirRefusesLink(t *testing.T) {
 	ws := t.TempDir()
 	os.Symlink(t.TempDir(), filepath.Join(ws, Dir))
 	if err := Add(filepath.Join(ws, Dir, FileName), AddOptions{Type: "locksql", Name: "crm", Image: sqlImg, HubImage: hubImg}); err == nil {
-		t.Error("lock add wrote through a .lockfamily link")
+		t.Error("lox add wrote through a .lockfamily link")
 	}
 }
 
@@ -250,7 +250,7 @@ func block(out, name string) string {
 }
 
 // The profile is a reviewed copy: its fingerprint is in the review, and
-// lock up copies exactly what it read into the profile volume.
+// lox up copies exactly what it read into the profile volume.
 func TestProfileReviewedAndCopied(t *testing.T) {
 	w := newWS(t, yamlConf(""))
 	ws := filepath.Dir(filepath.Dir(w.file))
@@ -331,7 +331,7 @@ func TestLockfamilyDirRefusals(t *testing.T) {
 	os.Mkdir(filepath.Join(ws, Dir), 0o777)
 	os.Chmod(filepath.Join(ws, Dir), 0o777)
 	if err := Add(filepath.Join(ws, Dir, FileName), AddOptions{Type: "locksql", Name: "crm", Image: sqlImg, HubImage: hubImg}); err == nil {
-		t.Error("lock add wrote in a world-writable .lockfamily")
+		t.Error("lox add wrote in a world-writable .lockfamily")
 	}
 	if err := writeUpState(ws, UpState{Version: 1}); err == nil {
 		t.Error("up.json written in a world-writable .lockfamily")
@@ -339,7 +339,7 @@ func TestLockfamilyDirRefusals(t *testing.T) {
 }
 
 // A link planted as .lockfamily/up.json is replaced, never written
-// through; lock up keeps its own copy in its state directory.
+// through; lox up keeps its own copy in its state directory.
 func TestUpStateLinkReplaced(t *testing.T) {
 	w := newWS(t, yamlConf(""))
 	ws := filepath.Dir(filepath.Dir(w.file))
@@ -362,7 +362,7 @@ func TestUpStateLinkReplaced(t *testing.T) {
 }
 
 // Reading goes through a handle on the profile directory: a directory
-// swapped for a link to elsewhere while lock up reads cannot lead out.
+// swapped for a link to elsewhere while lox up reads cannot lead out.
 func TestProfileSwapCannotEscape(t *testing.T) {
 	d := filepath.Join(t.TempDir(), ".locksql")
 	os.MkdirAll(filepath.Join(d, "s"), 0o755)
@@ -404,7 +404,7 @@ func TestComposeParses(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	// A locksql console keeps its PII rule sets in its home volume, the
-	// only place of it lock up leaves writable (lockhub#41); no other
+	// only place of it lox up leaves writable (lockhub#41); no other
 	// lock gets the variable.
 	for _, typ := range Types {
 		env := v.Services["lock-x-"+typ].Environment
@@ -505,8 +505,8 @@ func TestProfileCopyModesAndReview(t *testing.T) {
 	}
 }
 
-// A legacy root lockfamily.yaml: the first lock up adopts it (what was
-// reviewed) into .lockfamily; later lock up and lock add use that one.
+// A legacy root lockfamily.yaml: the first lox up adopts it (what was
+// reviewed) into .lockfamily; later lox up and lox add use that one.
 func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	ws := filepath.Join(dir, "projects")
@@ -543,10 +543,10 @@ func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
 	}
 	c, err := Load(nf)
 	if err != nil || len(c.Locks) != 3 {
-		t.Fatalf("lock add after adoption lost locks: %v %v", c, err)
+		t.Fatalf("lox add after adoption lost locks: %v %v", c, err)
 	}
 	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "+ lock more type lockmq") || strings.Contains(out, "- lock crm-prod type") {
-		t.Errorf("second lock up: %v\n%s", err, out)
+		t.Errorf("second lox up: %v\n%s", err, out)
 	}
 }
 

@@ -12,8 +12,8 @@ import (
 
 // chatTokens lists, for each enabled chat facade, the identity of each of
 // its secret files in hubData: a short hash of the token, never the
-// token. They are summary lines, so a rotated token (lock add slack or
-// telegram again) is a change lock up reviews and applies: the hub's
+// token. They are summary lines, so a rotated token (lox add slack or
+// telegram again) is a change lox up reviews and applies: the hub's
 // config label changes and compose recreates the hub, which reads its
 // tokens at start. Before, a rotation left the old token in use until
 // the hub restarted for another reason.
@@ -45,7 +45,7 @@ func secretFile(line string) (string, bool) {
 // tokenID identifies the token in path: the first 64 bits of a
 // domain-separated SHA-256 of it, which tells two tokens apart without
 // helping anyone guess one (a token has far more entropy than that).
-// A file missing or unusable is "missing": lock doctor says why.
+// A file missing or unusable is "missing": lox doctor says why.
 func tokenID(path string) string {
 	tok, err := chatconf.ReadSecret(path)
 	if err != nil {

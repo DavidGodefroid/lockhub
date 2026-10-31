@@ -1,18 +1,18 @@
 #!/bin/sh
-# Phase 2 of the hub plan, end to end: lock up on a lockfamily.yaml with a
+# Phase 2 of the hub plan, end to end: lox up on a lockfamily.yaml with a
 # database lock (locksql, on the job's Postgres) and LockHTTP starts the
-# stack; tickets are approved through the facade socket (lock approve, at a
+# stack; tickets are approved through the facade socket (lox approve, at a
 # terminal): a LockHTTP write held by the gate, and a locksql query an
 # agent's container plans and runs (pending, approved, run by ticket,
 # PII masked by the rule set the console wrote in its own volume at its
 # first start: lockhub#41); an agent can reach the hub neither
-# directly nor through the LockHTTP gate (I2); lock up's side of I11: a
+# directly nor through the LockHTTP gate (I2); lox up's side of I11: a
 # legacy root lockfamily.yaml is copied into .lockfamily, a planted root file
 # is never read once .lockfamily exists, a .lockfamily others can write
 # or that is a link is refused. The hub is this commit's build
-# (E2E_HUB_IMAGE, ci/e2e/local-hub.sh), not the release lock add pins.
+# (E2E_HUB_IMAGE, ci/e2e/local-hub.sh), not the release lox add pins.
 #
-#   ci/e2e/phase2.sh LOCK_BIN
+#   ci/e2e/phase2.sh LOX_BIN
 #
 # Locks: LOCKS="name:type ..." (default: locksql db, LockHTTP web and api);
 # a lockhttp named "web" is the gate, "api" the control gate without
@@ -26,14 +26,14 @@
 # routes a hub ticket only to the deck of the lea container whose agent
 # asked (internal/daemon/hubdeck.go: hubDecide), so a deck approval needs
 # lea's daemon and an agent container, which lea's own tests cover. The
-# deck and lock approve speak the same facade socket API (queue, decide),
-# which lock approve at a pty exercises here.
+# deck and lox approve speak the same facade socket API (queue, decide),
+# which lox approve at a pty exercises here.
 . "$(dirname "$0")/lib.sh"
-lock=$1
+lox=$1
 LOCKS=${LOCKS:-"db:locksql web:lockhttp api:lockhttp"}
 here=$(cd "$(dirname "$0")" && pwd)
 case " $LOCKS " in *" db:locksql "*) sql=1 ;; *) sql="" ;; esac
-# Canonical (lock up prints resolved paths; a TMPDIR may be a link).
+# Canonical (lox up prints resolved paths; a TMPDIR may be a link).
 ws=$(realpath "$(mktemp -d)")/projects
 mkdir -p "$ws"
 cd "$ws"
@@ -65,9 +65,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-say "lock add: each lock pinned to its latest signed release"
+say "lox add: each lock pinned to its latest signed release"
 for l in $LOCKS; do
-	"$lock" add "${l#*:}" "${l%%:*}"
+	"$lox" add "${l#*:}" "${l%%:*}"
 done
 local_hub .lockfamily/lockfamily.yaml
 # lea's agents run as the host user's uid, which has no account in the
@@ -120,7 +120,7 @@ host = "lockhub"
 ports = [80, 443, 8443]
 read = true
 
-# Another name of the hub on its network (an alias lock up never made):
+# Another name of the hub on its network (an alias lox up never made):
 # only the hub-network rule (--hub-net) can refuse it.
 [[profiles.default.internal_hosts]]
 host = "e2ehubalias"
@@ -131,11 +131,11 @@ chmod 0644 .lockhttp/config.toml
 # A subdirectory and an owner-only file: the copy keeps both.
 mkdir -p .lockhttp/notes && chmod 0700 .lockhttp/notes && echo note >.lockhttp/notes/n.txt && chmod 0600 .lockhttp/notes/n.txt
 
-say "lock up (review at a terminal)"
-tty 'y\n' "$lock" up >up.out 2>&1 || { cat up.out; die "lock up failed"; }
+say "lox up (review at a terminal)"
+tty 'y\n' "$lox" up >up.out 2>&1 || { cat up.out; die "lox up failed"; }
 cat up.out
-grep -q "up: project " up.out || die "lock up did not finish"
-grep -q "First lock up of this workspace" up.out || die "no full review on the first lock up"
+grep -q "up: project " up.out || die "lox up did not finish"
+grep -q "First lox up of this workspace" up.out || die "no full review on the first lox up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
 [ -z "$sql" ] || grep -q "  profile locksql " up.out || die "the locksql profile is not in the review"
 [ -z "$sql" ] || grep -q "lock db serves uids 4242 besides its clients group" up.out || die "the db lock's allowed_uids is not in the review"
@@ -143,9 +143,9 @@ say "I11: the legacy root file is read with a warning and copied, exactly as rev
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"
 grep -qF "lockfamily.yaml now lives in $ws/.lockfamily/lockfamily.yaml (lea's agents only read it there); remove $ws/lockfamily.yaml" up.out || die "the legacy file was not copied into .lockfamily"
 cmp reviewed.yaml .lockfamily/lockfamily.yaml || die ".lockfamily/lockfamily.yaml is not what was reviewed"
-cmp reviewed.yaml lockfamily.yaml || die "lock up changed the root lockfamily.yaml (it copies, the human removes)"
+cmp reviewed.yaml lockfamily.yaml || die "lox up changed the root lockfamily.yaml (it copies, the human removes)"
 rm lockfamily.yaml
-say "lock up checked the hub's signer identity (on the release lock add pinned)"
+say "lox up checked the hub's signer identity (on the release lox add pinned)"
 hub_cosigned up.out
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
@@ -156,20 +156,20 @@ jq -e '.lockhttp_gate == 1 and (has("devices") | not) and ([.locks[] | select(.d
 	die "up.json does not say what the lockhttp gate pins (lockhttp_gate 1)"
 hub_is_local "$p"
 
-say "each console asks its policy at its terminal: lock attach"
+say "each console asks its policy at its terminal: lox attach"
 for l in $LOCKS; do
 	n=${l%%:*}
 	case "${l#*:}" in
 	locksql)
 		# y to the policy, the password, a to the PII proposal (the first
 		# rule set, written in the console's volume), then detach.
-		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for ro@' 'ro-e2e-only\n' 'Accept all [a]' 'a\n' -- "$lock" attach "$n" >attach.out 2>&1 ||
+		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for ro@' 'ro-e2e-only\n' 'Accept all [a]' 'a\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
 			{ cat attach.out; die "the console of $n did not start listening"; }
 		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 		grep -q 'Accept all \[a\]' attach.out || { cat attach.out; die "no PII proposal at the first start of $n: the email column must be proposed"; }
 		;;
 	*)
-		python3 "$here/attach.py" 60 'y\n' '(approved policy)' -- "$lock" attach "$n" >attach.out 2>&1 ||
+		python3 "$here/attach.py" 60 'y\n' '(approved policy)' -- "$lox" attach "$n" >attach.out 2>&1 ||
 			{ cat attach.out; die "the console of $n did not approve its policy"; }
 		;;
 	esac
@@ -277,7 +277,7 @@ cpid=$!
 ok=""
 for i in $(seq 1 30); do
 	sleep 2
-	tty 'y\n' "$lock" approve --once >approve.out 2>&1 || true
+	tty 'y\n' "$lox" approve --once >approve.out 2>&1 || true
 	if tr -d '\r' <approve.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
 done
 cat approve.out
@@ -335,7 +335,7 @@ if [ -n "$sql" ]; then
 	asagent run --profile e2e --json "$ticket" >early.json 2>&1 && { cat early.json; die "the ticket ran before a decision"; }
 	ok=""
 	for i in $(seq 1 30); do
-		tty 'y\n' "$lock" approve --once >approve2.out 2>&1 || true
+		tty 'y\n' "$lox" approve --once >approve2.out 2>&1 || true
 		if tr -d '\r' <approve2.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
 		sleep 2
 	done
@@ -365,7 +365,7 @@ if [ -n "$sql" ]; then
 		die "the profile copy holds a rule set (it is read-only: the console's set belongs in its volume)"
 	decisions=2
 fi
-"$lock" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lock audit verify failed"; }
+"$lox" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lox audit verify failed"; }
 cat audit.out
 grep -q " $decisions decisions signed" audit.out || die "the approvals are not in the hub's audit (want $decisions)"
 
@@ -374,19 +374,19 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$ws:$ws" -v "$ws/.lockfamily:$ws/
 	sh -c "echo x >>'$ws/.lockfamily/lockfamily.yaml'" 2>err.out && die "an agent wrote lockfamily.yaml"
 grep -qi 'read-only' err.out || die "not EROFS: $(cat err.out)"
 say "I11: a change of lockfamily.yaml is reviewed, not applied silently; a planted root file is never read"
-"$lock" add lockhttp extra >/dev/null
+"$lox" add lockhttp extra >/dev/null
 # An agent plants a root lockfamily.yaml with a lock of its own.
 { cat .lockfamily/lockfamily.yaml; printf '  planted:\n    type: lockhttp\n    image: %s\n' "$img"; } >lockfamily.yaml
-tty 'n\n' "$lock" up >up2.out 2>&1 || true
+tty 'n\n' "$lox" up >up2.out 2>&1 || true
 cat up2.out | tr -d '\r' | grep -v 'Pull\|Running\|Creat' | tail -20
 grep -q "+ lock extra" up2.out || die "the change was not shown"
 grep -q 'not applied' up2.out || die "the change was applied without a yes"
-grep -q planted up2.out && die "lock up read the planted root lockfamily.yaml"
+grep -q planted up2.out && die "lox up read the planted root lockfamily.yaml"
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps -a --services | grep -qx lock-extra && die "lock-extra exists without a yes"
 grep -q 'lock-extra' "$state/compose.yaml" && die "lock-extra was applied without a yes"
-say "lock up again, confirmed: the setup services run again on volumes that are the console's now (copy re-owned by the console, modes kept)"
-tty 'y\n' "$lock" up >up3.out 2>&1 || { tail -20 up3.out; die "a second lock up failed"; }
-grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lock up did not finish"; }
+say "lox up again, confirmed: the setup services run again on volumes that are the console's now (copy re-owned by the console, modes kept)"
+tty 'y\n' "$lox" up >up3.out 2>&1 || { tail -20 up3.out; die "a second lox up failed"; }
+grep -q "up: project " up3.out || { tail -20 up3.out; die "a second lox up did not finish"; }
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps -a --services | grep -qx lock-extra || die "lock-extra not applied after the yes"
 grep -q planted up3.out "$state/compose.yaml" && die "the planted root lockfamily.yaml was applied"
 hub_is_local "$p"
@@ -394,19 +394,19 @@ hub_cosigned up3.out
 docker run --rm --network none -v "${p}_profile-lockhttp:/p:ro" alpine:3.22 stat -c '%n %u:%g %a' /p/notes /p/notes/n.txt | tee st.out
 grep -q '/p/notes 10021:10020 700' st.out && grep -q '/p/notes/n.txt 10021:10020 600' st.out ||
 	die "the profile copy is not the console's, or lost its owner-only modes"
-say "I11: lock up refuses a .lockfamily others can write, or a link"
+say "I11: lox up refuses a .lockfamily others can write, or a link"
 chmod g+w .lockfamily
-rc=0; tty 'y\n' "$lock" up >up4.out 2>&1 || rc=$?
+rc=0; tty 'y\n' "$lox" up >up4.out 2>&1 || rc=$?
 tr -d '\r' <up4.out | tail -3
-[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: mode 0775: writable by others than you" up4.out || die "lock up took a group-writable .lockfamily (exit $rc)"
-grep -q "up: project " up4.out && die "lock up applied a group-writable .lockfamily"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: mode 0775: writable by others than you" up4.out || die "lox up took a group-writable .lockfamily (exit $rc)"
+grep -q "up: project " up4.out && die "lox up applied a group-writable .lockfamily"
 chmod g-w .lockfamily
 mv .lockfamily lf-real
 ln -s lf-real .lockfamily
-rc=0; tty 'y\n' "$lock" up >up5.out 2>&1 || rc=$?
+rc=0; tty 'y\n' "$lox" up >up5.out 2>&1 || rc=$?
 tr -d '\r' <up5.out | tail -3
-[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: not a directory (a link?)" up5.out || die "lock up took a .lockfamily that is a link (exit $rc)"
-grep -q "up: project " up5.out && die "lock up applied a .lockfamily that is a link"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: not a directory (a link?)" up5.out || die "lox up took a .lockfamily that is a link (exit $rc)"
+grep -q "up: project " up5.out && die "lox up applied a .lockfamily that is a link"
 rm .lockfamily
 mv lf-real .lockfamily
 echo "phase 2: OK"

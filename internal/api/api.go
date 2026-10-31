@@ -48,7 +48,7 @@ type Hello struct {
 	// ticket.KeyID). Both are absent when no hub is configured. Unsigned,
 	// like the whole hello, so anyone on the path can change them: for
 	// display and diagnosing a mismatch only, never to choose or pin a
-	// hub key (a lock trusts only the key lock up pinned for it).
+	// hub key (a lock trusts only the key lox up pinned for it).
 	TicketVersions []int  `json:"ticket_versions,omitempty"`
 	HubKeyID       string `json:"hub_key_id,omitempty"`
 }

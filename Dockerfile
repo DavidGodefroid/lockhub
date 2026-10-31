@@ -1,5 +1,5 @@
 # lockhub in Docker: the hub runs in this image (lockhub serve), and the
-# `lock` CLI is shipped in it too, so a release is one signed image.
+# `lox` CLI is shipped in it too, so a release is one signed image.
 #
 #   lockhub (uid 10040)  the hub account; its state lives in /var/lib/lockhub
 #
@@ -19,14 +19,14 @@ COPY . .
 # VERSION: the release version without its "v" (0.1.0).
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/lockhub ./cmd/lockhub \
- && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/lock ./cmd/lock
+ && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/lox ./cmd/lox
 
 FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 RUN addgroup -S -g 10040 lockhub \
  && adduser -S -D -H -u 10040 -G lockhub -s /sbin/nologin -g "lockhub" lockhub \
  && install -d -m 0700 -o lockhub -g lockhub /var/lib/lockhub
 COPY --from=build --chown=root:root --chmod=0755 /out/lockhub /usr/local/bin/lockhub
-COPY --from=build --chown=root:root --chmod=0755 /out/lock /usr/local/bin/lock
+COPY --from=build --chown=root:root --chmod=0755 /out/lox /usr/local/bin/lox
 
 # A named volume takes this directory's owner and mode on first use.
 VOLUME ["/var/lib/lockhub"]

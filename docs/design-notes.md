@@ -18,14 +18,14 @@ reordered breaks the chain (`audit.Verify`).
 The chain alone cannot see two things: records cut from the end, and a log
 stripped of every `prev_hash` (which reads as a legacy log). A signed
 genesis would not catch either one. What catches them is an anchor kept
-outside the log: `lock audit verify --data DIR --hub-key-file FILE --lock
+outside the log: `lox audit verify --data DIR --hub-key-file FILE --lock
 INSTANCE=PATH --anchors FILE` keeps, for each lock log that verifies, the
 number of its last chained line and that line's hash (`Summary.Anchor()`)
 in a host-only file (0600). The anchor only moves forward on a log that
 verifies. On the next run it checks the log with
 `audit.VerifyAnchored`. That refuses a log that ends before its anchor,
 whose anchored line was stripped of its chain, or whose anchored line hashes
-differently. `lock audit verify --lock` also checks every record of a hub
+differently. `lox audit verify --lock` also checks every record of a hub
 decision in the lock's log against the decision the hub signed for that
 instance and ticket (outcome, approver, facade, and `hub_sig` when the
 record has it). The hub's own log is signed record by record.
@@ -38,7 +38,7 @@ cross-check: a cut record of a hub decision shows in its count of hub
 decisions the log has no record of, which is reported, not failed (a lock
 may not have acted on a decision yet). A lock log never verified with
 `--anchors` has no anchor at all: only the chain and the cross-check
-apply. Running `lock audit verify … --lock … --anchors …` often narrows
+apply. Running `lox audit verify … --lock … --anchors …` often narrows
 the unanchored window.
 
 ## Compatibility matrix: built on the pinned lockkit only

@@ -1,4 +1,4 @@
-// Package verify is `lock audit verify`: it checks the hub's audit chain,
+// Package verify is `lox audit verify`: it checks the hub's audit chain,
 // every decision's signature, and that the database and the audit log
 // tell the same story (so that a cut tail of the log is seen too).
 package verify
@@ -40,7 +40,7 @@ func (r *Report) bad(format string, a ...any) {
 }
 
 // Hub verifies the hub data directory dir against the hub's public keys:
-// every key it was signed with, oldest first (lock up --rotate hub
+// every key it was signed with, oldest first (lox up --rotate hub
 // adds one), the current one last. It may run against a running hub: the
 // database is read as of one instant first, then the log, which by then
 // holds every record committed before that instant (or the outbox does).

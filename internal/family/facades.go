@@ -27,12 +27,12 @@ const (
 	// next to the devices file (/run/lockfamily is the hub key's volume).
 	LockFacadesPath = "/run/lockfamily-facades/facades.json"
 	// LockKeysFile, in the facade keys directory, lists the lock keys
-	// lock up pinned ({"locks": {"<instance>": {"public_key": "…"}}}),
+	// lox up pinned ({"locks": {"<instance>": {"public_key": "…"}}}),
 	// for host facades to verify a lock's signed answers.
 	LockKeysFile = "locks.json"
 	// LockKeysDir, in the facade keys directory, holds the lock keys
-	// each workspace's lock up pinned (<project>.json, same format):
-	// LockKeysFile is their union, so a lock up in one workspace keeps the
+	// each workspace's lox up pinned (<project>.json, same format):
+	// LockKeysFile is their union, so a lox up in one workspace keeps the
 	// keys of the others (one hub per user, many workspaces).
 	LockKeysDir = "locks.d"
 )

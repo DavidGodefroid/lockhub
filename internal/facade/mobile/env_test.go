@@ -103,7 +103,7 @@ func newEnvWith(t *testing.T, routes route.Rules, vapid *ecdsa.PrivateKey) *env 
 	return e
 }
 
-// host calls the facade socket as `lock mobile` does.
+// host calls the facade socket as `lox mobile` does.
 func (e *env) host(method, path string, in, out any) int {
 	e.t.Helper()
 	var body io.Reader
@@ -130,8 +130,8 @@ func (e *env) phone(name string) *mobiletest.Phone {
 	return mobiletest.New(e.mobile.URL, origin, rpID, name, e.mobile.Client())
 }
 
-// pair runs `lock mobile pair` with phone p and returns the confirmed
-// record (what lock up pins at the locks).
+// pair runs `lox mobile pair` with phone p and returns the confirmed
+// record (what lox up pins at the locks).
 func (e *env) pair(p *mobiletest.Phone) ticket.Device {
 	e.t.Helper()
 	var start mobile.PairStartResult

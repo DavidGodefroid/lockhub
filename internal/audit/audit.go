@@ -346,7 +346,7 @@ func VerifySigned(r io.Reader, key ed25519.PublicKey) (int64, error) {
 // keys[0] and keys[1] (its new_key), and so on. It returns the number of
 // records and the index in keys of the key the log ends on: a log that
 // is complete for keys ends on the last one, which the caller checks
-// (lock audit verify refuses less; a rotation in progress expects one
+// (lox audit verify refuses less; a rotation in progress expects one
 // key more). each, when not nil, sees every record with that index.
 func VerifyKeys(r io.Reader, keys []ed25519.PublicKey, each func(rec Record, key int)) (int64, int, error) {
 	if len(keys) == 0 {

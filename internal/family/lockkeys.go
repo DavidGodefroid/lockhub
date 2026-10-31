@@ -43,14 +43,14 @@ func (p pinned) where() string {
 
 // pinLockKeys records the lock keys pubs of workspace ws (compose project
 // project, by instance) in dir's LockKeysDir, then writes LockKeysFile as
-// the union of every workspace's, so that host facades (lock approve,
+// the union of every workspace's, so that host facades (lox approve,
 // lea's deck) check the answers of every workspace's locks. It returns
 // warnings for what it left out of the union (fail closed: no clear
 // values for those instances): an instance two workspaces pin with
 // different keys, a key two instances share (keys.LoadLocks would refuse
 // the whole file), another workspace's file or key that does not parse.
 // A file of a workspace that no longer exists is never removed here (its
-// path may only be unmounted): the warning names it. One lock up at a
+// path may only be unmounted): the warning names it. One lox up at a
 // time rewrites the union (a lock on dir).
 func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, error) {
 	unlock, err := lockDir(dir)
@@ -94,7 +94,7 @@ func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, err
 			err = json.Unmarshal(b, &f)
 		}
 		if err != nil {
-			warns = append(warns, fmt.Sprintf("%s: unreadable, left out (%v): delete it if its workspace is gone, or lock up there", filepath.Join(LockKeysDir, e.Name()), err))
+			warns = append(warns, fmt.Sprintf("%s: unreadable, left out (%v): delete it if its workspace is gone, or lox up there", filepath.Join(LockKeysDir, e.Name()), err))
 			continue
 		}
 		for n, l := range f.Locks {

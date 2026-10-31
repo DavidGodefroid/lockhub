@@ -1,13 +1,13 @@
 #!/bin/sh
-# Builds this commit's hub image for lock up: phases 2 and 5 must run the
-# hub of the commit under test, not the latest release that lock add pins.
-# lock up takes only ghcr.io/davidgodefroid/lockhub@sha256:<digest>: with
+# Builds this commit's hub image for lox up: phases 2 and 5 must run the
+# hub of the commit under test, not the latest release that lox add pins.
+# lox up takes only ghcr.io/davidgodefroid/lockhub@sha256:<digest>: with
 # Docker's containerd image store, a local build answers to its own digest
-# under that name (nothing is pushed). lock up also cosign-verifies every
-# image: a cosign shim, first in PATH, takes lock up's verify of exactly
-# this ref and runs the real cosign, with lock up's flags, on the released
-# hub that lock add pinned (SHIM_DIR/released, written by lib.sh's
-# local_hub): lock up's hub signer identity is still checked against a
+# under that name (nothing is pushed). lox up also cosign-verifies every
+# image: a cosign shim, first in PATH, takes lox up's verify of exactly
+# this ref and runs the real cosign, with lox up's flags, on the released
+# hub that lox add pinned (SHIM_DIR/released, written by lib.sh's
+# local_hub): lox up's hub signer identity is still checked against a
 # real release. Anything else goes to the real cosign unchanged.
 #
 #   ci/e2e/local-hub.sh SHIM_DIR    (prints the ref)
@@ -29,8 +29,8 @@ for a; do last=\$a; done
 if [ "\${1:-}" = verify ] && [ "\${last:-}" = "$ref" ]; then
 	released=\$(cat "$shim/released" 2>/dev/null) && [ -n "\$released" ] ||
 		{ echo "e2e: no released hub in $shim/released (ci/e2e/lib.sh local_hub)" >&2; exit 1; }
-	echo "e2e: \$last is this commit's hub build: cosign verifies the released hub \$released with lock up's flags" >&2
-	# lock up's arguments but the last (the ref), then the released ref.
+	echo "e2e: \$last is this commit's hub build: cosign verifies the released hub \$released with lox up's flags" >&2
+	# lox up's arguments but the last (the ref), then the released ref.
 	n=\$#
 	i=0
 	for a; do

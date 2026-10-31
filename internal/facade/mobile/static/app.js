@@ -182,7 +182,7 @@ async function login() {
   if (pending) {
     try {
       r = await loginWith(pending);
-      if (await getKey("device")) note = "Paired. Revoke the device this phone replaced: lock mobile revoke NAME on the host.";
+      if (await getKey("device")) note = "Paired. Revoke the device this phone replaced: lox mobile revoke NAME on the host.";
       await putKey("device", pending);
       await kv("readwrite", (s) => s.delete("pending"));
     } catch (e) {

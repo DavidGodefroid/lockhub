@@ -1,6 +1,6 @@
-// Command lock is the Lock Family CLI on the host: it answers approvals
-// in a terminal (lock approve) and, with the issues that add them, sets
-// up the hub and the locks of a workspace (lock up, add, import, doctor).
+// Command lox is the Lock Family CLI on the host: it answers approvals
+// in a terminal (lox approve) and, with the issues that add them, sets
+// up the hub and the locks of a workspace (lox up, add, import, doctor).
 package main
 
 import (
@@ -36,42 +36,42 @@ import (
 // version is set at build time (-X main.version=X.Y.Z).
 var version = "dev"
 
-const usage = `lock: the Lock Family CLI
+const usage = `lox: the Lock Family CLI
 
 Usage:
-  lock up [--file lockfamily.yaml] [--dry-run] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
+  lox up [--file lockfamily.yaml] [--dry-run] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
                                           review and start the hub and the workspace's locks; --pin sets
                                           the hub image by digest (a previous version restored), --rotate
                                           (repeatable) replaces the hub's or a lock's key
-  lock add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
+  lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp), pinned by
                                           digest to its latest (or the given) release, cosign-verified
-  lock add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
+  lox add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
                                           enable the Slack facade; asks for its tokens at the terminal
-  lock add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
+  lox add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
                                           enable the Telegram facade; asks for the bot token at the terminal
-  lock import [--file lockfamily.yaml] [SUB...]
+  lox import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
-  lock attach INSTANCE [--file lockfamily.yaml]
+  lox attach INSTANCE [--file lockfamily.yaml]
                                           answer a lock console's start-up questions (policy, credentials);
                                           detach with Ctrl-P Ctrl-Q
-  lock doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
-  lock approve [--socket PATH] [--once] [--facade-keys DIR]
+  lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
+  lox approve [--socket PATH] [--once] [--facade-keys DIR]
                                           answer approval tickets in this terminal (o: clear values, also Ctrl-O
                                           where the terminal passes it; r on an expired ticket: approve again)
-  lock mobile pair --name NAME [--file FILE] [--socket PATH]
+  lox mobile pair --name NAME [--file FILE] [--socket PATH]
                                           pair a phone with the mobile facade (confirmed at this terminal)
-  lock mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
-                                          list or revoke paired phones; lock up then (un)pins them at the locks
-  lock audit verify --data DIR --hub-key-file FILE
+  lox mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
+                                          list or revoke paired phones; lox up then (un)pins them at the locks
+  lox audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
-  lock version                            print the version
-  lock help                               show this help
+  lox version                            print the version
+  lox help                               show this help
 
 lockfamily.yaml lives in the workspace's .lockfamily/ (lea's agents only read it there); a legacy
-./lockfamily.yaml is still read, with a warning. lock add and lock import only edit it: the next
-lock up reviews the change with you.
+./lockfamily.yaml is still read, with a warning. lox add and lox import only edit it: the next
+lox up reviews the change with you.
 `
 
 func main() {
@@ -85,7 +85,7 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "version", "--version":
-		fmt.Fprintln(stdout, "lock", version)
+		fmt.Fprintln(stdout, "lox", version)
 		return 0
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
@@ -112,12 +112,12 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return doctorCmd(args[1:], stdout, stderr)
 	case "audit":
 		if len(args) < 2 || args[1] != "verify" {
-			fmt.Fprintln(stderr, "usage: lock audit verify --data DIR --hub-key-file FILE")
+			fmt.Fprintln(stderr, "usage: lox audit verify --data DIR --hub-key-file FILE")
 			return 2
 		}
 		return auditVerify(args[2:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "lock: unknown command %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, "lox: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 }
@@ -129,7 +129,7 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	data := fs.String("data", "", "the hub's data directory")
-	keyFile := fs.String("hub-key-file", "", "the hub's public keys (base64, one per line, oldest first: the current one last), as lock up pinned them (hub-keys.pub in its state directory)")
+	keyFile := fs.String("hub-key-file", "", "the hub's public keys (base64, one per line, oldest first: the current one last), as lox up pinned them (hub-keys.pub in its state directory)")
 	var lockLogs lockLogFlag
 	fs.Var(&lockLogs, "lock", "INSTANCE=PATH: also verify that lock's audit log (its audit.log, or the directory holding it); repeatable")
 	anchorsFile := fs.String("anchors", "", "file keeping each lock log's anchor between runs (host only, 0600): a log cut or stripped since is refused")
@@ -137,20 +137,20 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if lockLogs.err != nil {
-		fmt.Fprintln(stderr, "lock audit verify:", lockLogs.err)
+		fmt.Fprintln(stderr, "lox audit verify:", lockLogs.err)
 		return 2
 	}
 	if *anchorsFile != "" && len(lockLogs.logs) == 0 {
-		fmt.Fprintln(stderr, "lock audit verify: --anchors needs --lock")
+		fmt.Fprintln(stderr, "lox audit verify: --anchors needs --lock")
 		return 2
 	}
 	if *data == "" || *keyFile == "" {
-		fmt.Fprintln(stderr, "lock audit verify: --data and --hub-key-file are required")
+		fmt.Fprintln(stderr, "lox audit verify: --data and --hub-key-file are required")
 		return 2
 	}
 	b, err := os.ReadFile(*keyFile)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock audit verify:", err)
+		fmt.Fprintln(stderr, "lox audit verify:", err)
 		return 1
 	}
 	pubs, err := keys.ParsePublics(b)
@@ -158,12 +158,12 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 		err = errors.New("no key")
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "lock audit verify: the hub key file holds no list of base64 Ed25519 public keys:", err)
+		fmt.Fprintln(stderr, "lox audit verify: the hub key file holds no list of base64 Ed25519 public keys:", err)
 		return 1
 	}
 	r, err := verify.Hub(context.Background(), *data, pubs)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock audit verify:", err)
+		fmt.Fprintln(stderr, "lox audit verify:", err)
 		return 1
 	}
 	for _, p := range r.Problems {
@@ -183,7 +183,7 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	return verifyLocks(*data, pubs, lockLogs.logs, *anchorsFile, stdout, stderr)
 }
 
-// verifyLocks is lock audit verify --lock: each lock's chain, against its
+// verifyLocks is lox audit verify --lock: each lock's chain, against its
 // kept anchor when there is one, and its records of hub decisions against
 // the hub's.
 func verifyLocks(data string, pub []ed25519.PublicKey, logs []verify.LockLog, anchorsFile string, stdout, stderr io.Writer) int {
@@ -191,14 +191,14 @@ func verifyLocks(data string, pub []ed25519.PublicKey, logs []verify.LockLog, an
 	if anchorsFile != "" {
 		var err error
 		if anchors, err = verify.LoadAnchors(anchorsFile); err != nil {
-			fmt.Fprintln(stderr, "lock audit verify:", err)
+			fmt.Fprintln(stderr, "lox audit verify:", err)
 			return 1
 		}
 	}
 	kept := maps.Clone(anchors)
 	reps, err := verify.Locks(context.Background(), data, pub, logs, anchors)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock audit verify:", err)
+		fmt.Fprintln(stderr, "lox audit verify:", err)
 		return 1
 	}
 	code := 0
@@ -229,7 +229,7 @@ func verifyLocks(data string, pub []ed25519.PublicKey, logs []verify.LockLog, an
 	if anchorsFile != "" {
 		// Only verified logs move their anchor forward.
 		if err := verify.SaveAnchors(anchorsFile, anchors); err != nil {
-			fmt.Fprintln(stderr, "lock audit verify:", err)
+			fmt.Fprintln(stderr, "lox audit verify:", err)
 			return 1
 		}
 	}
@@ -312,7 +312,7 @@ func lockFile(flagged string, stderr io.Writer) (string, error) {
 		fmt.Fprintln(stderr, family.LegacyWarning(abs))
 	} else if h := family.MissingHint(abs); h != "" {
 		if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintln(stderr, "lock: "+abs+" does not exist"+h)
+			fmt.Fprintln(stderr, "lox: "+abs+" does not exist"+h)
 		}
 	}
 	return abs, nil
@@ -330,16 +330,16 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "lock up: unexpected arguments:", strings.Join(fs.Args(), " "))
+		fmt.Fprintln(stderr, "lox up: unexpected arguments:", strings.Join(fs.Args(), " "))
 		return 2
 	}
 	if fi, err := stdin.Stat(); !*dry && (err != nil || fi.Mode()&os.ModeCharDevice == 0) {
-		fmt.Fprintln(stderr, "lock up: changes are confirmed at a terminal; stdin is not one")
+		fmt.Fprintln(stderr, "lox up: changes are confirmed at a terminal; stdin is not one")
 		return 1
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock up:", err)
+		fmt.Fprintln(stderr, "lox up:", err)
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -349,13 +349,13 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
 		Pin: *pin, Rotate: rotate}
 	if err := u.Do(ctx); err != nil {
-		fmt.Fprintln(stderr, "lock up:", err)
+		fmt.Fprintln(stderr, "lox up:", err)
 		return 1
 	}
 	return 0
 }
 
-// defaultSocket is where lock up publishes the hub's facade socket.
+// defaultSocket is where lox up publishes the hub's facade socket.
 func defaultSocket() string { return filepath.Join(runtimeDir(), "lockhub", "facade.sock") }
 
 func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
@@ -363,30 +363,30 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
 	once := fs.Bool("once", false, "answer what is waiting, then exit")
-	keysDir := fs.String("facade-keys", family.FacadeKeysDir(stateHome()), "the host facades' keys and the pinned lock keys, as lock up wrote them")
+	keysDir := fs.String("facade-keys", family.FacadeKeysDir(stateHome()), "the host facades' keys and the pinned lock keys, as lox up wrote them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	// Approvals are typed by a human at a terminal, never piped.
 	if fi, err := stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		fmt.Fprintln(stderr, "lock approve: stdin is not a terminal")
+		fmt.Fprintln(stderr, "lox approve: stdin is not a terminal")
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	s := &approve.Session{C: approve.Dial(*sock), In: bufio.NewReader(stdin), Out: stdout, Display: os.Getenv("USER"), Once: *once}
 	// Clear values (Ctrl-O) need this terminal's facade key, which the
-	// locks pin, and the lock keys lock up pinned to check their answers.
+	// locks pin, and the lock keys lox up pinned to check their answers.
 	if fk, err := keys.Load(family.FacadeKeyPath(*keysDir, "tty")); err == nil {
 		if lk, err := keys.LoadLocks(filepath.Join(*keysDir, family.LockKeysFile)); err == nil {
 			s.FacadeKey, s.LockKeys = fk, lk
 		}
 	}
 	if s.FacadeKey == nil {
-		fmt.Fprintln(stderr, "lock approve: no facade key or pinned lock keys in", *keysDir, "(run lock up): clear values cannot be shown")
+		fmt.Fprintln(stderr, "lox approve: no facade key or pinned lock keys in", *keysDir, "(run lox up): clear values cannot be shown")
 	}
 	if err := s.Run(ctx); err != nil {
-		fmt.Fprintln(stderr, "lock approve:", err)
+		fmt.Fprintln(stderr, "lox approve:", err)
 		return 1
 	}
 	return 0
@@ -422,17 +422,17 @@ func addCmd(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(pos) != 2 || (o.Image != "" && *version != "") {
-		fmt.Fprintln(stderr, "usage: lock add TYPE INSTANCE [--version vX.Y.Z | --image ghcr.io/davidgodefroid/TYPE@sha256:<digest>] [--hub-image REF]")
+		fmt.Fprintln(stderr, "usage: lox add TYPE INSTANCE [--version vX.Y.Z | --image ghcr.io/davidgodefroid/TYPE@sha256:<digest>] [--hub-image REF]")
 		return 2
 	}
 	o.Type, o.Name = pos[0], pos[1]
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add:", err)
+		fmt.Fprintln(stderr, "lox add:", err)
 		return 1
 	}
 	if !slices.Contains(family.Types, o.Type) {
-		fmt.Fprintf(stderr, "lock add: unknown type %q: want one of %s\n", o.Type, strings.Join(family.Types, ", "))
+		fmt.Fprintf(stderr, "lox add: unknown type %q: want one of %s\n", o.Type, strings.Join(family.Types, ", "))
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -440,21 +440,21 @@ func addCmd(args []string, stdout, stderr io.Writer) int {
 	rel := newReleases()
 	if o.Image == "" {
 		if o.Image, err = pinRelease(ctx, rel, o.Type, *version, stdout); err != nil {
-			fmt.Fprintln(stderr, "lock add:", err)
+			fmt.Fprintln(stderr, "lox add:", err)
 			return 1
 		}
 	}
 	if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) && o.HubImage == "" {
 		if o.HubImage, err = pinRelease(ctx, rel, "lockhub", "", stdout); err != nil {
-			fmt.Fprintln(stderr, "lock add:", err)
+			fmt.Fprintln(stderr, "lox add:", err)
 			return 1
 		}
 	}
 	if err := family.Add(abs, o); err != nil {
-		fmt.Fprintln(stderr, "lock add:", err)
+		fmt.Fprintln(stderr, "lox add:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lock up to review and start it\n", abs, o.Name, o.Type)
+	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lox up to review and start it\n", abs, o.Name, o.Type)
 	return 0
 }
 
@@ -466,7 +466,7 @@ var newReleases = func() *family.Releases {
 }
 
 // attachCmd attaches the terminal to a lock's console, which asks the
-// human its start-up questions there (lock up runs it with a terminal).
+// human its start-up questions there (lox up runs it with a terminal).
 func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("attach", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -476,30 +476,30 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: lock attach INSTANCE")
+		fmt.Fprintln(stderr, "usage: lox attach INSTANCE")
 		return 2
 	}
 	if fi, err := stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		fmt.Fprintln(stderr, "lock attach: a console's questions are answered at a terminal; stdin is not one")
+		fmt.Fprintln(stderr, "lox attach: a console's questions are answered at a terminal; stdin is not one")
 		return 1
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock attach:", err)
+		fmt.Fprintln(stderr, "lox attach:", err)
 		return 1
 	}
 	c, err := family.Load(abs)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock attach:", err)
+		fmt.Fprintln(stderr, "lox attach:", err)
 		return 1
 	}
 	if _, ok := c.Locks[pos[0]]; !ok {
-		fmt.Fprintf(stderr, "lock attach: no lock %q in %s\n", pos[0], abs)
+		fmt.Fprintf(stderr, "lox attach: no lock %q in %s\n", pos[0], abs)
 		return 1
 	}
 	project := family.Project(family.Workspace(abs))
 	state := stateDir(project)
-	// The compose file lock up applied, never one from the workspace.
+	// The compose file lox up applied, never one from the workspace.
 	compose := func(a ...string) *exec.Cmd {
 		return exec.Command("docker", append([]string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
 			"-f", filepath.Join(state, "compose.yaml")}, a...)...)
@@ -510,7 +510,7 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	cmd := compose("attach", "lock-"+pos[0])
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintln(stderr, "lock attach:", err)
+		fmt.Fprintln(stderr, "lox attach:", err)
 		return 1
 	}
 	return 0
@@ -547,13 +547,13 @@ func importCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock import:", err)
+		fmt.Fprintln(stderr, "lox import:", err)
 		return 1
 	}
 	if len(srcs) == 0 {
 		srcs = family.SubProjects(family.Workspace(abs))
 		if len(srcs) == 0 {
-			fmt.Fprintln(stderr, "lock import: no sub-project lockfamily.yaml in", family.Workspace(abs))
+			fmt.Fprintln(stderr, "lox import: no sub-project lockfamily.yaml in", family.Workspace(abs))
 			return 1
 		}
 	}
@@ -567,10 +567,10 @@ func importCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, n)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "lock import:", err)
+		fmt.Fprintln(stderr, "lox import:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s updated; run lock up to review and apply it\n", abs)
+	fmt.Fprintf(stdout, "%s updated; run lox up to review and apply it\n", abs)
 	return 0
 }
 
@@ -583,7 +583,7 @@ func doctorCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock doctor:", err)
+		fmt.Fprintln(stderr, "lox doctor:", err)
 		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -618,38 +618,38 @@ func addSlackCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	s.Users = users
 	if len(pos) != 0 || s.Team == "" || s.Channel == "" || len(s.Users) == 0 {
-		fmt.Fprintln(stderr, "usage: lock add slack --team T… --channel C… --user U… [--user U…]")
+		fmt.Fprintln(stderr, "usage: lox add slack --team T… --channel C… --user U… [--user U…]")
 		return 2
 	}
 	if err := s.Validate(); err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 2
 	}
 	ask, err := tokenPrompt(stdin, stdout)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
 	app, err := ask("Slack app-level token (xapp-…, scope connections:write): ")
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
 	bot, err := ask("Slack bot token (xoxb-…, scope chat:write): ")
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
 	if err := family.AddSlack(abs, stateDir(family.Project(family.Workspace(abs))), s, app, bot); err != nil {
-		fmt.Fprintln(stderr, "lock add slack:", err)
+		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", abs, strings.Join(s.Users, ", "))
+	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lox up to review and apply.\n", abs, strings.Join(s.Users, ", "))
 	return 0
 }
 
@@ -701,12 +701,12 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 	}
 	for name, f := range map[string]*int64sFlag{"--chat": &chats, "--from": &froms} {
 		if f.bad {
-			fmt.Fprintf(stderr, "lock add telegram: %s: want a decimal integer id\n", name)
+			fmt.Fprintf(stderr, "lox add telegram: %s: want a decimal integer id\n", name)
 			return 2
 		}
 	}
 	if len(pos) != 0 || len(chats.ids) == 0 || len(chats.ids) != len(froms.ids) {
-		fmt.Fprintln(stderr, "usage: lock add telegram --chat ID --from ID [--chat ID --from ID …]")
+		fmt.Fprintln(stderr, "usage: lox add telegram --chat ID --from ID [--chat ID --from ID …]")
 		return 2
 	}
 	var tg chatconf.Telegram
@@ -714,34 +714,34 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 		tg.Chats = append(tg.Chats, chatconf.TelegramChat{Chat: chats.ids[i], From: froms.ids[i]})
 	}
 	if err := tg.Validate(); err != nil {
-		fmt.Fprintln(stderr, "lock add telegram:", err)
+		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 2
 	}
 	ask, err := tokenPrompt(stdin, stdout)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add telegram:", err)
+		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 1
 	}
 	tok, err := ask("Telegram bot token (from BotFather): ")
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add telegram:", err)
+		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 1
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock add telegram:", err)
+		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 1
 	}
 	if err := family.AddTelegram(abs, stateDir(family.Project(family.Workspace(abs))), tg, tok); err != nil {
-		fmt.Fprintln(stderr, "lock add telegram:", err)
+		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lock up to review and apply.\n", abs, len(tg.Chats))
+	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lox up to review and apply.\n", abs, len(tg.Chats))
 	return 0
 }
 
 func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
-	const use = "usage: lock mobile pair --name NAME | list | revoke NAME|ID  [--file FILE] [--socket PATH]"
+	const use = "usage: lox mobile pair --name NAME | list | revoke NAME|ID  [--file FILE] [--socket PATH]"
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, use)
 		return 2
@@ -758,7 +758,7 @@ func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	abs, err := lockFile(*file, stderr)
 	if err != nil {
-		fmt.Fprintln(stderr, "lock mobile:", err)
+		fmt.Fprintln(stderr, "lox mobile:", err)
 		return 1
 	}
 	state := stateDir(family.Project(family.Workspace(abs)))
@@ -768,10 +768,10 @@ func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	switch {
 	case sub == "pair" && len(pos) == 0 && *name != "":
 		if fi, err := stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-			fmt.Fprintln(stderr, "lock mobile pair: the device is confirmed at a terminal; stdin is not one")
+			fmt.Fprintln(stderr, "lox mobile pair: the device is confirmed at a terminal; stdin is not one")
 			return 1
 		}
-		// The origin lock up applied (reviewed), not the yaml as it is now.
+		// The origin lox up applied (reviewed), not the yaml as it is now.
 		var origin string
 		if origin, err = family.AppliedMobileOrigin(state); err == nil {
 			err = mobilecli.Pair(ctx, c, *name, origin, state, bufio.NewReader(stdin), stdout)
@@ -785,7 +785,7 @@ func mobileCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "lock mobile:", err)
+		fmt.Fprintln(stderr, "lox mobile:", err)
 		return 1
 	}
 	return 0

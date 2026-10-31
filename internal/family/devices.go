@@ -14,9 +14,9 @@ import (
 )
 
 // DevicesFile is the pinned devices of a workspace (lockkit
-// ticket.DeviceSet), in lock up's private state directory: never in the
-// workspace, which agents can write. `lock mobile pair` adds the device the
-// human confirmed at the terminal; `lock mobile revoke` removes one; lock
+// ticket.DeviceSet), in lox up's private state directory: never in the
+// workspace, which agents can write. `lox mobile pair` adds the device the
+// human confirmed at the terminal; `lox mobile revoke` removes one; lox
 // up reviews the change and mounts the file read-only in every lock.
 func DevicesFile(state string) string { return filepath.Join(state, "devices.json") }
 
@@ -102,9 +102,9 @@ func devicesSummary(devs []ticket.Device) []string {
 	return s
 }
 
-// devicesSnapshot is the reviewed set of devices, written once lock up is
+// devicesSnapshot is the reviewed set of devices, written once lox up is
 // confirmed under a name of its own content: the locks mount that file,
-// never the live one, which lock mobile may change in between.
+// never the live one, which lox mobile may change in between.
 func devicesSnapshot(state string, devs []ticket.Device) (path string, content []byte, err error) {
 	b, err := ticket.MarshalDevices(devs)
 	if err != nil {
@@ -114,13 +114,13 @@ func devicesSnapshot(state string, devs []ticket.Device) (path string, content [
 	return filepath.Join(state, "devices-"+hex.EncodeToString(sum[:8])+".json"), b, nil
 }
 
-// AppliedMobileOrigin is hub.mobile.origin as the last confirmed lock up
-// applied it (lock up's private state, not the workspace's yaml, which
+// AppliedMobileOrigin is hub.mobile.origin as the last confirmed lox up
+// applied it (lox up's private state, not the workspace's yaml, which
 // agents can write).
 func AppliedMobileOrigin(state string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
 	if err != nil {
-		return "", fmt.Errorf("no applied configuration (run lock up first): %w", err)
+		return "", fmt.Errorf("no applied configuration (run lox up first): %w", err)
 	}
 	var a Applied
 	if err := json.Unmarshal(b, &a); err != nil {
@@ -133,5 +133,5 @@ func AppliedMobileOrigin(state string) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("the applied configuration has no mobile facade (hub.mobile, then lock up)")
+	return "", errors.New("the applied configuration has no mobile facade (hub.mobile, then lox up)")
 }

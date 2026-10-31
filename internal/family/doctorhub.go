@@ -56,7 +56,7 @@ func (d *Doctor) hubLimits(ctx context.Context, sock string, c *Config, ok, warn
 	for _, t := range q.Tickets {
 		pending[t.Instance]++
 	}
-	ok("limits (lockkit defaults as this lock CLI was built): each lock keeps at most %d plans pending and pushes at most %d new tickets per %v (counted in memory, reset when the lock restarts); the hub holds at most %d per lock",
+	ok("limits (lockkit defaults as this lox CLI was built): each lock keeps at most %d plans pending and pushes at most %d new tickets per %v (counted in memory, reset when the lock restarts); the hub holds at most %d per lock",
 		hubclient.MaxPending, hubclient.RateN, hubclient.RateWindow, hub.DefaultMaxPending)
 	ok("the quota is per lock instance, shared by every agent of the workspace: one agent can use it up for the others")
 	if c == nil {
@@ -65,7 +65,7 @@ func (d *Doctor) hubLimits(ctx context.Context, sock string, c *Config, ok, warn
 	for _, n := range c.Instances() {
 		msg := fmt.Sprintf("pending %s on the hub: %d of %d (the lock also counts plans it could not push)", n, pending[n], hubclient.MaxPending)
 		if pending[n]*5 >= hubclient.MaxPending*4 {
-			warn("%s: near the cap, new requests are refused at it (answer them: lock approve)", msg)
+			warn("%s: near the cap, new requests are refused at it (answer them: lox approve)", msg)
 		} else {
 			ok("%s", msg)
 		}

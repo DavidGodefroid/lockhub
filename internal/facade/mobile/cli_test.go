@@ -15,7 +15,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
-// lock mobile pair, list and revoke against the hub's facade socket: the
+// lox mobile pair, list and revoke against the hub's facade socket: the
 // device is pinned only once the human said yes at the terminal.
 func TestLockMobilePair(t *testing.T) {
 	for _, answer := range []string{"n", "y", "other origin"} {

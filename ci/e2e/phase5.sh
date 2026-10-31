@@ -1,7 +1,7 @@
 #!/bin/sh
 # Phase 5 of the hub plan, end to end: the one-line install (install.sh)
-# puts the lock CLI in ~/.local/bin; lock add pins a lock's latest signed
-# release; lock up starts it; lock import merges two sub-projects keeping
+# puts the lox CLI in ~/.local/bin; lox add pins a lock's latest signed
+# release; lox up starts it; lox import merges two sub-projects keeping
 # the strictest routing.
 #
 #   ci/e2e/phase5.sh INSTALL_SH DIST_DIR VERSION
@@ -9,27 +9,27 @@
 # DIST_DIR holds this commit's release archives (scripts/release-cli.sh
 # VERSION DIST_DIR), served as a local mirror; install.sh checks the
 # archive against its sha256 (cosign would require a tagged release run).
-# lock up runs this commit's hub build (E2E_HUB_IMAGE, ci/e2e/local-hub.sh).
+# lox up runs this commit's hub build (E2E_HUB_IMAGE, ci/e2e/local-hub.sh).
 . "$(dirname "$0")/lib.sh"
 install=$1 dist=$2 v=$3
 home=$(mktemp -d)
 mirror=$(mktemp -d)
 mkdir -p "$mirror/v$v"
 cp "$dist"/* "$mirror/v$v/"
-sum=$(sed -n "s/  lock_${v}_linux_amd64.tar.gz\$//p" "$dist/checksums.txt")
+sum=$(sed -n "s/  lox_${v}_linux_amd64.tar.gz\$//p" "$dist/checksums.txt")
 [ -n "$sum" ] || die "no checksum for the linux/amd64 archive"
 
 say "install.sh, this commit, from a mirror"
 HOME=$home LOCK_RELEASE_BASE=$mirror sh "$install" --version "v$v" --sha256 "$sum"
-lock=$home/.local/bin/lock
-"$lock" version | grep -qx "lock $v" || die "installed lock is not $v"
+lox=$home/.local/bin/lox
+"$lox" version | grep -qx "lox $v" || die "installed lox is not $v"
 
 say "install.sh, the latest release, cosign-verified"
 home2=$(mktemp -d)
 HOME=$home2 sh "$install" >install2.out 2>&1 || { cat install2.out; die "install.sh (latest release) failed"; }
 cat install2.out
 grep -q 'cosign: checksums.txt signed by the lockhub release workflow' install2.out || die "install.sh did not report a cosign check"
-"$home2/.local/bin/lock" version
+"$home2/.local/bin/lox" version
 
 ws=$(mktemp -d)/projects
 mkdir -p "$ws"
@@ -42,20 +42,20 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-say "lock add ${LOCK_TYPE:=lockhttp} (latest signed release)"
-"$lock" add "$LOCK_TYPE" first >add.out 2>&1 || { cat add.out; die "lock add failed"; }
+say "lox add ${LOCK_TYPE:=lockhttp} (latest signed release)"
+"$lox" add "$LOCK_TYPE" first >add.out 2>&1 || { cat add.out; die "lox add failed"; }
 cat add.out
-grep -q "signature verified" add.out || die "lock add did not verify the signature"
+grep -q "signature verified" add.out || die "lox add did not verify the signature"
 grep -q "ghcr.io/davidgodefroid/$LOCK_TYPE@sha256:" .lockfamily/lockfamily.yaml || die "not pinned by digest"
 grep -q "ghcr.io/davidgodefroid/lockhub@sha256:" .lockfamily/lockfamily.yaml || die "hub not pinned"
 local_hub .lockfamily/lockfamily.yaml
 
-say "lock up"
+say "lox up"
 mkdir -p ".$LOCK_TYPE"
 printf '[profiles.default]\nmode = "enforce"\nheuristics = "off"\nbuffer_limit = "1MiB"\nhold = "60s"\nconnect_grant = "1m"\ntrusted = []\nsplice = []\ndeny = []\n' >".$LOCK_TYPE/config.toml"
-tty 'y\n' "$lock" up >up.out 2>&1 || { cat up.out; die "lock up failed"; }
+tty 'y\n' "$lox" up >up.out 2>&1 || { cat up.out; die "lox up failed"; }
 cat up.out
-grep -q "up: project " up.out || die "lock up did not finish"
+grep -q "up: project " up.out || die "lox up did not finish"
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps --status running --services >svc.out
@@ -63,9 +63,9 @@ grep -qx lockhub svc.out || die "hub not running"
 grep -qx lock-first svc.out || die "lock first not running"
 hub_is_local "$p"
 hub_cosigned up.out
-"$lock" doctor
+"$lox" doctor
 
-say "lock import: two sub-projects, the strictest routing kept, in either order"
+say "lox import: two sub-projects, the strictest routing kept, in either order"
 hub=$(sed -n 's/^  image: *//p' .lockfamily/lockfamily.yaml | head -1)
 img=$(sed -n '/^  first:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 # sub DIR ROUTING: a sub-project declaring the lock shared (and DIR-only),
@@ -88,7 +88,7 @@ for order in strict-first strict-last; do
 	else
 		sub "$imp/a" ""; sub "$imp/b" "shared: [tty]"
 	fi
-	(cd "$imp" && "$lock" import) >import.out 2>&1 || { cat import.out; die "lock import failed ($order)"; }
+	(cd "$imp" && "$lox" import) >import.out 2>&1 || { cat import.out; die "lox import failed ($order)"; }
 	cat import.out
 	f=$imp/.lockfamily/lockfamily.yaml
 	for l in shared a-only b-only; do grep -q "^  $l:" "$f" || die "$l not merged ($order)"; done
@@ -100,15 +100,15 @@ done
 # "last wins" would pass the cases above).
 imp=$(mktemp -d)/ws
 sub "$imp/a" "shared: [tty]"; sub "$imp/b" "shared: [deck]"
-rc=0; (cd "$imp" && "$lock" import) >import.out 2>&1 || rc=$?
+rc=0; (cd "$imp" && "$lox" import) >import.out 2>&1 || rc=$?
 cat import.out
-[ "$rc" != 0 ] || die "lock import merged disjoint routings"
+[ "$rc" != 0 ] || die "lox import merged disjoint routings"
 grep -q 'no facade left that every declaration allows' import.out || die "no note about the disjoint routings"
-[ ! -e "$imp/.lockfamily/lockfamily.yaml" ] || die "lock import wrote a file after refusing"
+[ ! -e "$imp/.lockfamily/lockfamily.yaml" ] || die "lox import wrote a file after refusing"
 # Control: no routing on either side, none in the result.
 imp=$(mktemp -d)/ws
 sub "$imp/a" ""; sub "$imp/b" ""
-(cd "$imp" && "$lock" import) >import.out 2>&1 || { cat import.out; die "lock import failed (no routing)"; }
+(cd "$imp" && "$lox" import) >import.out 2>&1 || { cat import.out; die "lox import failed (no routing)"; }
 grep -q 'routing:' "$imp/.lockfamily/lockfamily.yaml" && { cat "$imp/.lockfamily/lockfamily.yaml"; die "a routing appeared from nowhere"; }
 grep -q '^  b-only:' "$imp/.lockfamily/lockfamily.yaml" || die "b-only not merged (no routing)"
 echo "phase 5: OK"

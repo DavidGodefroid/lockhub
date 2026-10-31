@@ -40,7 +40,7 @@ var queueAnswer atomic.Value
 
 func init() { queueAnswer.Store(`{"tickets":[],"version":1}`) }
 
-// healthy lays out what a confirmed lock up leaves: state, keys, socket.
+// healthy lays out what a confirmed lox up leaves: state, keys, socket.
 func healthy(t *testing.T) (*Doctor, *answers) {
 	t.Helper()
 	w := newWS(t, yamlConf(""))
@@ -204,7 +204,7 @@ func TestDoctorWritesNothing(t *testing.T) {
 	file := write(t, filepath.Join(root, "ws", "lockfamily.yaml"), yamlConf(""))
 	d := &Doctor{File: file, State: filepath.Join(root, "state"), Runtime: filepath.Join(root, "run"), Root: filepath.Join(root, "sys"), Run: &answers{out: map[string]string{"info": "27\n"}}}
 	out, n := doc(t, d)
-	if n == 0 || !strings.Contains(out, "lock up") {
+	if n == 0 || !strings.Contains(out, "lox up") {
 		t.Errorf("a workspace never brought up is not healthy:\n%s", out)
 	}
 	for _, p := range []string{d.State, d.Runtime, filepath.Join(root, "ws", ".lockfamily")} {

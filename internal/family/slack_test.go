@@ -121,9 +121,9 @@ func TestDoctorSlackSecrets(t *testing.T) {
 	}
 }
 
-// I9 (hub plan), lock up's side: with a lockfamily.yaml without slack or
+// I9 (hub plan), lox up's side: with a lockfamily.yaml without slack or
 // telegram, the review names no chat secret (though token files are
-// there: lock up identifies a token only for a declared facade, and the
+// there: lox up identifies a token only for a declared facade, and the
 // control shows it would name it), routing.json enables no chat facade,
 // chat.json holds no chat settings and the hub's only network is the
 // internal lockhub one. (tokenID drops read errors, so a read that names

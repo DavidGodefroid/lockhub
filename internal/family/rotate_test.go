@@ -12,7 +12,7 @@ import (
 
 const hubImg2 = "ghcr.io/davidgodefroid/lockhub@sha256:5555555555555555555555555555555555555555555555555555555555555555"
 
-// upWith runs lock up with --pin and --rotate.
+// upWith runs lox up with --pin and --rotate.
 func upWith(w ws, input string, f *fake, pin string, rotate ...string) (string, error) {
 	var out strings.Builder
 	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: f,
@@ -91,8 +91,8 @@ func TestRotateHubAndLock(t *testing.T) {
 	f := newFake()
 	f.keys["web"] = pubKey()
 	state := filepath.Join(w.dir, "state")
-	if _, err := upWith(w, "y\n", f, "", "hub"); err == nil || !strings.Contains(err.Error(), "first lock up") {
-		t.Fatalf("rotation before the first lock up: %v", err)
+	if _, err := upWith(w, "y\n", f, "", "hub"); err == nil || !strings.Contains(err.Error(), "first lox up") {
+		t.Fatalf("rotation before the first lox up: %v", err)
 	}
 	if _, err := w.up("y\n", f); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestRotateHubAndLock(t *testing.T) {
 	if !strings.Contains(string(st), f.keys["hub/new"]) {
 		t.Errorf("up.json keeps the old hub key: %s", st)
 	}
-	for _, want := range []string{"hub key rotated: lock audit verify takes --hub-key-file", "lea's gate for web"} {
+	for _, want := range []string{"hub key rotated: lox audit verify takes --hub-key-file", "lea's gate for web"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -195,14 +195,14 @@ func TestRotateHubFailureFinishesLater(t *testing.T) {
 	f.keys["hub/new"] = pubKey()
 	f2 := &fake{keys: f.keys, failing: "rotate-key"}
 	out, err := upWith(w, "y\n", f2, "", "hub")
-	if err == nil || !strings.Contains(err.Error(), "run lock up --rotate hub again") || f2.ran("up -d") {
+	if err == nil || !strings.Contains(err.Error(), "run lox up --rotate hub again") || f2.ran("up -d") {
 		t.Fatalf("failed rotation: %v %v\n%s", err, f2.calls, out)
 	}
 	os.WriteFile(filepath.Join(stage, "hub.key"), []byte("staged"), 0o600) // keygen's file, which the fake does not make
-	// Until finished, lock up refuses to start the hub on a half-rotated
+	// Until finished, lox up refuses to start the hub on a half-rotated
 	// key.
 	if _, err := w.up("y\n", &fake{keys: f.keys}); err == nil || !strings.Contains(err.Error(), "did not finish") {
-		t.Errorf("plain lock up after a failed rotation: %v", err)
+		t.Errorf("plain lox up after a failed rotation: %v", err)
 	}
 	// Again: the same staged key, no new one.
 	f.keys["hub/other"] = pubKey()
@@ -250,7 +250,7 @@ func TestParseRotate(t *testing.T) {
 	}
 }
 
-// A rotation whose hub took the key before lock up stopped: finished
+// A rotation whose hub took the key before lox up stopped: finished
 // once the hub says it holds the staged key, refused otherwise.
 func TestRotateHubResumeAsksTheHub(t *testing.T) {
 	w := newWS(t, yamlConf(""))
@@ -263,7 +263,7 @@ func TestRotateHubResumeAsksTheHub(t *testing.T) {
 	if _, err := upWith(w, "y\n", &fake{keys: f.keys, failing: "rotate-key"}, "", "hub"); err == nil {
 		t.Fatal("rotation did not fail")
 	}
-	// The hub's rename happened (no staged key left), lock up did not see it.
+	// The hub's rename happened (no staged key left), lox up did not see it.
 	f.keys["hub/held"] = pubKey()
 	f2 := &fake{keys: f.keys}
 	if _, err := upWith(w, "y\n", f2, "", "hub"); err == nil || !strings.Contains(err.Error(), "not the staged key") || f2.ran("up -d") {

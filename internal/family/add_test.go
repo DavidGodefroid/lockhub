@@ -79,10 +79,10 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 	if fi, err := os.Stat(filepath.Dir(file)); err != nil || fi.Mode().Perm() != 0o755 {
 		t.Errorf(".lockfamily: %v", err)
 	}
-	// Then lock up starts it, once the lock's profile exists.
+	// Then lox up starts it, once the lock's profile exists.
 	f0 := &fake{keys: map[string]string{"hub": pubKey(), "crm": pubKey()}}
 	if _, err := upFor(t, file)("y\n", f0); err == nil || !strings.Contains(err.Error(), "profile of the locksql locks") {
-		t.Fatalf("lock up without the lock's profile: %v", err)
+		t.Fatalf("lox up without the lock's profile: %v", err)
 	}
 	// No PII rule set yet: the console writes its first one in its own
 	// volume (LOCKSQL_PII_DIR), the profile copy being read-only.
@@ -94,7 +94,7 @@ func TestAddCreatesFreshWorkspace(t *testing.T) {
 	}
 }
 
-// upFor runs lock up on file, with its state and runtime next to it.
+// upFor runs lox up on file, with its state and runtime next to it.
 func upFor(t *testing.T, file string) func(string, *fake) (string, error) {
 	dir := t.TempDir()
 	return func(input string, f *fake) (string, error) {
@@ -110,6 +110,6 @@ func TestAddRefusedIntoFreshWorkspaceLeavesNoDir(t *testing.T) {
 		t.Fatal("bad name accepted")
 	}
 	if _, err := os.Lstat(filepath.Dir(path)); !os.IsNotExist(err) {
-		t.Errorf("%s left behind by a refused lock add: %v", filepath.Dir(path), err)
+		t.Errorf("%s left behind by a refused lox add: %v", filepath.Dir(path), err)
 	}
 }

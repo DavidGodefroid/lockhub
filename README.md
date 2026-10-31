@@ -6,7 +6,7 @@ The approval hub of the [Lock Family](https://github.com/DavidGodefroid/lockfami
 Each Lock keeps a human between an AI agent and a production system. With the
 hub, a Lock no longer needs a human at its own terminal: it sends an approval
 ticket (a masked screen of the request) to the hub, the human answers from a
-facade (a terminal with `lock approve`, the lea deck, Slack, Telegram or a
+facade (a terminal with `lox approve`, the lea deck, Slack, Telegram or a
 paired phone), and the hub signs the decision. The Lock executes only on a signed
 decision bound to the exact plan that was approved.
 
@@ -21,10 +21,10 @@ needs its instance name typed, in the terminal, the deck and on the phone
 alike (the hub checks it). A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
-In `lock approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
+In `lox approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
 not on macOS, which keeps ^O) shows a ticket's clear values:
 the terminal sends an ephemeral key signed by its facade key (which every lock
-pins, written by `lock up`), the lock seals the clear screen to it and signs
+pins, written by `lox up`), the lock seals the clear screen to it and signs
 the answer, and only the terminal opens it. The hub relays ciphertext, and
 never offers this on Slack, Telegram or mobile. An expired ticket is listed for
 re-approval (`r`, approve again): the lock asks again, and when nothing changed
@@ -42,9 +42,9 @@ Early development. This repository holds:
 
 - `lockhub`: the hub server (`lockhub serve`), shipped as a cosign-signed image
   `ghcr.io/davidgodefroid/lockhub`, pinned by digest;
-- `lock`: the host CLI (`lock up`, `lock approve`, `lock audit verify`, …),
+- `lox`: the host CLI (`lox up`, `lox approve`, `lox audit verify`, …),
   shipped in the same image and release, and as static archives
-  (`lock_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
+  (`lox_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
   Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
   installs into `~/.local/bin`.
 
@@ -52,7 +52,7 @@ The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
 with every Lock.
 
-[docs/lock-up.md](docs/lock-up.md) is the contract between `lock up` and lea;
+[docs/lox-up.md](docs/lox-up.md) is the contract between `lox up` and lea;
 [docs/design-notes.md](docs/design-notes.md) records where the code
 deliberately departs from the hub's design plan.
 
@@ -82,19 +82,19 @@ locks:
     reveal: true                         # Ctrl-O reveals on tty/deck (lockkit ≥ v0.5.0)
 ```
 
-A lock without `devices: true` pins no phone: `lock up` routes it away from
+A lock without `devices: true` pins no phone: `lox up` routes it away from
 mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
 hub's approvals from the other facades as before). The review names what each
 lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
-For a lockhttp lock, lea's gate pins the devices, which `lock up` hands it in
+For a lockhttp lock, lea's gate pins the devices, which `lox up` hands it in
 `.lockfamily/up.json` (lockhttp v0.4.0 or later, lea v0.3.0 or later); lea
 runs its standalone gate instead, and says why, when it cannot.
 Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
-lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lock
+lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lox
 approve` or lea's deck can show its clear screen; without it the lock refuses
 reveals.
 
-**Exposure.** `lock up` publishes the mobile listener on `127.0.0.1:8444`
+**Exposure.** `lox up` publishes the mobile listener on `127.0.0.1:8444`
 only. The phone reaches it through a TLS reverse proxy or tunnel that you run
 on the host and that forwards `origin` to that port: Tailscale Serve
 (`tailscale serve --bg --https=443 http://127.0.0.1:8444`), Caddy, cloudflared,
@@ -105,18 +105,18 @@ the facade socket. The hub trusts no forwarded header; the origin comes from
 (a bridge, so the hub container has a route out there; the lock API stays on
 the internal `lockhub` network, which agents never join).
 
-**Pairing.** `lock mobile pair --name phone` prints a one-time code (5 min,
+**Pairing.** `lox mobile pair --name phone` prints a one-time code (5 min,
 wrong codes cancel it). Open the origin on the phone, enter the code,
 register; then compare the fingerprint the phone shows (computed from its own
-keys) with the one at the terminal and answer `y`. Run `lock up` to pin the
-phone at the locks: `lock up` reviews the device like any key and recreates
-the locks with it. `lock mobile list`, `lock mobile revoke NAME` (then `lock
+keys) with the one at the terminal and answer `y`. Run `lox up` to pin the
+phone at the locks: `lox up` reviews the device like any key and recreates
+the locks with it. `lox mobile list`, `lox mobile revoke NAME` (then `lox
 up`). The confirmation is only as strong as the facade socket: whoever can
 open it (your host account, never an agent container) can confirm a device.
-`require_device` needs a paired device: `lock up` refuses it otherwise, so
+`require_device` needs a paired device: `lox up` refuses it otherwise, so
 revoking the last phone leaves the locks pinning it (the hub refuses it) until
-you remove `require_device` and run `lock up`. `lock mobile pair` checks the
-phone's origin against the one the last `lock up` applied.
+you remove `require_device` and run `lox up`. `lox mobile pair` checks the
+phone's origin against the one the last `lox up` applied.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
 secrets yet); production tickets ask for the instance name; `hub.routing`
@@ -134,7 +134,7 @@ open. With `hub.mobile.push: true`, the hub wakes the paired phones with Web
 Push when a ticket they may answer (the same routing as the queue) becomes
 pending: tap "Enable notifications" in the app, allow notifications, and the
 browser's push subscription is recorded for that device (at most 4 per device;
-dropped by `lock mobile revoke`, or when the push service answers 404/410).
+dropped by `lox mobile revoke`, or when the push service answers 404/410).
 Pushes carry no payload: the service worker shows "A Lock approval is pending"
 and the app reads the ticket from the hub as usual. The hub signs each push
 with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
@@ -144,7 +144,7 @@ data directory, 0600) and POSTs only to the known push services
 (no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
 redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
 offline phone, `TTL` 30 min). The hub logs only the push service's host, never
-an endpoint. `lock up` reviews the change and gives the hub its `egress-hub`
+an endpoint. `lox up` reviews the change and gives the hub its `egress-hub`
 network for it. That network gives the hub general outbound access, as with
 the chat facades: the restriction to the push services above is enforced by
 the hub's code, not by the network. Signing out of the app keeps the device's

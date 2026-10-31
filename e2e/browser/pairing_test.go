@@ -16,7 +16,7 @@ import (
 
 const (
 	noteNewer    = "A newer pairing of this phone is not confirmed on the host yet."
-	noteReplaced = "Paired. Revoke the device this phone replaced: lock mobile revoke NAME on the host."
+	noteReplaced = "Paired. Revoke the device this phone replaced: lox mobile revoke NAME on the host."
 )
 
 // A phone that works pairs again: until the host confirms the new pairing

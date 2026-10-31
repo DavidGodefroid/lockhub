@@ -102,7 +102,7 @@ func TestChatTokenMissingIsALine(t *testing.T) {
 	}
 }
 
-// lock doctor warns when a token changed since the last lock up.
+// lox doctor warns when a token changed since the last lox up.
 func TestDoctorTokenRotated(t *testing.T) {
 	d, _ := healthy(t)
 	state := d.State
@@ -131,7 +131,7 @@ func TestDoctorTokenRotated(t *testing.T) {
 }
 
 // An applied.json from before token identities, or a facade added since
-// the last lock up, is no rotation.
+// the last lox up, is no rotation.
 func TestDoctorNoTokenWarningWithoutAppliedToken(t *testing.T) {
 	d, _ := healthy(t) // applied without a chat facade
 	os.WriteFile(d.File, []byte(yamlConf(tgHub)), 0o644)
