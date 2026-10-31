@@ -115,7 +115,10 @@ func TestPinLockKeysBadFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(w, "\n")
-	for _, want := range []string{"locks.d/lockfamily-cccc.json: unreadable", `instance "web" has no valid name or key`, `instance "Bad Name" has no valid name or key`} {
+	if strings.Contains(joined, "Bad Name") {
+		t.Errorf("a name that is not an instance name is shown:\n%s", joined)
+	}
+	for _, want := range []string{"locks.d/lockfamily-cccc.json: unreadable", `instance "web" has no valid key`, "an instance without a valid name"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
 		}

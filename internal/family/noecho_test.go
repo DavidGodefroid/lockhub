@@ -9,12 +9,15 @@ import (
 
 // canaries are what a human may paste into a key by mistake: a token, and
 // a URL carrying one in its user info.
-var canaries = []string{"glsa_CanarySecretToken123", "https://user:glsa_Canary@h"}
+var canaries = []string{"glsa_CanarySecretToken123", "https://user:glsa_Canary@h", hexCanary}
+
+// hexCanary is an API key shaped like a lowercase key or instance name.
+const hexCanary = "abcdef0123456789abcdef0123456789"
 
 // leaked reports whether msg shows the canary, or a part yaml.v3 could
 // quote (up to ten characters, or the first seven).
 func leaked(msg, canary string) bool {
-	for _, s := range []string{canary, "glsa_", "Canary", "user:"} {
+	for _, s := range []string{canary, "glsa_", "Canary", "user:", hexCanary[:7]} {
 		if strings.Contains(msg, s) {
 			return true
 		}
@@ -56,6 +59,9 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 			"tagged key":            {strings.Replace(yamlConf(""), "version: 1", "version: 1\n!!int \"x`"+c+"\": 1", 1), "explicit tag"},
 			"hub.telegram.chats":    {yamlConf("  facades: [tty, telegram]\n  telegram:\n    chats:\n      - {chat: " + q + ", from: 7}\n"), "hub.telegram.chats"},
 		} {
+			if c == hexCanary && name == "instance name" {
+				continue // a valid instance name, shown by design
+			}
 			p := filepath.Join(t.TempDir(), "lockfamily.yaml")
 			if err := os.WriteFile(p, []byte(tc.conf), 0o600); err != nil {
 				t.Fatal(err)

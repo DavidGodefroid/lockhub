@@ -159,7 +159,8 @@ func (t *Telegram) call(ctx context.Context, method string, body any, out any) e
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", t.c.API+"/bot"+t.c.Token+"/"+method, bytes.NewReader(b))
 	if err != nil {
-		return err
+		// url.Parse's error quotes the URL, which holds the token.
+		return fmt.Errorf("%s: bad bot token or API URL", method)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := t.c.HTTP.Do(req)

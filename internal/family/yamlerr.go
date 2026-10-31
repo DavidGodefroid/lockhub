@@ -2,11 +2,14 @@ package family
 
 import (
 	"errors"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
 
 var (
@@ -14,11 +17,14 @@ var (
 	// yamlQuoted is what yaml.v3 quotes of the input in its other
 	// errors: 'anchor' or `value`.
 	yamlQuoted = regexp.MustCompile("(?s)'.*'|`.*`|\".*\"")
-	yamlField  = regexp.MustCompile(`^line (\d+): field (.*) not found in type (\S+)$`)
-	yamlDup    = regexp.MustCompile(`^line (\d+): mapping key .* already defined at line (\d+)$`)
-	// safeKey is a key short and plain enough to show: a lockfamily.yaml
-	// key or an instance name, not a value pasted into a flow mapping.
-	safeKey = regexp.MustCompile(`^[a-z0-9_][a-z0-9_-]{0,62}$`)
+	// yamlLong is a quoted span of more than one character (the parser
+	// quotes single punctuation, ':' or ']', which may stay).
+	yamlLong  = regexp.MustCompile("(?s)'[^']{2,}'|`[^`]{2,}`|\"[^\"]{2,}\"|'[^']*$|`[^`]*$|\"[^\"]*$")
+	yamlField = regexp.MustCompile(`^line (\d+): field (.*) not found in type (\S+)$`)
+	yamlDup   = regexp.MustCompile(`^line (\d+): mapping key .* already defined at line (\d+)$`)
+	// fieldNames are the keys lockfamily.yaml knows: the only ones shown
+	// (besides instance names), never a value pasted as a key.
+	fieldNames = yamlFields(reflect.TypeOf(Config{}), map[string]bool{})
 	// aliasLine is a "key: *alias" or "- *alias" line.
 	aliasLine = regexp.MustCompile(`^\s*(?:-\s+)*(?:([^\s:#'"][^:#]*?)\s*:\s+)?\*`)
 )
@@ -43,7 +49,7 @@ func scrubYAML(err error, b []byte) error {
 			for i, l := range strings.Split(string(b), "\n") {
 				if m := aliasLine.FindStringSubmatch(l); m != nil {
 					where = "line " + strconv.Itoa(i+1) + ": "
-					if safeKey.MatchString(m[1]) {
+					if fieldNames[m[1]] {
 						where += m[1] + ": "
 					}
 					break
@@ -58,7 +64,7 @@ func scrubYAML(err error, b []byte) error {
 		case strings.Contains(msg, "cannot decode"):
 			return errors.New("yaml: a value or key that is not of its explicit tag")
 		}
-		return errors.New(yamlQuoted.ReplaceAllString(msg, "(value)"))
+		return errors.New(unquote(msg))
 	}
 	keys := map[int]string{}
 	if parsed {
@@ -70,7 +76,7 @@ func scrubYAML(err error, b []byte) error {
 		m := yamlTypeErr.FindStringSubmatch(e1)
 		if f := yamlField.FindStringSubmatch(e1); f != nil {
 			out[i] = "line " + f[1] + ": an unknown key in " + f[3]
-			if safeKey.MatchString(f[2]) {
+			if fieldNames[f[2]] {
 				out[i] = "line " + f[1] + ": unknown key " + f[2] + " in " + f[3]
 			}
 			continue
@@ -83,7 +89,7 @@ func scrubYAML(err error, b []byte) error {
 		case m == nil && strings.Contains(e, "cannot unmarshal"):
 			out[i] = "a value of the wrong type"
 		case m == nil:
-			out[i] = yamlQuoted.ReplaceAllString(e, "(value)")
+			out[i] = unquote(e)
 		default:
 			out[i] = "line " + m[1] + ": "
 			if n, _ := strconv.Atoi(m[1]); keys[n] != "" {
@@ -123,7 +129,7 @@ func walkYAML(n *yaml.Node, path string, fn func(*yaml.Node, string)) {
 		}
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			p := showKey(n.Content[i].Value)
+			p := showKey(path, n.Content[i].Value)
 			if path != "" {
 				p = path + "." + p
 			}
@@ -148,7 +154,7 @@ func keyLines(n *yaml.Node, path string, out map[int]string) {
 		return
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			p := showKey(n.Content[i].Value)
+			p := showKey(path, n.Content[i].Value)
 			if path != "" {
 				p = path + "." + p
 			}
@@ -176,10 +182,38 @@ func leaf(n *yaml.Node, path, parent string, out map[int]string) {
 	out[n.Line] = path
 }
 
-// showKey is k if it is safe to show, "(key)" otherwise.
-func showKey(k string) string {
-	if safeKey.MatchString(k) {
+// showKey is k, a key under path, if it is a lockfamily.yaml key or an
+// instance name (under locks and hub.routing), "(key)" otherwise.
+func showKey(path, k string) string {
+	if fieldNames[k] && path != "locks" && path != "hub.routing" || (path == "locks" || path == "hub.routing") && keys.ValidInstance(k) {
 		return k
 	}
 	return "(key)"
+}
+
+// yamlFields adds the yaml key names of t's fields, and of the structs
+// they hold, to seen.
+func yamlFields(t reflect.Type, seen map[string]bool) map[string]bool {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Map {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return seen
+	}
+	for i := range t.NumField() {
+		f := t.Field(i)
+		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+			seen[name] = true
+		}
+		yamlFields(f.Type, seen)
+	}
+	return seen
+}
+
+// unquote drops what msg quotes, unless it quotes single characters only.
+func unquote(msg string) string {
+	if !yamlLong.MatchString(msg) {
+		return msg
+	}
+	return yamlQuoted.ReplaceAllString(msg, "(value)")
 }
