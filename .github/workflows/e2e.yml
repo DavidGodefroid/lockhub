@@ -58,11 +58,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # locksql's host launcher (scripts/locksql), for the host agent
       # (`locksql mcp`, lockhub#78): the commit that reads up.json
-      # (DavidGodefroid/locksql#153), until a locksql release ships it.
+      # (DavidGodefroid/locksql#153, its merge commit on main), until a
+      # locksql release ships it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DavidGodefroid/locksql
-          ref: 3125b23f9ddcde0afda6043379bcb198892e7ef7
+          ref: 9fb7376d574e58aaf1aa8c92c5eae9a19948d2b2
           path: locksql-launcher
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
