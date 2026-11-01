@@ -19,6 +19,14 @@ digest).
   console checks. Every derived line is in the review. A docker source's
   containers map lives in the state directory; `lox refresh <instance>`
   rewrites it, and `lox doctor` says when it is stale.
+- Networks and routing for locklog (#87). A locklog lock with local sources
+  joins only the hub's network; with a remote source it also joins its own
+  egress network (`LOCKLOG_NETWORK`), which no agent joins. Its routing
+  defaults to tty, deck and mobile, and a `hub.routing` entry naming slack
+  or telegram is refused.
+- Fix: `lox doctor` compared the hub's routing with `hub.routing` and not
+  with what lox up writes, so a lock narrowed away from mobile (one that
+  pins no device) was reported as differing.
 
 ## v0.3.0 (2026-10-31)
 

@@ -51,6 +51,9 @@ type Paths struct {
 	// ProfileIDs are the device:inode of each type's profile volume, as
 	// its copy service printed it (Kind.Mounts: LOCKLOG_EXPECT_DIR).
 	ProfileIDs map[string]string
+	// Project is the compose project: it names a lock's egress network
+	// as the engine knows it (<project>_egress-<instance>).
+	Project string
 	// NCPU is the Docker host's processor count (docker info), which
 	// caps a kind's CPUs: compose refuses more CPUs than the host has.
 	// lox up reads it only when a lock's kind sets CPUs; 0: unknown, the
@@ -108,6 +111,20 @@ func (k Kind) cpus(ncpu int) int {
 	}
 	return k.CPUs
 }
+
+// hasEgress reports whether lock l gets its own egress network: every
+// kind but locklog, and a locklog lock whose plan reads a remote source
+// (Loki, Elasticsearch, OpenSearch). A locklog lock with local sources
+// only, or not planned yet, has no route out.
+func hasEgress(l Lock, lp *LogPlan) bool {
+	if !Kinds[l.Type].Mounts {
+		return true
+	}
+	return lp != nil && lp.Remote
+}
+
+// EgressNetwork is the engine's name of a lock's egress network.
+func EgressNetwork(project, inst string) string { return project + "_egress-" + inst }
 
 // needsNCPU reports whether a lock of c has a kind that sets CPUs: lox
 // up then reads the Docker host's NCPU.
@@ -248,6 +265,11 @@ func Compose(c *Config, p Paths) string {
 			if id := p.ProfileIDs[l.Type]; id != "" {
 				w("      LOCKLOG_EXPECT_DIR: %s", q(id))
 			}
+			if lp != nil && lp.Remote {
+				// The network a remote source is reached on: the lock's own
+				// egress network, which no agent joins.
+				w("      LOCKLOG_NETWORK: %s", q(EgressNetwork(p.Project, name)))
+			}
 			if lp != nil {
 				w("      LOCKLOG_EXPECT_ROOTS: %s", q(lp.Expect))
 				if lp.DockerRoot != "" {
@@ -272,7 +294,8 @@ func Compose(c *Config, p Paths) string {
 				cmd = append(cmd, "--facade-keys-file", LockFacadesPath)
 			}
 		}
-		if !k.Gate {
+		egress := hasEgress(l, p.Logs[name])
+		if !k.Gate && egress {
 			// The locks' profile tools name a database or broker on the
 			// host so, as their launchers resolve it.
 			w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
@@ -359,8 +382,13 @@ func Compose(c *Config, p Paths) string {
 			// The gate asks the hub, from lea's proxy: the console only
 			// serves the policy and has no hub network.
 			w("    networks: [%s]", q("egress-"+name))
-		} else {
+		} else if egress {
 			w("    networks: [lockhub, %s]", q("egress-"+name))
+			w("    depends_on: [lockhub]")
+		} else {
+			// A locklog console with local sources only: the hub's network
+			// alone (internal: no route out).
+			w("    networks: [lockhub]")
 			w("    depends_on: [lockhub]")
 		}
 		w("    restart: unless-stopped")
@@ -472,7 +500,9 @@ func Compose(c *Config, p Paths) string {
 		w("  %s: {}", q("mobile-hub"))
 	}
 	for _, name := range c.Instances() {
-		w("  %s: {}", q("egress-"+name))
+		if hasEgress(c.Locks[name], p.Logs[name]) {
+			w("  %s: {}", q("egress-"+name))
+		}
 	}
 	w("volumes:")
 	w("  hubkey: {}")

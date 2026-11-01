@@ -172,6 +172,10 @@ func (u UIDList) MarshalYAML() (any, error) {
 	return n, nil
 }
 
+// LocklogFacades are the facades that may answer a locklog lock (its
+// default routing): the local ones.
+var LocklogFacades = []string{route.TTY, route.Deck, route.Mobile}
+
 // AllowedUIDTypes are the lock types whose console takes --allowed-uids.
 var AllowedUIDTypes = []string{"locksql", "lockmq", "lockfile", "locklog"}
 
@@ -337,6 +341,9 @@ func (c *Config) validate(needLocks bool) error {
 		for i, f := range fs {
 			if !slices.Contains(c.Hub.Facades, f) {
 				return fmt.Errorf("hub.routing.%s[%d]: not a facade enabled in hub.facades (%s)", inst, i, strings.Join(c.Hub.Facades, ", "))
+			}
+			if c.Locks[inst].Type == "locklog" && !slices.Contains(LocklogFacades, f) {
+				return fmt.Errorf("hub.routing.%s[%d]: a locklog lock is answered only on %s (an unmask is read-pii: never on a chat facade)", inst, i, strings.Join(LocklogFacades, ", "))
 			}
 		}
 	}

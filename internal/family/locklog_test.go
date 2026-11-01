@@ -76,7 +76,6 @@ func TestComposeLocklog(t *testing.T) {
     environment:
       HOME: "/home/locklog"
       LOCKLOG_PII_DIR: "/home/locklog/pii-rules"
-    extra_hosts: ["host.docker.internal:host-gateway"]
     working_dir: "/w"
     command: ["console", "--allowed-uids", "1000", "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", "/run/lockfamily/hub.pub", "--instance", "logs"]
     logging:
@@ -95,7 +94,7 @@ func TestComposeLocklog(t *testing.T) {
       - "logs-home:/home/locklog"
       - hubkey:/run/lockfamily:ro
       - "profile-locklog:/w/.locklog:ro"
-    networks: [lockhub, "egress-logs"]
+    networks: [lockhub]
     depends_on: [lockhub]
     restart: unless-stopped
 `

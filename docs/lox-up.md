@@ -240,6 +240,19 @@ rewrites it from the globs lox up applied (the console re-reads it). No loop
 follows `docker events` under lox up, and `lox doctor` says when the map is
 stale.
 
+A locklog lock whose plan has only local sources joins the hub's network alone
+(internal: no route out, no `egress-<instance>`, no `host.docker.internal`).
+With a remote source (Loki, Elasticsearch, OpenSearch) it also joins its own
+egress network, which no agent and no other service joins, and its console
+gets that network's name as `LOCKLOG_NETWORK` (`<project>_egress-<instance>`).
+The review says which network the lock gets.
+
+A locklog lock is answered only on the local facades: a `hub.routing` entry
+of it naming `slack` or `telegram` is refused (an unmask is `read-pii`), and
+with no entry it is routed to `tty`, `deck` and `mobile` (narrowed away from
+mobile when it pins no device, as every lock). `lox doctor` compares the
+hub's `routing.json` with that routing, as lox up writes it.
+
 ## Restoring a hub version, rotating keys
 
 `lox up --pin sha256:<digest>` (or the whole

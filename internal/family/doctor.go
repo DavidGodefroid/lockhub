@@ -187,7 +187,8 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 		fail("hub routing %s: %v", p, err)
 		return
 	}
-	want := route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}
+	// What lox up writes: hub.routing, narrowed (mobile, locklog).
+	want := Routes(c)
 	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) {
 		fail("hub routing %s differs from lockfamily.yaml: run lox up", p)
 		return

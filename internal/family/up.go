@@ -147,6 +147,8 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		}
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
+		} else if l.Type == "locklog" {
+			s = append(s, fmt.Sprintf("lock %s routed only to %s (locklog's default: no chat facade)", n, strings.Join(LocklogFacades, ",")))
 		}
 	}
 	return s
@@ -270,7 +272,7 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	facadesPath := filepath.Join(u.State, FacadesFile)
-	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks, Project: project}
 	if needsNCPU(c) {
 		if paths.NCPU, err = hostNCPU(ctx, u.Run); err != nil {
 			return err
@@ -473,6 +475,11 @@ func (u *Up) Do(ctx context.Context) error {
 	for _, n := range c.Instances() {
 		if pl := plans[n]; pl != nil {
 			sum = append(sum, pl.Review(n)...)
+			if pl.Remote {
+				sum = append(sum, fmt.Sprintf("lock %s network lockhub and %s, its own, which no agent joins (remote sources; LOCKLOG_NETWORK)", n, EgressNetwork(project, n)))
+			} else {
+				sum = append(sum, fmt.Sprintf("lock %s network lockhub only (local sources: no route out)", n))
+			}
 		}
 	}
 	for _, t := range types(c) {
@@ -745,6 +752,13 @@ func Routes(c *Config) route.Rules {
 	r := route.Rules{Enabled: c.Hub.Facades, Only: map[string][]string{}}
 	for inst, fs := range c.Hub.Routing {
 		r.Only[inst] = slices.Clone(fs)
+	}
+	// A locklog lock is answered on the local facades only, unless
+	// hub.routing narrows it further (it cannot name a chat facade).
+	for _, n := range c.Instances() {
+		if _, set := r.Only[n]; !set && c.Locks[n].Type == "locklog" {
+			r.Only[n] = slices.Clone(LocklogFacades)
+		}
 	}
 	if slices.Contains(c.Hub.Facades, route.Mobile) {
 		for _, n := range c.Instances() {
