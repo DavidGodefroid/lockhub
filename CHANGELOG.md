@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+- Release: each tag bumps the `lox` formula of the Homebrew tap
+  (`brew install davidgodefroid/tap/lox`), through a dispatch to
+  DavidGodefroid/homebrew-tap once the archives and the image are signed
+  (DavidGodefroid/lockfamily#8). The step is skipped while the
+  `TAP_DISPATCH_TOKEN` secret is not set.
 - `lox init` (#80): one command activates the Lock Family in a project.
   It checks Docker (with the install command for the system when it does
   not answer), cosign, lea and the locks' launchers; detects PostgreSQL,
