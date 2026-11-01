@@ -173,7 +173,7 @@ func (u UIDList) MarshalYAML() (any, error) {
 }
 
 // AllowedUIDTypes are the lock types whose console takes --allowed-uids.
-var AllowedUIDTypes = []string{"locksql", "lockmq", "lockfile"}
+var AllowedUIDTypes = []string{"locksql", "lockmq", "lockfile", "locklog"}
 
 // validAllowedUIDs checks a lock's allowed_uids: uids (not root, not the
 // console's own, not -1), each once, for a type that takes them.
@@ -211,7 +211,7 @@ func (l Lock) AllowedUIDsFlag() string {
 var profileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 // Types are the lock types lox up knows, and their image repositories.
-var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp"}
+var Types = []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog"}
 
 var digestRef = regexp.MustCompile(`^ghcr\.io/davidgodefroid/([a-z]+)@sha256:[0-9a-f]{64}$`)
 

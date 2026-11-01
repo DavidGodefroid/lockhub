@@ -43,6 +43,11 @@ type Paths struct {
 	// Rotate are the locks whose key lox up --rotate replaces: each gets
 	// the setup service rotkey-<instance> (rotate.go).
 	Rotate []string
+	// NCPU is the Docker host's processor count (docker info), which
+	// caps a kind's CPUs: compose refuses more CPUs than the host has.
+	// lox up reads it only when a lock's kind sets CPUs; 0: unknown, the
+	// kind's CPUs as they are.
+	NCPU int
 }
 
 // Kind is what lox up knows of a lock type's image: the console's
@@ -64,6 +69,9 @@ type Kind struct {
 	// sets them.
 	Mem  string
 	Pids int
+	// CPUs, when set, caps the console's CPUs (compose's cpus) at
+	// min(CPUs, the Docker host's NCPU), as lox up renders it; 0: no cap.
+	CPUs int
 }
 
 // Kinds are the lock types' images (their Dockerfiles).
@@ -72,6 +80,32 @@ var Kinds = map[string]Kind{
 	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256},
 	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512},
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
+	// locklog's console scans and masks the logs itself: at most two of
+	// the host's CPUs, as its launcher.
+	"locklog": {UID: "10051", GID: "10050", Project: true, Mem: "1g", Pids: 256, CPUs: 2},
+}
+
+// cpus is the console's CPU cap on a host of ncpu processors (0:
+// unknown), or 0 when the kind sets none.
+func (k Kind) cpus(ncpu int) int {
+	if k.CPUs <= 0 {
+		return 0
+	}
+	if ncpu > 0 {
+		return min(k.CPUs, ncpu)
+	}
+	return k.CPUs
+}
+
+// needsNCPU reports whether a lock of c has a kind that sets CPUs: lox
+// up then reads the Docker host's NCPU.
+func needsNCPU(c *Config) bool {
+	for _, t := range types(c) {
+		if Kinds[t].CPUs > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // LocksqlPIIDir is where a locksql console keeps its PII rule sets
@@ -238,6 +272,9 @@ func Compose(c *Config, p Paths) string {
 			}
 		}
 		limits(w, k.Mem, k.Pids)
+		if n := k.cpus(p.NCPU); n > 0 {
+			w("    cpus: %d", n)
+		}
 		w("    volumes:")
 		w("      - %s", q(name+"-run:/run/"+l.Type))
 		w("      - %s", q(name+"-home:"+home))

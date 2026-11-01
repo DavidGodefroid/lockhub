@@ -44,7 +44,7 @@ Usage:
                                           the hub image by digest (a previous version restored), --rotate
                                           (repeatable) replaces the hub's or a lock's key
   lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
-                                          declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp), pinned by
+                                          declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp, locklog), pinned by
                                           digest to its latest (or the given) release, cosign-verified
   lox add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
                                           enable the Slack facade; asks for its tokens at the terminal

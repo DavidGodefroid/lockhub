@@ -268,6 +268,11 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	facadesPath := filepath.Join(u.State, FacadesFile)
 	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
+	if needsNCPU(c) {
+		if paths.NCPU, err = hostNCPU(ctx, u.Run); err != nil {
+			return err
+		}
+	}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
 		return fmt.Errorf("paired devices: %w", err)
@@ -745,4 +750,18 @@ func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, compos
 		}
 	}
 	return nil
+}
+
+// hostNCPU is the Docker host's processor count, as the engine reports
+// it (not this process's: the engine may run elsewhere, or in a VM).
+func hostNCPU(ctx context.Context, run Runner) (int, error) {
+	out, err := run.Run(ctx, nil, "docker", "info", "--format", "{{.NCPU}}")
+	if err != nil {
+		return 0, fmt.Errorf("the Docker host's CPUs: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("the Docker host's CPUs: docker info says %q, want a count", strings.TrimSpace(string(out)))
+	}
+	return n, nil
 }

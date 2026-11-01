@@ -10,7 +10,7 @@ between the two.
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lox add`, `lox import`) | `lox` |
 | `<workspace>/.lockfamily/up.json` | `lox up`, after a confirmed apply | lea |
-| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lox up`, which copies it (see below) |
+| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`, `.locklog`) | the human (the lock's own profile tools) | `lox up`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox up` | `lox` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox up pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox up` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox up` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
@@ -142,7 +142,9 @@ every screen), so attaching does not replay the pending question; on a
 first start it is the policy review, `Apply these changes? [y/N]`. A console
 that restarts asks again: attach again. Locks are pending (agents get no
 answer) until answered. Memory and process limits are the ones each lock's
-own launcher sets.
+own launcher sets. A locklog console also gets at most two CPUs (`cpus:`,
+fewer on a host with one: `lox up` reads the Docker host's count with
+`docker info`).
 
 The copy is read-only in the lock. A locksql console keeps its PII rule sets
 in its own home volume instead (`LOCKSQL_PII_DIR`, locksql v0.11.0 or later):
@@ -165,7 +167,7 @@ instance is not supported (lockhub#44).
 
 lea's agents run as the host user's uid, which has no account in a lock's
 image: the console refuses them unless the lock names that uid. In
-lockfamily.yaml, per locksql, lockmq or lockfile lock:
+lockfamily.yaml, per locksql, lockmq, lockfile or locklog lock:
 
 ```yaml
 locks:
@@ -176,7 +178,7 @@ locks:
 ```
 
 lox up passes it as the console's `--allowed-uids 1000` (locksql v0.11.2,
-lockmq v0.4.1, lockfile v0.5.1 or later; an older image refuses to start), and the review
+lockmq v0.4.1, lockfile v0.5.1, locklog v0.2.0 or later; an older image refuses to start), and the review
 shows it (`lock events serves uids 1000 besides its clients group`): a
 change of it is a change to confirm. Only uids, each once: never root, 65534
 (nobody), nor the console's own uid. `.lockfamily/` is read-only in lea's containers,
@@ -187,7 +189,7 @@ declaration of an instance lists.
 
 `lox add` pins only releases that run under lox up (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
-lockhttp v0.3.0 or later.
+lockhttp v0.3.0, locklog v0.2.0 or later.
 
 Locks resolve `host.docker.internal` to the host, as their launchers do
 (their profile wizards name a local database or broker so). A TOML file of a

@@ -73,6 +73,13 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if f.failing != "" && strings.Contains(line, f.failing) {
 		return nil, errors.New("refused")
 	}
+	// The Docker host's CPUs: keys["ncpu"], or 8.
+	if line == "docker info --format {{.NCPU}}" {
+		if n, ok := f.keys["ncpu"]; ok {
+			return []byte(n + "\n"), nil
+		}
+		return []byte("8\n"), nil
+	}
 	if strings.HasSuffix(line, " lockhub help") {
 		if f.keys["nohelp"] != "" {
 			return []byte("lockhub serve\n"), nil

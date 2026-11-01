@@ -5,6 +5,13 @@ digest).
 
 ## Unreleased
 
+- `lox up` and `lox add` know the lock type `locklog` (#84): image
+  `ghcr.io/davidgodefroid/locklog`, console 10051, clients group 10050, its
+  profile in `<workspace>/.locklog`, `allowed_uids`, locklog v0.2.0 or later.
+  A lock kind can cap its console's CPUs: locklog's gets `cpus: min(2, the
+  Docker host's CPUs)` (`docker info`); the other locks' services are
+  unchanged. Mounts of the logs, networks and routing for locklog come next.
+
 ## v0.3.0 (2026-10-31)
 
 Supported locks: as v0.2.7.
