@@ -16,6 +16,9 @@ type doctorFix struct {
 	// launcher verbs does). An older launcher or image gets the advisory
 	// doctor.
 	Min string
+	// Notice is said before the doctor runs with --fix, when that repair
+	// reaches beyond the lock's own files.
+	Notice string
 }
 
 // doctorFixes are the locks whose doctor lox add runs with --fix.
@@ -24,16 +27,22 @@ type doctorFix struct {
 //     to the console account, which lox up then refused (it copies a
 //     profile only from the user's own files): fixed in v0.13.1 / v0.6.1.
 //     locksql's --fix also wires the installed agents for the user's
-//     account.
+//     account: lox add says so before it runs it (its Notice).
 //   - lockhttp's --fix (v0.7.0, its first release with the verbs) only
 //     takes group and others' write away from the policy.
 //   - lockfile is left out: its only repair (v0.6.0) wires every installed
 //     agent for the user's account, nothing lox up needs, so lox add does
 //     not make it behind the user's back (lockfile doctor --fix does it).
 var doctorFixes = map[string]doctorFix{
-	"locksql":  {Min: "0.13.1"},
+	"locksql":  {Min: "0.13.1", Notice: "locksql doctor --fix also wires your installed agents for your account"},
 	"lockmq":   {Min: "0.6.1"},
 	"lockhttp": {},
+}
+
+// FixNotice is what lox add says before it runs the lock's doctor with
+// --fix ("" when the repair touches only the lock's own files).
+func FixNotice(lock string) string {
+	return doctorFixes[lock].Notice
 }
 
 // LauncherVersions is what `<lock> version` prints: the launcher's version

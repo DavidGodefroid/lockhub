@@ -93,6 +93,21 @@ func TestDoctorArgsPerLock(t *testing.T) {
 	}
 }
 
+// locksql's --fix also wires the user's agents: lox add says so before it
+// runs. The other locks' --fix touches only the lock's own files.
+func TestFixNotice(t *testing.T) {
+	for lock, want := range map[string]string{
+		"locksql":  "locksql doctor --fix also wires your installed agents for your account",
+		"lockmq":   "",
+		"lockhttp": "",
+		"lockfile": "",
+	} {
+		if got := FixNotice(lock); got != want {
+			t.Errorf("%s: %q, want %q", lock, got, want)
+		}
+	}
+}
+
 func TestAtLeast(t *testing.T) {
 	for _, c := range []struct {
 		v, min string

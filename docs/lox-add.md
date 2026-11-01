@@ -24,7 +24,12 @@ At a terminal, `lox add TYPE` runs these steps in order:
    **`doctor`**, from the project root. The lock's profile takes the lock's
    name. A profile already in the lock's config is kept as it is. The
    doctor's repairs and what still fails are shown; a failure of the doctor
-   never stops `lox add` (the console is not running yet).
+   never stops `lox add` (the console is not running yet). The doctor runs
+   with `--fix --yes` for locksql, lockmq and lockhttp, without `--fix` for
+   lockfile (its only repair wires your agents). locksql's `--fix` also
+   wires your installed agents for your account: before it runs, `lox add`
+   says `locksql doctor --fix also wires your installed agents for your
+   account`.
 3. **The declaration** in `.lockfamily/lockfamily.yaml`: the lock's image,
    pinned by digest and cosign-verified (the `-vault` image variant for a
    lock that takes its credentials from Vault), and, for locksql, lockmq and

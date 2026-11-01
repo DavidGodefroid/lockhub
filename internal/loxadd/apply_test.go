@@ -178,6 +178,10 @@ func TestApplyOrder(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", s, w.out.String())
 		}
 	}
+	notice := strings.Index(w.out.String(), "locksql doctor --fix also wires your installed agents for your account")
+	if notice < 0 || notice > strings.Index(w.out.String(), "doctor --fix: 1 ok") {
+		t.Errorf("no notice before the doctor step:\n%s", w.out.String())
+	}
 }
 
 func TestApplyDeclinedRollsBack(t *testing.T) {

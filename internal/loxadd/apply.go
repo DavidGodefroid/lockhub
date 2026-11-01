@@ -299,6 +299,9 @@ func (s *Steps) doctor(ctx context.Context, lock string) {
 	name := "doctor"
 	if slices.Contains(args, "--fix") {
 		name = "doctor --fix"
+		if n := loxinit.FixNotice(lock); n != "" {
+			s.say("%s", n)
+		}
 	}
 	o := loxinit.Classify(s.Run.Verb(ctx, s.Root, lock, args...))
 	if ctx.Err() != nil {
