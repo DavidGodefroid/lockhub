@@ -140,7 +140,9 @@ func TestRemoveProfileTrickyTOML(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			cfg := filepath.Join(dir, "config.toml")
-			os.WriteFile(cfg, []byte(c.in), 0o600)
+			if err := os.WriteFile(cfg, []byte(c.in), 0o600); err != nil {
+				t.Fatal(err)
+			}
 			if err := RemoveProfile(dir, "orders"); err != nil {
 				t.Fatal(err)
 			}
@@ -157,11 +159,88 @@ func TestRemoveProfileRefusesWhatItMisreads(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.toml")
 	src := "[profiles.orders]\nx = [\n  1,\n\n[profiles.inventory]\nhost = \"inv\"\n"
-	os.WriteFile(cfg, []byte(src), 0o600)
+	if err := os.WriteFile(cfg, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := RemoveProfile(dir, "orders"); err == nil {
 		t.Error("removed from a file it cannot read")
 	}
 	if b, _ := os.ReadFile(cfg); string(b) != src {
 		t.Errorf("file changed:\n%s", b)
+	}
+}
+
+// Valid TOML whose other profile has a quoted key (commas, brackets,
+// dots, spaces): it is kept byte for byte.
+func TestRemoveProfileQuotedKeys(t *testing.T) {
+	for _, key := range []string{`"a,b"`, `"a=b"`, `"a]b"`, `"a[b"`, `'orders.x'`, `"orders "`, `"or ders"`, `"orders.v2"`} {
+		t.Run(key, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := filepath.Join(dir, "config.toml")
+			other := "[profiles." + key + "]\nhost = \"inv\"\n"
+			if err := os.WriteFile(cfg, []byte("[profiles.orders]\nx = 1\n\n"+other), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := RemoveProfile(dir, "orders"); err != nil {
+				t.Fatal(err)
+			}
+			if b, _ := os.ReadFile(cfg); string(b) != other {
+				t.Errorf("config.toml:\n%s\nwant:\n%s", b, other)
+			}
+		})
+	}
+}
+
+// Removing a profile whose name holds a dot removes that profile only.
+func TestRemoveProfileDottedName(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	src := "[profiles.orders]\nx = 1\n\n[profiles.\"orders.v2\"]\nhost = \"v2\"\n[profiles.\"orders.v2\".extra]\ny = 2\n"
+	if err := os.WriteFile(cfg, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveProfile(dir, "orders.v2"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != "[profiles.orders]\nx = 1\n\n" {
+		t.Errorf("config.toml:\n%s", b)
+	}
+}
+
+// A line starting with [ that is no table header is refused, file untouched.
+func TestRemoveProfileRefusesUnparseableHeader(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	src := "[profiles.orders]\nx = 1\n[profiles.inv entory]\nhost = \"inv\"\n"
+	if err := os.WriteFile(cfg, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveProfile(dir, "orders"); err == nil {
+		t.Error("edited a file with a line it cannot read")
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != src {
+		t.Errorf("file changed:\n%s", b)
+	}
+}
+
+// The oracle (a real TOML parser) refuses a result that is not the
+// original with only the profile deleted.
+func TestCheckProfileEditOracle(t *testing.T) {
+	orig := "[profiles.orders]\nx = 1\n[profiles.inventory]\nhost = \"inv\"\n"
+	if err := checkProfileEdit([]byte(orig), []byte("[profiles.inventory]\nhost = \"inv\"\n"), "orders"); err != nil {
+		t.Errorf("right edit refused: %v", err)
+	}
+	for name, out := range map[string]string{
+		"empty":         "",
+		"other changed": "[profiles.inventory]\nhost = \"x\"\n",
+		"not removed":   orig,
+		"not toml":      "[profiles.inventory\n",
+	} {
+		if err := checkProfileEdit([]byte(orig), []byte(out), "orders"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if err := checkProfileEdit([]byte("[x"), []byte(""), "orders"); err == nil {
+		t.Error("an original that does not decode was accepted")
 	}
 }

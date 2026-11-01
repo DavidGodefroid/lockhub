@@ -2,12 +2,15 @@ package family
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"gopkg.in/yaml.v3"
 )
 
@@ -112,8 +115,12 @@ func RemoveProfile(dir, profile string) error {
 		if ln == "" {
 			continue
 		}
-		if key, ok := tableHeader(ln); ok && depth == 0 {
-			drop := key == "profiles."+profile || strings.HasPrefix(key, "profiles."+profile+".")
+		if depth == 0 && strings.HasPrefix(strings.TrimSpace(ln), "[") {
+			segs, err := tableHeader(ln)
+			if err != nil {
+				return fmt.Errorf("%s: cannot be edited safely (%v): remove [profiles.%s] by hand", path, err, profile)
+			}
+			drop := len(segs) >= 2 && segs[0] == "profiles" && segs[1] == profile
 			if skipping && !drop {
 				out = appendKept(out, pending)
 			}
@@ -147,31 +154,132 @@ func RemoveProfile(dir, profile string) error {
 	if !found {
 		return fmt.Errorf("no profile %q in %s", profile, path)
 	}
-	// Safety net: a line this editor misread must never cost another
-	// table. Unbalanced brackets, or a header lost besides the profile's
-	// own, leave the file as it is.
-	if depth != 0 || !sameHeaders(headers(lines), headers(out), profile) {
-		return fmt.Errorf("%s: cannot be edited safely: remove [profiles.%s] by hand", path, profile)
+	// Safety net: unbalanced brackets, or a result that a real TOML parser
+	// does not read as the original less the profile, leave the file as it
+	// is.
+	res := []byte(strings.Join(out, ""))
+	if depth != 0 {
+		return fmt.Errorf("%s: cannot be edited safely (unbalanced brackets): remove [profiles.%s] by hand", path, profile)
 	}
-	return WriteFileMode(path, []byte(strings.Join(out, "")), fi.Mode().Perm())
+	if err := checkProfileEdit(b, res, profile); err != nil {
+		return fmt.Errorf("%s: cannot be edited safely (%v): remove [profiles.%s] by hand", path, err, profile)
+	}
+	return WriteFileMode(path, res, fi.Mode().Perm())
 }
 
-// tableHeader reports whether line is a TOML table header ([a.b] or
-// [[a.b]]) and gives its dotted key without spaces or quotes.
-func tableHeader(line string) (string, bool) {
-	t := strings.TrimSpace(line)
-	if !strings.HasPrefix(t, "[") {
-		return "", false
+// tableHeader parses a table header line ([a.b] or [[a.b]], a trailing
+// comment allowed) into its key segments: bare, "basic" (with escapes) or
+// 'literal' keys, whitespace trimmed outside quotes only.
+func tableHeader(line string) ([]string, error) {
+	t := strings.TrimSpace(cutComment(strings.TrimSpace(line)))
+	inner, ok := strings.CutPrefix(t, "[[")
+	if ok {
+		if inner, ok = strings.CutSuffix(inner, "]]"); !ok {
+			return nil, errors.New("unreadable table header")
+		}
+	} else {
+		inner = strings.TrimPrefix(t, "[")
+		if inner, ok = strings.CutSuffix(inner, "]"); !ok {
+			return nil, errors.New("unreadable table header")
+		}
 	}
-	t = strings.TrimSpace(cutComment(t))
-	inner := strings.TrimSuffix(strings.TrimPrefix(t, "["), "]")
-	if strings.HasPrefix(inner, "[") {
-		inner = strings.TrimSuffix(strings.TrimPrefix(inner, "["), "]")
+	var segs []string
+	rs := []rune(inner)
+	i := 0
+	skip := func() {
+		for i < len(rs) && (rs[i] == ' ' || rs[i] == '\t') {
+			i++
+		}
 	}
-	if inner == "" || strings.ContainsAny(inner, "[]=,") {
-		return "", false
+	for {
+		skip()
+		var seg strings.Builder
+		switch {
+		case i >= len(rs):
+			return nil, errors.New("unreadable table header")
+		case rs[i] == '\'':
+			i++
+			for i < len(rs) && rs[i] != '\'' {
+				seg.WriteRune(rs[i])
+				i++
+			}
+			if i >= len(rs) {
+				return nil, errors.New("unreadable table header")
+			}
+			i++
+		case rs[i] == '"':
+			i++
+			for {
+				if i >= len(rs) {
+					return nil, errors.New("unreadable table header")
+				}
+				if rs[i] == '"' {
+					i++
+					break
+				}
+				if rs[i] == '\\' {
+					// The escaped character stands for itself or its
+					// control character; a \u form is kept apart by its
+					// raw text (no profile name is written so).
+					i++
+					if i >= len(rs) {
+						return nil, errors.New("unreadable table header")
+					}
+					seg.WriteRune('\\')
+				}
+				seg.WriteRune(rs[i])
+				i++
+			}
+		default:
+			start := i
+			for i < len(rs) && (rs[i] >= 'a' && rs[i] <= 'z' || rs[i] >= 'A' && rs[i] <= 'Z' || rs[i] >= '0' && rs[i] <= '9' || rs[i] == '_' || rs[i] == '-') {
+				i++
+			}
+			if i == start {
+				return nil, errors.New("unreadable table header")
+			}
+			seg.WriteString(string(rs[start:i]))
+		}
+		segs = append(segs, seg.String())
+		skip()
+		if i >= len(rs) {
+			return segs, nil
+		}
+		if rs[i] != '.' {
+			return nil, errors.New("unreadable table header")
+		}
+		i++
 	}
-	return strings.NewReplacer(" ", "", `"`, "", "'", "").Replace(inner), true
+}
+
+// checkProfileEdit is the oracle: a real TOML parser reads the original
+// and the result, and the result must be the original with only
+// [profiles.PROFILE] gone. The line editor keeps the bytes; this decides
+// whether its work may be written.
+func checkProfileEdit(orig, out []byte, profile string) error {
+	var before, after map[string]any
+	if _, err := toml.Decode(string(orig), &before); err != nil {
+		return errors.New("not valid TOML")
+	}
+	if _, err := toml.Decode(string(out), &after); err != nil {
+		return errors.New("the result is not valid TOML")
+	}
+	profiles, ok := before["profiles"].(map[string]any)
+	if !ok {
+		return errors.New("no profiles table")
+	}
+	delete(profiles, profile)
+	// An empty [profiles] is the same as none.
+	if len(profiles) == 0 {
+		delete(before, "profiles")
+	}
+	if p, ok := after["profiles"].(map[string]any); ok && len(p) == 0 {
+		delete(after, "profiles")
+	}
+	if !reflect.DeepEqual(before, after) {
+		return errors.New("the result differs from the file less the profile")
+	}
+	return nil
 }
 
 // cutComment is line without its trailing comment: a # inside a string
@@ -234,30 +342,4 @@ func appendKept(out, kept []string) []string {
 		kept = kept[1:]
 	}
 	return append(out, kept...)
-}
-
-// headers are the table headers of lines, in order.
-func headers(lines []string) []string {
-	var hs []string
-	depth := 0
-	for _, ln := range lines {
-		if k, ok := tableHeader(ln); ok && depth == 0 {
-			hs = append(hs, k)
-			continue
-		}
-		depth = max(0, depth+bracketDelta(ln))
-	}
-	return hs
-}
-
-// sameHeaders reports whether after is before less the headers of
-// profiles.P and its sub-tables.
-func sameHeaders(before, after []string, profile string) bool {
-	var want []string
-	for _, k := range before {
-		if k != "profiles."+profile && !strings.HasPrefix(k, "profiles."+profile+".") {
-			want = append(want, k)
-		}
-	}
-	return slices.Equal(want, after)
 }
