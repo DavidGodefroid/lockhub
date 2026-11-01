@@ -65,8 +65,20 @@ func (f *fakeRunner) Verb(_ context.Context, dir, name string, args ...string) (
 		}
 		return []byte(fmt.Sprintf("Profile %s written.\n{\"lock\":%q,\"profile\":%q,\"config\":%q,\"production\":%v%s}\n",
 			prof, name, prof, filepath.Join(dir, "."+name, "config.toml"), slices.Contains(args, "--production"), cred)), nil, 0, nil
+	case "version":
+		// The releases whose doctor --fix leaves the lock's directory as
+		// lox up reads it.
+		v := map[string]string{"locksql": "0.13.1", "lockmq": "0.6.1"}[name]
+		if v == "" {
+			v = "0.7.0"
+		}
+		return []byte(fmt.Sprintf("%s launcher %s (image ghcr.io/davidgodefroid/%s@sha256:0)\n%s v%s\n", name, v, name, name, v)), nil, 0, nil
 	case "doctor":
-		return []byte(`{"lock":"` + name + `","ok":false,"fixed":[],"checks":[{"check":"config","status":"ok","detail":"ok"},{"check":"console","status":"warn","detail":"not running"},{"check":"project","status":"fail","detail":"owned by you","fix":"doctor --fix"}]}`), nil, 1, nil
+		fixed := "[]"
+		if slices.Contains(args, "--fix") {
+			fixed = `["chmod go-w .` + name + `/config.toml"]`
+		}
+		return []byte(`{"lock":"` + name + `","ok":false,"fixed":` + fixed + `,"checks":[{"check":"config","status":"ok","detail":"ok"},{"check":"console","status":"warn","detail":"not running"},{"check":"agents","status":"warn","detail":"not wired: codex","fix":"` + name + ` doctor --fix wires it"},{"check":"project","status":"fail","detail":"owned by you","fix":"chown"}]}`), nil, 1, nil
 	}
 	return []byte("created .mcp.json\n"), nil, 0, nil
 }
@@ -150,13 +162,15 @@ func TestAutoYes(t *testing.T) {
 	want := []string{
 		"locksql profile add --non-interactive --json --project " + root + " --profile db --credentials ask --engine postgres --host host.docker.internal --port 55432 --user shop --database shop --tls disable",
 		"locksql init claude",
-		"locksql doctor --json",
+		"locksql version",
+		"locksql doctor --fix --yes --json",
 		"lockmq profile add --non-interactive --json --project " + root + " --profile mq --credentials ask --url http://host.docker.internal:55672 --user orders --vhost orders --amqp-url amqp://host.docker.internal:55673",
 		"lockmq init claude",
-		"lockmq doctor --json",
+		"lockmq version",
+		"lockmq doctor --fix --yes --json",
 		"locksql profile add --non-interactive --json --project " + root + " --profile stock --credentials ask --engine mysql --host inventory.internal --port 3307 --user stock --database stock --tls verify-full",
 		"locksql init claude",
-		"locksql doctor --json",
+		"locksql doctor --fix --yes --json",
 	}
 	if strings.Join(h.run.calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("verbs:\n%s\nwant:\n%s", strings.Join(h.run.calls, "\n"), strings.Join(want, "\n"))
@@ -169,10 +183,132 @@ func TestAutoYes(t *testing.T) {
 			t.Errorf("%s: allowed_uids %v, want lea's uid", p.Instance, p.AllowedUIDs)
 		}
 	}
-	for _, c := range h.run.calls {
-		if strings.Contains(c, "--fix") {
-			t.Errorf("doctor --fix run (it gives the lock's directory to the console, which lox up then refuses): %s", c)
+}
+
+// doctor --fix runs only with a launcher and an image at or after the
+// release whose --fix leaves the lock's directory as lox up reads it;
+// older (or unknown), lox init runs the advisory doctor and says why. A
+// launcher from a clone ("dev") is judged by its image.
+func TestDoctorFixNeedsFixedLauncher(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		version  string // locksql version's stdout
+		code     int
+		fix      bool
+		wantNote string
+	}{
+		{"fixed release", "locksql launcher 0.13.1 (image x)\nlocksql v0.13.1\n", 0, true, ""},
+		{"later release", "locksql launcher 0.14.0 (image x)\nlocksql v0.14.0\n", 0, true, ""},
+		{"clone, fixed image", "locksql launcher dev (image x)\nlocksql v0.13.1\n", 0, true, ""},
+		{"older release", "locksql launcher 0.13.0 (image x)\nlocksql v0.13.0\n", 0, false, "launcher 0.13.0 is older than v0.13.1"},
+		{"clone, older image", "locksql launcher dev (image x)\nlocksql v0.13.0\n", 0, false, "image v0.13.0 is older than v0.13.1"},
+		{"pre-release image", "locksql launcher 0.13.1 (image x)\nlocksql v0.13.1-rc1\n", 0, false, "image v0.13.1-rc1 is older than v0.13.1"},
+		{"image does not answer", "locksql launcher 0.13.1 (image x)\n", 1, false, "image of unknown version is older than v0.13.1"},
+		{"no version at all", "", 2, false, "locksql version did not say its versions"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := shopProject(t)
+			h := newHarness(t, root, "")
+			h.in.Yes = true
+			h.run.answer = func(lock string, args []string) (string, string, int) {
+				if lock == "locksql" && args[0] == "version" {
+					if c.version == "" {
+						return "", "locksql: docker is required\n", c.code
+					}
+					return c.version, "", c.code
+				}
+				return "", "", 0
+			}
+			if err := h.in.Do(context.Background()); err != nil {
+				t.Fatalf("%v\n%s", err, h.out.String())
+			}
+			var doctors []string
+			versions := 0
+			for _, v := range h.verbs("locksql") {
+				switch {
+				case strings.HasPrefix(v, "locksql doctor"):
+					doctors = append(doctors, v)
+				case v == "locksql version":
+					versions++
+				}
+			}
+			want := "locksql doctor --json"
+			if c.fix {
+				want = "locksql doctor --fix --yes --json"
+			}
+			if len(doctors) != 2 || doctors[0] != want || doctors[1] != want {
+				t.Errorf("doctors %q, want %q twice", doctors, want)
+			}
+			if versions != 1 {
+				t.Errorf("locksql version asked %d times, want once", versions)
+			}
+			out := h.out.String()
+			if c.fix {
+				if strings.Contains(out, "lox init runs locksql doctor without --fix") {
+					t.Errorf("fallback note with a fixed launcher:\n%s", out)
+				}
+				if !strings.Contains(out, "doctor --fix: fixed chmod go-w .locksql/config.toml") {
+					t.Errorf("the repairs are not shown:\n%s", out)
+				}
+				return
+			}
+			note := "lox init runs locksql doctor without --fix: " + c.wantNote + ", whose doctor --fix gives .locksql/ to the console account (lox up then refuses it); update locksql to v0.13.1 or later, then run locksql doctor --fix"
+			if !strings.Contains(out, note) {
+				t.Errorf("no note %q in\n%s", note, out)
+			}
+			// lockmq's launcher is a fixed release: its --fix runs.
+			if !slices.Contains(h.verbs("lockmq"), "lockmq doctor --fix --yes --json") {
+				t.Errorf("lockmq: %q", h.verbs("lockmq"))
+			}
+		})
+	}
+}
+
+// lockmq's fixed release is v0.6.1: v0.6.0 gets the advisory doctor.
+func TestDoctorFixLockmqOlder(t *testing.T) {
+	root := shopProject(t)
+	h := newHarness(t, root, "")
+	h.in.Yes = true
+	h.run.answer = func(lock string, args []string) (string, string, int) {
+		if lock == "lockmq" && args[0] == "version" {
+			return "lockmq launcher 0.6.0 (image x)\nlockmq v0.6.0\n", "", 0
 		}
+		return "", "", 0
+	}
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if !slices.Contains(h.verbs("lockmq"), "lockmq doctor --json") || slices.Contains(h.verbs("lockmq"), "lockmq doctor --fix --yes --json") {
+		t.Errorf("lockmq: %q", h.verbs("lockmq"))
+	}
+	if !strings.Contains(h.out.String(), "lox init runs lockmq doctor without --fix: launcher 0.6.0 is older than v0.6.1") {
+		t.Errorf("no note in\n%s", h.out.String())
+	}
+}
+
+func TestAtLeast(t *testing.T) {
+	for _, c := range []struct {
+		v, min string
+		want   bool
+	}{
+		{"0.13.1", "0.13.1", true}, {"v0.13.1", "0.13.1", true}, {"0.13.10", "0.13.1", true},
+		{"1.0.0", "0.13.1", true}, {"0.14.0", "0.13.1", true},
+		{"0.13.0", "0.13.1", false}, {"0.12.9", "0.13.1", false}, {"v0.13.1-rc1", "0.13.1", false},
+		{"dev", "0.13.1", false}, {"", "0.13.1", false}, {"0.13", "0.13.1", false},
+	} {
+		if got := atLeast(c.v, c.min); got != c.want {
+			t.Errorf("atLeast(%q, %q) = %v", c.v, c.min, got)
+		}
+	}
+}
+
+func TestParseVersions(t *testing.T) {
+	got := parseVersions("lockmq", []byte("lockmq launcher dev (image ghcr.io/davidgodefroid/lockmq:0.6.1)\nlockmq v0.6.1\n"))
+	if got != (LauncherVersions{Launcher: "dev", Image: "v0.6.1"}) {
+		t.Errorf("%+v", got)
+	}
+	if got := parseVersions("locksql", []byte("lockmq launcher 0.6.1 (image x)\nlockmq v0.6.1\n")); got != (LauncherVersions{}) {
+		t.Errorf("another lock's lines read: %+v", got)
 	}
 }
 
@@ -383,6 +519,13 @@ func TestManualFlow(t *testing.T) {
 		if !slices.Contains(h.run.calls, w) {
 			t.Errorf("no call %q in\n%s", w, strings.Join(h.run.calls, "\n"))
 		}
+	}
+	// lockfile's only repair wires every installed agent for the user's
+	// account: its doctor runs without --fix, and its version is not asked.
+	if lf := h.verbs("lockfile"); !slices.Contains(lf, "lockfile doctor --json") || slices.ContainsFunc(lf, func(c string) bool {
+		return strings.Contains(c, "--fix") || c == "lockfile version"
+	}) {
+		t.Errorf("lockfile: %q", lf)
 	}
 }
 

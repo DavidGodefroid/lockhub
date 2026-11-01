@@ -150,7 +150,21 @@ func RenderPlan(w io.Writer, plans []Planned, kept []Declared, skipped []string,
 	for _, p := range plans {
 		fmt.Fprintf(w, "  %s %s\n", p.Lock, p.Instance)
 		fmt.Fprintf(w, "    %s\n", strings.Join(planProfileArgs(p), " "))
-		fmt.Fprintf(w, "    then %s init claude, %s doctor, lox add %s %s --profile %s\n", p.Lock, p.Lock, p.Lock, p.Instance, p.Profile)
+		doctor := "doctor"
+		if _, ok := doctorFixes[p.Lock]; ok {
+			doctor = "doctor --fix"
+		}
+		fmt.Fprintf(w, "    then %s init claude, %s %s, lox add %s %s --profile %s\n", p.Lock, p.Lock, doctor, p.Lock, p.Instance, p.Profile)
+		if f, ok := doctorFixes[p.Lock]; ok {
+			if f.Also != "" {
+				fmt.Fprintf(w, "    doctor --fix: %s\n", f.Also)
+			}
+			if f.Min != "" {
+				fmt.Fprintf(w, "    doctor --fix needs %s v%s or later (launcher and image); with an older one, doctor without --fix\n", p.Lock, f.Min)
+			}
+		} else if why := noFixReason(p.Lock); why != "" {
+			fmt.Fprintf(w, "    doctor without --fix: %s\n", why)
+		}
 		if len(p.AllowedUIDs) > 0 {
 			fmt.Fprintf(w, "    allowed_uids %v: lea's agents run as uid %d\n", p.AllowedUIDs, p.AllowedUIDs[0])
 		}

@@ -10,6 +10,20 @@ digest).
   DavidGodefroid/homebrew-tap once the archives and the image are signed
   (DavidGodefroid/lockfamily#8). The step is skipped while the
   `TAP_DISPATCH_TOKEN` secret is not set.
+- `lox init` runs each lock's `doctor --fix --yes --json` again (lockkit
+  GUIDE.md §14), which #92 had left out: locksql v0.13.1 and lockmq v0.6.1
+  keep `.locksql/` and `.lockmq/` as `lox up` reads them. With a launcher or
+  image older than these (asked with `<lock> version`, once per lock type),
+  or versions it cannot read, it runs the advisory `doctor --json` and says
+  to update. lockhttp's `--fix` only takes group and others' write away
+  from its policy. lockfile's doctor still runs without `--fix`: its only
+  repair wires every installed agent for your account. The plan says which
+  doctor runs and what locksql's `--fix` also does (it wires your installed
+  agents for your account) ([docs/lox-init.md](docs/lox-init.md#the-doctor)).
+  The e2e drives the launchers of locksql's and lockmq's main (the fix,
+  until v0.13.1 / v0.6.1 are tagged) with the images `lox add` pins (the
+  latest signed releases), and checks whichever doctor ran: with images
+  older than the fix, the advisory one and its note.
 - `lox init` (#80): one command activates the Lock Family in a project.
   It checks Docker (with the install command for the system when it does
   not answer), cosign, lea and the locks' launchers; detects PostgreSQL,
@@ -19,14 +33,12 @@ digest).
   (`--manual`: lea, locksql, lockmq, lockfile, lockhttp, locklog, greyed
   with the reason when not possible); and, once the plan is confirmed, runs
   each lock's launcher verbs (`profile add --non-interactive --json`, `init
-  claude`, `doctor --json`, lockkit GUIDE.md §14), `lox add`, `lox up` (its
+  claude`, `doctor`, lockkit GUIDE.md §14), `lox add`, `lox up` (its
   review unchanged) and `lox attach` for each console that started.
   Re-runnable: declared locks are kept, new sources added, unchecked ones
   removed through the same review. `--yes` with flags for non-interactive
   use. Sources on this machine are given as `host.docker.internal`. lea's
-  uid goes in `allowed_uids` when lea is found (`lox add` takes it). It does
-  not run the launchers' `doctor --fix`, which gives `.locksql/` or
-  `.lockmq/` to the console account and makes `lox up` refuse the profile
+  uid goes in `allowed_uids` when lea is found (`lox add` takes it)
   ([docs/lox-init.md](docs/lox-init.md)). New e2e job: a compose project
   (PostgreSQL, RabbitMQ) set up by `lox init --yes`, a host agent's query
   and read approved, then a re-run that adds a database and leaves the

@@ -14,19 +14,34 @@
 #
 #   ci/e2e/init.sh LOX_BIN
 #
-# Needs LOCKSQL_LAUNCHER and LOCKMQ_LAUNCHER (the launchers' scripts),
-# LOCKSQL_IMAGE and LOCKMQ_IMAGE (the images they run for the verbs: a
-# launcher from a checkout has no pinned digest), host ports 55432,
+# Each lock's doctor runs with --fix when its launcher and image are
+# locksql v0.13.1 / lockmq v0.6.1 or later, else without it and lox init
+# says why: the script checks whichever ran (with --fix, .locksql/ and
+# .lockmq/ stay yours, with no group or other write, and lox up takes them).
+#
+# Needs LOCKSQL_LAUNCHER and LOCKMQ_LAUNCHER (the launchers' scripts) and
+# host ports 55432,
 # 55433, 55672 and 55673 free. With E2E_HUB_IMAGE and E2E_COSIGN_SHIM
 # (ci/e2e/local-hub.sh), the hub is this commit's build; without them,
-# the latest hub release.
+# the latest hub release. The images the launchers run for the verbs (a
+# launcher from a checkout has no pinned digest) are LOCKSQL_IMAGE and
+# LOCKMQ_IMAGE, by default the ones lox add pins (the latest signed
+# releases).
 . "$(dirname "$0")/lib.sh"
 lox=$(realpath "$1")
 here=$(cd "$(dirname "$0")" && pwd)
 [ -n "${LOCKSQL_LAUNCHER:-}" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ] || die "LOCKSQL_LAUNCHER and LOCKMQ_LAUNCHER are required"
-[ -n "${LOCKSQL_IMAGE:-}" ] && [ -n "${LOCKMQ_IMAGE:-}" ] || die "LOCKSQL_IMAGE and LOCKMQ_IMAGE are required"
-verb_sql_image=$LOCKSQL_IMAGE
-verb_mq_image=$LOCKMQ_IMAGE
+verb_sql_image=${LOCKSQL_IMAGE:-}
+verb_mq_image=${LOCKMQ_IMAGE:-}
+if [ -z "$verb_sql_image" ] || [ -z "$verb_mq_image" ]; then
+	probe=$(mktemp -d)
+	(cd "$probe" && "$lox" add locksql psql >/dev/null && "$lox" add lockmq pmq >/dev/null) || die "lox add (image probe) failed"
+	[ -n "$verb_sql_image" ] || verb_sql_image=$(sed -n '/^  psql:/,/image:/s/^ *image: *//p' "$probe/.lockfamily/lockfamily.yaml")
+	[ -n "$verb_mq_image" ] || verb_mq_image=$(sed -n '/^  pmq:/,/image:/s/^ *image: *//p' "$probe/.lockfamily/lockfamily.yaml")
+	rm -rf "$probe"
+	[ -n "$verb_sql_image" ] && [ -n "$verb_mq_image" ] || die "lox add pinned no locksql or lockmq image"
+fi
+echo "lox init e2e: the verbs run $verb_sql_image and $verb_mq_image"
 top=$(realpath "$(mktemp -d)")
 ws=$top/shop
 out=$top/out
@@ -126,7 +141,20 @@ for w in "PostgreSQL  host.docker.internal:55432  user shop, database shop" "Rab
 	"lox add: lock db declared" "lox add: lock mq declared" "First lox up of this workspace" "up: project "; do
 	grep -qF "$w" "$out/init1.out" || die "lox init: no \"$w\""
 done
-grep -q -- '--fix' "$out/init1.out" && ! grep -q 'lox init does not run' "$out/init1.out" && die "a doctor --fix hint without lox init's note"
+# The doctor lox init ran: --fix with the fixed launchers and images, else
+# the advisory one, with the note that says why.
+me=$(id -u)
+for l in locksql lockmq; do
+	if grep -qF "lox init runs $l doctor without --fix: " "$out/init1.out"; then
+		echo "lox init e2e: $l doctor ran without --fix (above: its launcher or image predates the fix)"
+		continue
+	fi
+	grep -qF "$l doctor --fix, lox add" "$out/init1.out" || die "the plan does not say $l doctor --fix"
+	[ -d ".$l" ] && [ ! -L ".$l" ] || die ".$l is not a directory"
+	[ -z "$(find ".$l" ! -user "$me" -print -quit)" ] || { ls -laR ".$l"; die "$l doctor --fix left entries of .$l that are not yours"; }
+	[ -z "$(find ".$l" -perm /022 -print -quit)" ] || { ls -laR ".$l"; die "$l doctor --fix left .$l writable by group or others"; }
+	echo "lox init e2e: $l doctor --fix ran, .$l stays yours (lox up took it)"
+done
 p=$(ws_project "$ws")
 state="$XDG_STATE_HOME/lockfamily/$p"
 [ -z "${E2E_HUB_IMAGE:-}" ] || { hub_is_local "$p"; hub_cosigned "$out/init1.out"; }

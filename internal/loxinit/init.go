@@ -63,6 +63,9 @@ type Init struct {
 	Consoles func(ctx context.Context) (map[string]string, error)
 	// Attach is lox attach INSTANCE.
 	Attach func(ctx context.Context, instance string) error
+
+	// versions are the launchers' versions, asked once per lock type.
+	versions map[string]LauncherVersions
 }
 
 // ErrDeclined is the human saying no to the plan.
@@ -335,18 +338,31 @@ func (in *Init) applyOne(ctx context.Context, p Planned) bool {
 	return true
 }
 
-// doctor runs the lock's doctor and shows what fails; it never stops lox
-// init (before lox up the console is not running yet). It runs without
-// --fix: a launcher's repair gives the lock's directory to its console
-// account, and lox up then refuses to copy the profile (it reads only
-// the user's own files).
+// doctor runs the lock's doctor --fix --yes (lockkit GUIDE.md §14) and
+// shows what it repaired and what still fails; it never stops lox init
+// (before lox up the console is not running yet). A launcher or image
+// older than the release whose --fix leaves the lock's directory as lox
+// up reads it, and a lock whose repairs lox init does not make (lockfile),
+// get the doctor without --fix (doctorFixes).
 func (in *Init) doctor(ctx context.Context, p Planned) {
-	o := classify(in.Run.Verb(ctx, in.Root, p.Lock, "doctor", "--json"))
+	args, note := in.doctorArgs(ctx, p.Lock)
+	fix := slices.Contains(args, "--fix")
+	name := "doctor"
+	if fix {
+		name = "doctor --fix"
+	}
+	o := classify(in.Run.Verb(ctx, in.Root, p.Lock, args...))
+	if note != "" {
+		in.say("  %s", note)
+	}
 	if o.Doctor == nil {
 		if !o.OK() {
-			in.say("  doctor could not check (%s): %s", o.Code, indent(o.Message))
+			in.say("  %s could not check (%s): %s", name, o.Code, indent(o.Message))
 		}
 		return
+	}
+	for _, f := range o.Doctor.Fixed {
+		in.say("  %s: fixed %s", name, f)
 	}
 	var ok, warn int
 	var fails []Check
@@ -360,18 +376,18 @@ func (in *Init) doctor(ctx context.Context, p Planned) {
 			fails = append(fails, c)
 		}
 	}
-	in.say("  doctor: %d ok, %d warning(s), %d failed (advisory before lox up)", ok, warn, len(fails))
-	fixHint := false
+	in.say("  %s: %d ok, %d warning(s), %d failed (advisory before lox up)", name, ok, warn, len(fails))
 	for _, c := range fails {
 		line := "    " + c.Check + ": " + c.Detail
 		if c.Fix != "" {
 			line += " (" + c.Fix + ")"
-			fixHint = fixHint || strings.Contains(c.Fix, "--fix") || strings.Contains(c.Fix, "chown")
 		}
 		in.say("%s", line)
 	}
-	if fixHint {
-		in.say("    lox init does not run %s doctor --fix: it gives .%s/ to the console account, and lox up copies a profile only from your own files", p.Lock, p.Lock)
+	if why := noFixReason(p.Lock); why != "" && slices.ContainsFunc(o.Doctor.Checks, func(c Check) bool {
+		return c.Status != "ok" && strings.Contains(c.Fix, "--fix")
+	}) {
+		in.say("    lox init does not run %s doctor --fix: %s (run it yourself if you want that)", p.Lock, why)
 	}
 }
 
