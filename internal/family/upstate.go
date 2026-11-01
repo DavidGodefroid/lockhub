@@ -18,7 +18,9 @@ const UpFile = "up.json"
 // UpState is lox up's contract with lea (version 1): lea mounts in its
 // agents' containers each lock's socket volume, after checking that the
 // volume carries compose's project label and the socket role (it never
-// mounts any other volume of a lock), on /run/<type>; for a lockhttp
+// mounts any other volume of a lock), on /run/<type> when it is the only
+// lock of its type, each on /run/<type>/<instance> when there are several;
+// for a lockhttp
 // instance, lea's gate mounts the socket volume and the gate's home,
 // asks the hub at HubURL with HubKey pinned, and only lea's proxy joins
 // HubNetwork.
@@ -106,5 +108,5 @@ func writeUpState(ws string, s UpState) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	// A fresh temporary file renamed over up.json: a planted link is
 	// replaced, never followed; 0644, the user's.
-	return writeFileMode(filepath.Join(d, UpFile), append(b, '\n'), 0o644)
+	return WriteFileMode(filepath.Join(d, UpFile), append(b, '\n'), 0o644)
 }

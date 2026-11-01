@@ -21,8 +21,52 @@ type AddOptions struct {
 	// Profile is the lock's profile (optional, see Lock.Profile).
 	Profile string
 	// AllowedUIDs is the lock's allowed_uids (optional, see
-	// Lock.AllowedUIDs): lox init gives lea's uid.
+	// Lock.AllowedUIDs): lox add gives lea's uid.
 	AllowedUIDs []int
+	// Vault writes vault: true (the lock reads its credentials from the
+	// vault: block).
+	Vault bool
+}
+
+// SetVault writes (or replaces) the top-level vault: block of the
+// lockfamily.yaml at path, keeping its comments. What would be written is
+// validated first: a refusal leaves the file as it was.
+func SetVault(path string, v Vault) error {
+	v.Namespace = TrimVaultNamespace(v.Namespace)
+	if v.CAFile != "" {
+		if err := ValidateVaultCAFile(v.CAFile); err != nil {
+			return err
+		}
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return fmt.Errorf("%s: %w", path, scrubYAML(err, b))
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: not a lockfamily.yaml mapping", path)
+	}
+	block := child(doc.Content[0], "vault")
+	block.Content = nil
+	add := func(k, val string) {
+		block.Content = append(block.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: k},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: val, Tag: "!!str"})
+	}
+	add("address", v.Address)
+	if v.Namespace != "" {
+		add("namespace", v.Namespace)
+	}
+	if v.CAFile != "" {
+		add("ca_file", v.CAFile)
+	}
+	out, _, err := encodeValid(&doc)
+	if err != nil {
+		return fmt.Errorf("%s: not changed: %w", path, err)
+	}
+	return writeFile(path, out)
 }
 
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
@@ -36,12 +80,9 @@ func Add(path string, o AddOptions) error {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
 		}
-		// Checked before it is written in: nothing typed in --hub-image
-		// makes other keys, an alias or a tag.
-		if m := digestRef.FindStringSubmatch(o.HubImage); m == nil || m[1] != "lockhub" {
-			return errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
+		if b, err = hubOnlyYAML(o.HubImage); err != nil {
+			return err
 		}
-		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
 		return err
 	}
@@ -75,6 +116,10 @@ func Add(path string, o AddOptions) error {
 		}
 		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "allowed_uids"}, uids.(*yaml.Node))
 	}
+	if o.Vault {
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "vault"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"})
+	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)
 	if err != nil {
@@ -90,6 +135,39 @@ func Add(path string, o AddOptions) error {
 		}
 	}
 	return writeFile(path, out)
+}
+
+// InitHub starts a lockfamily.yaml at path with the hub alone, when there
+// is none (created true). An existing file is kept as it is (created
+// false). hubImage is checked before anything is written; .lockfamily is
+// made only on success.
+func InitHub(path, hubImage string) (created bool, err error) {
+	if _, err := os.Lstat(path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	b, err := hubOnlyYAML(hubImage)
+	if err != nil {
+		return false, err
+	}
+	if err := ensureDir(path); err != nil {
+		return false, err
+	}
+	if err := writeFile(path, b); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// hubOnlyYAML is a lockfamily.yaml that declares the hub and no lock. The
+// digest is checked before it is written in: nothing typed in --hub-image
+// makes other keys, an alias or a tag.
+func hubOnlyYAML(hubImage string) ([]byte, error) {
+	if m := digestRef.FindStringSubmatch(hubImage); m == nil || m[1] != "lockhub" {
+		return nil, errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
+	}
+	return []byte("version: 1\nhub:\n  image: " + hubImage + "\n"), nil
 }
 
 // child is the value of key in mapping m, created (as a flow-free
@@ -139,11 +217,13 @@ func writeFile(path string, b []byte) error {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm() &^ 0o022
 	}
-	return writeFileMode(path, b, mode)
+	return WriteFileMode(path, b, mode)
 }
 
-// writeFileMode is writeFile with the mode given.
-func writeFileMode(path string, b []byte, mode os.FileMode) error {
+// WriteFileMode replaces path with b and mode through a fresh temporary
+// file in its directory (see writeFile): lox add restores and keeps its
+// files with it too.
+func WriteFileMode(path string, b []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".lockfamily-*.yaml")
 	if err != nil {
 		return err

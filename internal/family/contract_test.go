@@ -277,7 +277,7 @@ func TestProfileReviewedAndCopied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "profile locksql "+filepath.Join(ws, ".locksql")+" "+pr.Fingerprint) {
+	if !strings.Contains(out, "profile      .locksql/ [profiles.crm] "+pr.Fingerprint) {
 		t.Errorf("review lacks the profile:\n%s", out)
 	}
 	copied := false
@@ -558,7 +558,7 @@ func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
 	if err != nil || len(c.Locks) != 3 {
 		t.Fatalf("lox add after adoption lost locks: %v %v", c, err)
 	}
-	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "+ lock more type lockmq") || strings.Contains(out, "- lock crm-prod type") {
+	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "lock more (lockmq)") || strings.Contains(out, "- lock crm-prod type") {
 		t.Errorf("second lox up: %v\n%s", err, out)
 	}
 }
@@ -572,5 +572,64 @@ func TestProfileTOMLMustBeShowable(t *testing.T) {
 		if _, err := ReadProfile(d, 1, 1); err == nil {
 			t.Errorf("%s TOML accepted", name)
 		}
+	}
+}
+
+func variantServer(t *testing.T, dg string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			w.Write([]byte(`{"token":"t"}`))
+		case r.URL.Path == "/v2/davidgodefroid/locksql/manifests/1.2.3-vault" && r.Method == http.MethodHead:
+			w.Header().Set("Docker-Content-Digest", dg)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestImageVariantVault(t *testing.T) {
+	const dg = "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+	srv := variantServer(t, dg)
+	cf := &cosignFake{}
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf}
+	ref, err := r.ImageVariant(context.Background(), "locksql", "v1.2.3", "vault")
+	if err != nil || ref != "ghcr.io/davidgodefroid/locksql@"+dg {
+		t.Fatalf("image: %s %v", ref, err)
+	}
+	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `@refs/tags/v1\.2\.3$ `+ref) {
+		t.Errorf("cosign: %v", cf.calls)
+	}
+}
+
+func TestImageVariantMissing(t *testing.T) {
+	srv := variantServer(t, "sha256:"+strings.Repeat("6", 64))
+	cf := &cosignFake{}
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf}
+	_, err := r.ImageVariant(context.Background(), "locksql", "v1.2.4", "vault")
+	want := "locksql v1.2.4 publishes no -vault image: choose credentials ask, or a release that has one"
+	if err == nil || err.Error() != want {
+		t.Errorf("error: %v", err)
+	}
+	if len(cf.calls) != 0 {
+		t.Errorf("cosign ran: %v", cf.calls)
+	}
+}
+
+func TestImageVariantRejectsPathChars(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	defer srv.Close()
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: &cosignFake{}}
+	for _, v := range []string{"../x", "a:b", "a/b", "x y", "-a", "A"} {
+		if _, err := r.ImageVariant(context.Background(), "locksql", "v1.2.3", v); err == nil || strings.Contains(err.Error(), v) {
+			t.Errorf("variant %q: %v", v, err)
+		}
+	}
+	if hits != 0 {
+		t.Errorf("registry hit %d times", hits)
 	}
 }

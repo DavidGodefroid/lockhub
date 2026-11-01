@@ -104,6 +104,41 @@ func upFor(t *testing.T, file string) func(string, *fake) (string, error) {
 	}
 }
 
+func TestInitHubCreates(t *testing.T) {
+	file := filepath.Join(t.TempDir(), Dir, FileName)
+	created, err := InitHub(file, hubImg)
+	if err != nil || !created {
+		t.Fatalf("created %v, err %v", created, err)
+	}
+	b, _ := os.ReadFile(file)
+	if want := "version: 1\nhub:\n  image: " + hubImg + "\n"; string(b) != want {
+		t.Errorf("bytes %q, want %q", b, want)
+	}
+}
+
+func TestInitHubKeepsExisting(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	before, _ := os.ReadFile(w.file)
+	created, err := InitHub(w.file, hubImg)
+	if err != nil || created {
+		t.Fatalf("created %v, err %v", created, err)
+	}
+	if after, _ := os.ReadFile(w.file); string(after) != string(before) {
+		t.Error("existing file changed")
+	}
+}
+
+func TestInitHubRefusesTag(t *testing.T) {
+	file := filepath.Join(t.TempDir(), Dir, FileName)
+	_, err := InitHub(file, "ghcr.io/davidgodefroid/lockhub:latest")
+	if err == nil || err.Error() != "--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>" {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(file)); !os.IsNotExist(err) {
+		t.Errorf("%s left behind by a refused init: %v", filepath.Dir(file), err)
+	}
+}
+
 func TestAddRefusedIntoFreshWorkspaceLeavesNoDir(t *testing.T) {
 	path := filepath.Join(t.TempDir(), Dir, FileName)
 	if err := Add(path, AddOptions{Name: "Bad Name", Type: "locksql", Image: sqlImg, HubImage: hubImg}); err == nil {

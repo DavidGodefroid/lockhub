@@ -150,7 +150,7 @@ func TestFirstRunReviewsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"First lox up", "lock crm-prod type locksql", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
+	for _, want := range []string{"First lox up", "lock crm-prod (locksql)", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
 		}
@@ -215,6 +215,40 @@ func TestUnsignedImageStops(t *testing.T) {
 	f.failing = "cosign verify"
 	if _, err := w.up("y\n", f); err == nil || f.ran("docker") {
 		t.Errorf("unsigned image: %v %v", err, f.calls)
+	}
+}
+
+const hubOnly = "version: 1\nhub:\n  image: " + hubImg + "\n"
+
+func TestZeroLocksValid(t *testing.T) {
+	for name, conf := range map[string]string{"no locks key": hubOnly, "empty locks": hubOnly + "locks: {}\n"} {
+		p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+		os.WriteFile(p, []byte(conf), 0o644)
+		c, err := Load(p)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(c.Locks) != 0 {
+			t.Errorf("%s: locks %v", name, c.Instances())
+		}
+	}
+}
+
+func TestUpHubOnly(t *testing.T) {
+	w := newWS(t, hubOnly)
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran("up -d --remove-orphans") {
+		t.Errorf("no compose up: %v", f.calls)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(w.file)), Dir, UpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"locks": {}`) {
+		t.Errorf("up.json:\n%s", b)
 	}
 }
 

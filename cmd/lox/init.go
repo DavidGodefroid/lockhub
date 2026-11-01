@@ -11,68 +11,29 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
-	"slices"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/loxinit"
 )
 
-// vaultPathsFlag is the repeatable --vault-path INSTANCE=PATH. A bad
-// value is noted, not refused: the flag package would quote it.
-type vaultPathsFlag struct {
-	m   map[string]string
-	bad bool
-}
-
-func (f *vaultPathsFlag) String() string { return "" }
-func (f *vaultPathsFlag) Set(v string) error {
-	inst, p, ok := strings.Cut(v, "=")
-	if !ok || inst == "" || p == "" {
-		f.bad = true
-		return nil
-	}
-	if f.m == nil {
-		f.m = map[string]string{}
-	}
-	f.m[inst] = p
-	return nil
-}
-
-// initCmd is lox init: the project's locks set up in one command.
+// initCmd is lox init: the hub of the project started alone, without a
+// question; the data sources its files name are hints (lox add sets a lock
+// up).
 func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml of the current directory)")
-	yes := fs.Bool("yes", false, "answer lox init's questions from the flags and defaults (auto mode); lox up's review still asks at the terminal")
-	manual := fs.Bool("manual", false, "the checklist instead of auto mode (interactive)")
-	prod := fs.Bool("prod", false, "production locks (each approval types the profile name)")
-	cred := fs.String("credentials", "", "where each console gets its password: ask (it asks at its start, masked; default) or vault")
-	var vault vaultPathsFlag
-	fs.Var(&vault, "vault-path", "INSTANCE=PATH: the Vault path of that lock's login, with --credentials vault (repeatable)")
-	tls := fs.String("tls", "", "locksql's TLS mode for a database whose files say none: disable, prefer, require, verify-ca or verify-full (default: disable on this machine, else verify-full)")
-	noAttach := fs.Bool("no-attach", false, "after lox up, do not attach to the consoles (answer them later with lox attach INSTANCE)")
 	hubImage := fs.String("hub-image", "", "the hub's image for a new lockfamily.yaml, ghcr.io/davidgodefroid/lockhub@sha256:<digest> (default: lockhub's latest signed release's)")
+	review := fs.Bool("review", false, "lox up shows everything and asks, even for a hub with no lock (needs a terminal)")
+	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 0 {
 		fmt.Fprintln(stderr, "lox init: unexpected arguments (flags only)")
-		return 2
-	}
-	switch {
-	case vault.bad:
-		fmt.Fprintln(stderr, "lox init: --vault-path: want INSTANCE=PATH")
-		return 2
-	case *cred != "" && *cred != loxinit.CredAsk && *cred != loxinit.CredVault:
-		fmt.Fprintln(stderr, "lox init: --credentials: want ask or vault (a password is never given on the command line)")
-		return 2
-	case *tls != "" && !slices.Contains(loxinit.TLSModes, *tls):
-		fmt.Fprintln(stderr, "lox init: --tls: want one of", strings.Join(loxinit.TLSModes, ", "))
-		return 2
-	case *manual && *yes:
-		fmt.Fprintln(stderr, "lox init: --manual is interactive; --yes runs auto mode")
 		return 2
 	}
 	abs, err := lockFile(*file, stderr)
@@ -83,52 +44,53 @@ func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	ws := family.Workspace(abs)
 	fi, _ := stdin.Stat()
 	terminal := fi != nil && fi.Mode()&os.ModeCharDevice != 0
+	if *review && !terminal {
+		fmt.Fprintln(stderr, "lox init: --review asks at a terminal; stdin is not one")
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	in := bufio.NewReader(stdin)
 	project := family.Project(ws)
 	state := stateDir(project)
 	rel := newReleases()
+	user := sync.OnceValue(func() string { return hubUser(ctx, family.Exec{Stderr: io.Discard}) })
+	newUp := func(out io.Writer, runErr io.Writer) *family.Up {
+		return &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
+			User: user(), Run: family.QuietExec{Verbose: *verbose, Stderr: runErr},
+			In: in, Out: out, Review: *review}
+	}
 	ini := &loxinit.Init{
-		Root: ws, Run: loxinit.ExecRunner{}, In: in, Out: stdout, Terminal: terminal,
-		Yes: *yes, Manual: *manual, Production: *prod, Credentials: *cred, VaultPaths: vault.m, TLS: *tls, NoAttach: *noAttach,
+		Root: ws, Out: stdout, Terminal: terminal, Review: *review, HubImageGiven: *hubImage != "",
 		Env: loxinit.Env{GOOS: runtime.GOOS, LookPath: exec.LookPath, DockerVersion: loxinit.RealDockerVersion,
 			Types: family.Types, UID: os.Getuid()},
 		Declared: func() ([]loxinit.Declared, error) { return declared(abs) },
-		AddLock: func(ctx context.Context, p loxinit.Planned) error {
-			o := family.AddOptions{Type: p.Lock, Name: p.Instance, Profile: p.Profile, AllowedUIDs: p.AllowedUIDs, HubImage: *hubImage}
-			var err error
-			if o.Image, err = pinRelease(ctx, rel, p.Lock, "", indentWriter{stdout}); err != nil {
-				return err
-			}
-			if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) && o.HubImage == "" {
-				if o.HubImage, err = pinRelease(ctx, rel, "lockhub", "", indentWriter{stdout}); err != nil {
-					return err
+		Hub: func(ctx context.Context) (bool, error) {
+			img := *hubImage
+			if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) && img == "" {
+				var err error
+				if img, err = pinRelease(ctx, rel, "lockhub", "", indentWriter{stdout}); err != nil {
+					return false, err
 				}
 			}
-			return family.Add(abs, o)
+			return family.InitHub(abs, img)
 		},
-		RemoveLock: func(inst string) error { return family.RemoveLock(abs, inst) },
-		Up: func(ctx context.Context) error {
-			r := family.Exec{Stderr: stderr}
-			u := &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
-				User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: in, Out: stdout}
-			return u.Do(ctx)
+		Up: func(ctx context.Context) error { return newUp(stdout, stderr).Do(ctx) },
+		Running: func(ctx context.Context) bool {
+			m, err := consoles(ctx, project)
+			return err == nil && m["lockhub"] != ""
 		},
-		Consoles: func(ctx context.Context) (map[string]string, error) { return consoles(ctx, project) },
-		Attach: func(_ context.Context, inst string) error {
-			// docker's stderr is kept: a detach ends attach with "read escape
-			// sequence" and a non-zero status, which lox init then ignores.
-			var errb strings.Builder
-			if code := attachCmd([]string{"--file", abs, inst}, stdin, stdout, &errb); code != 0 {
-				return fmt.Errorf("exit status %d: %s", code, strings.TrimSpace(errb.String()))
-			}
-			return nil
+		// The same fingerprint lox up compares: its review, without the
+		// apply and without a question.
+		Unchanged: func(ctx context.Context) bool {
+			u := newUp(io.Discard, io.Discard)
+			u.Probe = true
+			return u.Do(ctx) == nil && u.Same
 		},
+		Applied: func() (int, error) { return family.AppliedLocks(state) },
 	}
 	if err := ini.Do(ctx); err != nil {
-		fmt.Fprintln(stderr, "lox init:", err)
-		return 1
+		return failed(ctx, stderr, "init", err)
 	}
 	return 0
 }
@@ -168,8 +130,8 @@ func consoles(ctx context.Context, project string) (map[string]string, error) {
 	return m, nil
 }
 
-// indentWriter indents what lox add prints under the lock lox init sets
-// up.
+// indentWriter indents what pinning the hub's release prints under lox
+// init's own line.
 type indentWriter struct{ w io.Writer }
 
 func (i indentWriter) Write(b []byte) (int, error) {

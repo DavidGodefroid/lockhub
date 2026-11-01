@@ -2,6 +2,7 @@ package hub_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -659,5 +660,26 @@ func TestReofferWakesEveryPoller(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("a poller was not woken by the re-offer")
 		}
+	}
+}
+
+// A lock removed (lox remove) while its renewal is being answered: the
+// stored renewal cannot be checked, so it is refused, not a panic.
+func TestRenewOfRemovedLockRefused(t *testing.T) {
+	a := hubtest.NewLock("crm")
+	var declared map[string]ed25519.PublicKey
+	e := hubtest.NewWith(t, func(c *hub.Config) { declared = c.Locks }, a)
+	e.Hub.Push(ctx, "crm", a.Ticket("OLD", "write", e.Clock.T, time.Hour))
+	e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+	e.Hub.Sweep(ctx)
+	lockAnswers(t, e, "crm", func(q hubtest.Request) string {
+		e.Hub.Push(ctx, "crm", a.TicketWith("NEW", "write", e.Clock.T, time.Hour, func(t *hubtest.Ticket) {
+			t.RenewsOf, t.Unchanged = "OLD", true
+		}))
+		delete(declared, "crm")
+		return `{"ticket":"NEW"}`
+	})
+	if _, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "OLD"}, tty); !errors.Is(err, hub.ErrUnknownLock) {
+		t.Errorf("Renew = %v, want ErrUnknownLock", err)
 	}
 }

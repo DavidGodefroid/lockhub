@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// doctorFix is how lox init runs a lock's doctor: with --fix --yes
+// doctorFix is how lox add runs a lock's doctor: with --fix --yes
 // (lockkit GUIDE.md §14) or, for the locks absent from doctorFixes,
 // without --fix (advisory).
 type doctorFix struct {
@@ -16,39 +16,33 @@ type doctorFix struct {
 	// launcher verbs does). An older launcher or image gets the advisory
 	// doctor.
 	Min string
-	// Also is what --fix does besides the repairs lox up needs, shown on
-	// the plan ("" when nothing).
-	Also string
+	// Notice is said before the doctor runs with --fix, when that repair
+	// reaches beyond the lock's own files.
+	Notice string
 }
 
-// doctorFixes are the locks whose doctor lox init runs with --fix.
+// doctorFixes are the locks whose doctor lox add runs with --fix.
 //
 //   - locksql and lockmq up to v0.13.0 / v0.6.0 gave the lock's directory
 //     to the console account, which lox up then refused (it copies a
 //     profile only from the user's own files): fixed in v0.13.1 / v0.6.1.
 //     locksql's --fix also wires the installed agents for the user's
-//     account.
+//     account: lox add says so before it runs it (its Notice).
 //   - lockhttp's --fix (v0.7.0, its first release with the verbs) only
 //     takes group and others' write away from the policy.
 //   - lockfile is left out: its only repair (v0.6.0) wires every installed
-//     agent for the user's account, nothing lox up needs, so lox init does
+//     agent for the user's account, nothing lox up needs, so lox add does
 //     not make it behind the user's back (lockfile doctor --fix does it).
 var doctorFixes = map[string]doctorFix{
-	"locksql":  {Min: "0.13.1", Also: "it also wires your installed agents for your account"},
+	"locksql":  {Min: "0.13.1", Notice: "locksql doctor --fix also wires your installed agents for your account"},
 	"lockmq":   {Min: "0.6.1"},
 	"lockhttp": {},
 }
 
-// noFixReason says why lox init runs no doctor --fix for lock at all ("" when
-// it may, subject to the versions).
-func noFixReason(lock string) string {
-	if _, ok := doctorFixes[lock]; ok {
-		return ""
-	}
-	if lock == "lockfile" {
-		return "its only repair wires every installed agent for your account"
-	}
-	return "lox init does not run its repairs"
+// FixNotice is what lox add says before it runs the lock's doctor with
+// --fix ("" when the repair touches only the lock's own files).
+func FixNotice(lock string) string {
+	return doctorFixes[lock].Notice
 }
 
 // LauncherVersions is what `<lock> version` prints: the launcher's version
@@ -133,28 +127,29 @@ func orUnknown(s string) string {
 	return s
 }
 
-// doctorArgs are the arguments of the lock's doctor, and the note shown
-// when lox init falls back to the advisory doctor ("" otherwise).
-func (in *Init) doctorArgs(ctx context.Context, lock string) (args []string, note string) {
+// DoctorArgs are the arguments of the lock's doctor, run in root, and the
+// note shown when lox add falls back to the advisory doctor ("" otherwise).
+// cache, when not nil, keeps the launchers' versions: `<lock> version` is
+// asked once per lock type.
+func DoctorArgs(ctx context.Context, run Runner, root, lock string, cache map[string]LauncherVersions) (args []string, note string) {
 	f, ok := doctorFixes[lock]
 	if !ok {
 		return []string{"doctor", "--json"}, ""
 	}
 	if f.Min != "" {
-		if in.versions == nil {
-			in.versions = map[string]LauncherVersions{}
-		}
-		v, seen := in.versions[lock]
+		v, seen := cache[lock]
 		if !seen {
-			out, _, _, err := in.Run.Verb(ctx, in.Root, lock, "version")
+			out, _, _, err := run.Verb(ctx, root, lock, "version")
 			if err == nil {
 				v = parseVersions(lock, out)
 			}
-			in.versions[lock] = v
+			if cache != nil {
+				cache[lock] = v
+			}
 		}
 		if why := fixRefusal(lock, f.Min, v); why != "" {
 			return []string{"doctor", "--json"}, fmt.Sprintf(
-				"lox init runs %s doctor without --fix: %s, whose doctor --fix gives .%s/ to the console account (lox up then refuses it); update %s to v%s or later, then run %s doctor --fix",
+				"lox add runs %s doctor without --fix: %s, whose doctor --fix gives .%s/ to the console account (lox up then refuses it); update %s to v%s or later, then run %s doctor --fix",
 				lock, why, lock, lock, f.Min, lock)
 		}
 	}

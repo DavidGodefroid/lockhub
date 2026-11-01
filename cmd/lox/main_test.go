@@ -23,6 +23,10 @@ func TestRun(t *testing.T) {
 		{[]string{"up", "--nope"}, 2, "", "flag provided but not defined"},
 		{[]string{"up"}, 1, "", "stdin is not one"},
 		{[]string{"up", "--dry-run", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"up", "-v", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"up", "--review", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"help"}, 0, "[--dry-run] [-v] [--review]", ""},
+		{[]string{"help"}, 0, "--review shows", ""},
 		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lox add slack"},
@@ -31,12 +35,24 @@ func TestRun(t *testing.T) {
 		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lox add telegram"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "0"}, 2, "", "telegram.chats"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "42"}, 1, "", "stdin is not one"},
-		{[]string{"help"}, 0, "lox init [--yes]", ""},
+		{[]string{"help"}, 0, "lox init [--review]", ""},
+		{[]string{"init", "--yes"}, 2, "", "flag provided but not defined"},
+		{[]string{"init", "--manual"}, 2, "", ""},
 		{[]string{"init", "extra"}, 2, "", "flags only"},
-		{[]string{"init", "--credentials", "keychain"}, 2, "", "want ask or vault"},
-		{[]string{"init", "--vault-path", "secret/data/x"}, 2, "", "want INSTANCE=PATH"},
-		{[]string{"init", "--tls", "strict"}, 2, "", "--tls: want one of"},
-		{[]string{"init", "--manual", "--yes"}, 2, "", "--manual is interactive"},
+		{[]string{"init", "--review"}, 1, "", "--review asks at a terminal"},
+		{[]string{"add", "locksql"}, 1, "", "stdin is not one"},
+		{[]string{"add", "locksql", "--non-interactive"}, 2, "", "--host is required"},
+		{[]string{"add", "lockdb", "--non-interactive"}, 2, "", "unknown type"},
+		{[]string{"add", "locksql", "--non-interactive", "--review"}, 2, "", "--review"},
+		{[]string{"add", "locksql", "--non-interactive", "--image", sqlImg}, 2, "", "--image"},
+		{[]string{"add", "locksql", "crm", "--host", "db.example.com"}, 2, "", "--host"},
+		{[]string{"add"}, 2, "", "usage: lox add"},
+		{[]string{"remove"}, 2, "", "usage: lox remove NAME [--purge]"},
+		{[]string{"remove", "orders", "extra"}, 2, "", "usage: lox remove NAME [--purge]"},
+		{[]string{"remove", "orders"}, 1, "", "stdin is not one"},
+		{[]string{"add", "lockfile", "--non-interactive", "--source", "local"}, 2, "", "usage: --dir is required"},
+		{[]string{"add", "lockfile", "--non-interactive", "--source", "local", "--path", "/srv/shop"}, 2, "", "--path: lox add lockfile takes --dir"},
+		{[]string{"add", "locksql", "--non-interactive", "--host", "db.example.com", "--dir", "/srv/shop"}, 2, "", "--dir: not a question of lox add locksql"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)
@@ -83,8 +99,8 @@ func TestAddImportDoctor(t *testing.T) {
 		code := run(args, devNull(t), &out, &errb)
 		return code, out.String(), errb.String()
 	}
-	if code, _, e := call("add", "locksql"); code != 2 || !strings.Contains(e, "usage: lox add") {
-		t.Errorf("add without instance: %d %q", code, e)
+	if code, _, e := call("add", "locksql"); code != 1 || !strings.Contains(e, "stdin is not one") {
+		t.Errorf("add without instance (the guided form) at no terminal: %d %q", code, e)
 	}
 	// Flags after the positional arguments, as people type them.
 	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lox up") {

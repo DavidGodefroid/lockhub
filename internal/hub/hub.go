@@ -450,7 +450,13 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if !tk.Expires.IsZero() && !tk.Expires.After(now) {
 			return ErrExpired
 		}
-		info, err := h.c.Codec.VerifyTicket(h.c.Locks[tk.Instance], tk.Raw)
+		// A lock no longer declared (lox remove): its stored tickets
+		// cannot be checked, so none is decided.
+		key, ok := h.c.Locks[tk.Instance]
+		if !ok {
+			return ErrUnknownLock
+		}
+		info, err := h.c.Codec.VerifyTicket(key, tk.Raw)
 		if err != nil {
 			return fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 		}

@@ -43,7 +43,16 @@ type Paths struct {
 	// Rotate are the locks whose key lox up --rotate replaces: each gets
 	// the setup service rotkey-<instance> (rotate.go).
 	Rotate []string
+	// VaultCA is the reviewed copy of vault.ca_file (<state>/vault-ca.pem),
+	// mounted read-only in the locks with vault: true; "" until it exists.
+	VaultCA string
+	// VaultCASum is its sha256 (hex): a label of the locks that mount it,
+	// so that a changed CA recreates them (a file bind keeps the old inode).
+	VaultCASum string
 }
+
+// VaultCAPath is where the locks with vault: true see the reviewed CA.
+const VaultCAPath = "/run/lockfamily-vault/ca.pem"
 
 // Kind is what lox up knows of a lock type's image: the console's
 // account and its clients group (the image's /etc/<type>/system.toml),
@@ -193,6 +202,19 @@ func Compose(c *Config, p Paths) string {
 			// rule sets in its own volume, seeded from the profile's.
 			w("      LOCKSQL_PII_DIR: %s", q(LocksqlPIIDir))
 		}
+		// Where the lock reads its secrets: its address and namespace, and
+		// the reviewed CA. Never the token (typed at the console's start).
+		vaultCA := false
+		if v := c.Vault; l.Vault && v != nil {
+			w("      VAULT_ADDR: %s", q(v.Address))
+			if v.Namespace != "" {
+				w("      VAULT_NAMESPACE: %s", q(v.Namespace))
+			}
+			if p.VaultCA != "" {
+				vaultCA = true
+				w("      VAULT_CACERT: %s", q(VaultCAPath))
+			}
+		}
 		cmd := []string{"console"}
 		if prof := l.Profile; prof != "" || l.Type == "lockfile" {
 			if prof == "" {
@@ -228,13 +250,20 @@ func Compose(c *Config, p Paths) string {
 		// A gate kind's console only serves the policy: its devices go to
 		// the gate (lea's), through up.json, not to the console.
 		fp, dev := p.Profiles[l.Type], p.DevicesID != "" && l.Devices && !k.Gate
-		if fp != "" || dev {
+		vsum := ""
+		if vaultCA {
+			vsum = p.VaultCASum
+		}
+		if fp != "" || dev || vsum != "" {
 			w("    labels:")
 			if fp != "" {
 				w("      lockfamily.profile: %s", q(fp))
 			}
 			if dev {
 				w("      lockfamily.devices: %s", q(p.DevicesID))
+			}
+			if vsum != "" {
+				w("      lockfamily.vault-ca: %s", q(vsum))
 			}
 		}
 		limits(w, k.Mem, k.Pids)
@@ -253,6 +282,12 @@ func Compose(c *Config, p Paths) string {
 			w("      - type: bind")
 			w("        source: %s", q(p.Devices))
 			w("        target: /run/lockfamily-devices/devices.json")
+			w("        read_only: true")
+		}
+		if vaultCA {
+			w("      - type: bind")
+			w("        source: %s", q(p.VaultCA))
+			w("        target: %s", q(VaultCAPath))
 			w("        read_only: true")
 		}
 		if p.Facades != "" && l.Reveal && !k.Gate {

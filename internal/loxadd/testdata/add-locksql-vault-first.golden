@@ -1,0 +1,15 @@
+lox add locksql: one database, applied at once (Ctrl-C before the review: nothing is kept)
+
+Engine: postgres, mysql, mariadb or sqlite (required) [postgres]: mariadb
+Host (required) [host.docker.internal]: db.example.com
+Port (required) [3306]: 
+User (optional: empty = the console asks for it at start with the password): shop
+Database (optional: empty = the server's default database): orders
+Production? (each approval needs the profile name typed) [y/N] y
+TLS: disable, prefer, require, verify-ca or verify-full (required) [verify-full]: 
+Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: vault
+Vault path (required) [database/creds/db]: 
+Vault address, such as https://vault.example.com:8200 (required): https://vault.example.com:8200
+Vault namespace (optional: empty = the root namespace): 
+Vault CA file (optional: empty = the system's CA certificates): 
+Name (required) [db]: orders

@@ -187,9 +187,9 @@ tty 'y\n' "$lox" up >up.out 2>&1 || { cat up.out; die "lox up failed"; }
 cat up.out
 grep -q "up: project " up.out || die "lox up did not finish"
 grep -q "First lox up of this workspace" up.out || die "no full review on the first lox up"
-grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
-[ -z "$sql" ] || grep -q "  profile locksql " up.out || die "the locksql profile is not in the review"
-[ -z "$mq" ] || grep -q "  profile lockmq " up.out || die "the lockmq profile is not in the review"
+grep -qE '^  profile +\.lockhttp/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the profile is not in the review"
+[ -z "$sql" ] || grep -qE '^  profile +\.locksql/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the locksql profile is not in the review"
+[ -z "$mq" ] || grep -qE '^  profile +\.lockmq/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the lockmq profile is not in the review"
 [ -z "$sql" ] || grep -q "lock db serves uids 4242 besides its clients group" up.out || die "the db lock's allowed_uids is not in the review"
 say "I11: the legacy root file is read with a warning and copied, exactly as reviewed; the human removes it"
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"

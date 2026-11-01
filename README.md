@@ -61,26 +61,47 @@ The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
 with every Lock.
 
-## Quick start: lox init
+## First run
 
 ```sh
-cd ~/projects        # with lea: its projects directory; with claude: the project
-lox init
+brew trust davidgodefroid/tap
+brew install davidgodefroid/tap/lockfamily   # lea, lox and the Locks' launchers
+lea                  # runs lox init in its projects directory on its first start
 ```
 
-Where to run it: with lea, in lea's projects directory, not a project
+Later, one source at a time, in lea's projects directory:
+
+```sh
+lox add locksql      # or lockmq, lockfile, lockhttp
+lea stop             # a lock added while lea runs reaches it at lea's next start
+lea
+```
+
+Without lea (`claude` on the host): `lox init` in the project, then
+`lox add locksql`.
+
+`lox init` asks nothing. It checks the prerequisites (Docker, cosign, lea,
+the locks' launchers), lists the data sources the project's files name as
+hints (`.env*`, `compose*.yaml`, `config/`: read only, never a secret),
+writes a `lockfamily.yaml` with the hub alone and runs `lox up`. With no lock
+declared yet, that first `lox up` asks no question (`--review` shows
+everything and asks). It ends with a pointer to `lea` and to `lox add`.
+
+`lox add TYPE` sets one source up, guided and applied at once: its
+questions, the lock's `profile add`, `init claude` and `doctor`, the
+declaration in `lockfamily.yaml`, a short `lox up` review of that lock, and the
+console's own questions at your terminal. A failure, a `n` or Ctrl-C keeps
+nothing. Run it again for the next source; `lox remove NAME` takes one out.
+See [docs/lox-add.md](docs/lox-add.md).
+
+Where to run them: with lea, in lea's projects directory, not a project
 inside it (lea reads `.lockfamily/up.json` only at the root of its projects
 directory); with `claude` on the host, in the project or a parent (the
 launchers walk up from the current directory to the nearest
-`.lockfamily/up.json`).
+`.lockfamily/up.json`). A lock added while lea runs reaches it at lea's next
+start: `lea stop`, then `lea`.
 
-`lox init` checks the prerequisites (Docker, cosign, lea, the locks'
-launchers), detects the project's data sources from its files (`.env*`,
-`compose*.yaml`, `config/`: read only, never a secret), proposes one lock per
-source (or a checklist with `--manual`), and once you said yes runs each
-lock's `profile add`, `init claude` and `doctor`, then `lox add`, `lox up`
-(its review unchanged) and `lox attach` for each console's questions. Then
-run `lea` (or `claude` + `lox approve`). See [docs/lox-init.md](docs/lox-init.md).
+See [docs/lox-init.md](docs/lox-init.md) for `lox init`.
 
 [docs/lox-up.md](docs/lox-up.md) is the contract between `lox up` and lea;
 [docs/design-notes.md](docs/design-notes.md) records where the code

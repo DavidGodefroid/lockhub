@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
@@ -74,6 +75,19 @@ type Up struct {
 	// Rotate names the keys lox up --rotate replaces: "hub", lock
 	// instances, "all".
 	Rotate []string
+	// Review (lox up --review) shows everything and asks, even for a hub
+	// with no lock that nothing was applied for before.
+	Review bool
+	// Probe makes Do compute the fingerprint of the configuration it would
+	// review and compare it with the last applied one (Same), then stop:
+	// nothing is applied, no question is asked. A workspace with nothing
+	// applied yet is not Same.
+	Probe bool
+	// Same is Probe's answer.
+	Same bool
+	// Focus names the lock whose short review is shown (lox add); the
+	// changes of the others are listed under "Other changes", never hidden.
+	Focus string
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 }
@@ -125,6 +139,12 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		}
 		if l.Reveal {
 			s = append(s, fmt.Sprintf("lock %s pins the host facades' keys: Ctrl-O reveals its clear screen", n))
+		}
+		if l.Vault && c.Vault != nil {
+			s = append(s, fmt.Sprintf("lock %s vault VAULT_ADDR=%s", n, c.Vault.Address))
+			if c.Vault.Namespace != "" {
+				s = append(s, fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace))
+			}
 		}
 		if len(l.AllowedUIDs) > 0 {
 			s = append(s, fmt.Sprintf("lock %s serves uids %s besides its clients group (allowed_uids)", n, l.AllowedUIDsFlag()))
@@ -184,7 +204,7 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c, err := decode(raw, u.File, true)
+	c, err := decode(raw, u.File)
 	if err != nil {
 		return err
 	}
@@ -203,7 +223,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if raw, err = setHubImage(raw, ref); err != nil {
 				return fmt.Errorf("--pin: %s: %w", u.File, err)
 			}
-			if c, err = decode(raw, u.File, true); err != nil {
+			if c, err = decode(raw, u.File); err != nil {
 				return err
 			}
 			pinned = true
@@ -246,14 +266,24 @@ func (u *Up) Do(ctx context.Context) error {
 	if facadeKeys == "" {
 		facadeKeys = filepath.Join(filepath.Dir(u.State), "facades")
 	}
-	for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
-		if err := privateDir(d); err != nil {
-			return err
-		}
-	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	appliedPath := filepath.Join(u.State, "applied.json")
+	facadesPath := filepath.Join(u.State, FacadesFile)
+	if u.Probe {
+		// A probe creates nothing: whatever is missing (a directory, a
+		// key, the applied state, a lock never applied) is a change, not
+		// something to make now.
+		if !u.probeReady(c, []string{u.State, hubData, facadeDir, facadeKeys}, hubPubPath, facadesPath, facadeKeys, appliedPath) {
+			return nil
+		}
+	} else {
+		for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
+			if err := privateDir(d); err != nil {
+				return err
+			}
+		}
+	}
 	// The new hub key, made before the review (lockhub keygen) and kept
 	// until it is the hub's.
 	stage := filepath.Join(hubData, "rotate")
@@ -266,7 +296,6 @@ func (u *Up) Do(ctx context.Context) error {
 			return errors.New("--rotate: nothing to rotate before the first lox up of this workspace")
 		}
 	}
-	facadesPath := filepath.Join(u.State, FacadesFile)
 	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
@@ -314,6 +343,10 @@ func (u *Up) Do(ctx context.Context) error {
 			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref); err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
+	}
+	fmt.Fprintln(u.Out, "hub image verified")
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "lock %s: image verified\n", n)
 	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
@@ -444,6 +477,16 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	sum = append(sum, devicesSummary(devices)...)
+	// The CA the locks with vault: true trust, read once here: what is
+	// reviewed (path and digest) is what is copied after the yes.
+	var vaultCA []byte
+	var sha string
+	if ca := c.vaultCAFile(); ca != "" {
+		if vaultCA, sha, err = readCA(ca); err != nil {
+			return err
+		}
+		sum = append(sum, fmt.Sprintf("vault ca_file %s sha256:%s", ca, sha))
+	}
 	fp := fingerprint(sum)
 	if rot.any() {
 		var what []string
@@ -460,13 +503,11 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lox attach).")
 	}
 	var prev Applied
+	first := false
 	b, err := os.ReadFile(appliedPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
-		for _, l := range sum {
-			fmt.Fprintln(u.Out, "  "+l)
-		}
+		first = true
 	case err != nil:
 		return err
 	default:
@@ -474,23 +515,96 @@ func (u *Up) Do(ctx context.Context) error {
 			return fmt.Errorf("%s: %w", appliedPath, err)
 		}
 	}
+	if u.Probe {
+		u.Same = prev.Fingerprint == fp
+		return nil
+	}
+	if u.Focus != "" {
+		// A lock applied before and taken out since (lox remove) may be the
+		// focus: its lines show as removed.
+		_, ok := c.Locks[u.Focus]
+		if !ok && !slices.ContainsFunc(prev.Summary, func(l string) bool { return strings.HasPrefix(l, "lock "+u.Focus+" ") }) {
+			return fmt.Errorf("no lock %s in %s", u.Focus, u.File)
+		}
+	}
 	if prev.Fingerprint == fp {
 		fmt.Fprintln(u.Out, "configuration unchanged since the last lox up")
 	} else {
-		if prev.Fingerprint != "" {
-			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
-			for _, l := range diff(prev.Summary, sum) {
+		d := diff(prev.Summary, sum)
+		switch {
+		case u.Review && first:
+			// --review: the whole configuration, the profiles line by line.
+			fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
+			for _, l := range sum {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
+		case u.Review:
+			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+			for _, l := range d {
+				fmt.Fprintln(u.Out, "  "+l)
+			}
+			for _, t := range types(c) {
+				// With a focus (lox add, lox remove), that lock's profile
+				// only: a removed lock's is no longer applied.
+				if fl, ok := c.Locks[u.Focus]; u.Focus != "" && (!ok || fl.Type != t) {
+					continue
+				}
+				fmt.Fprintf(u.Out, "profile %s %s:\n", t, profiles[t].Fingerprint)
+				for _, l := range profiles[t].Lines {
+					fmt.Fprintln(u.Out, "  "+l)
+				}
+			}
+		default:
+			// The short review: a block per lock, then every summary line
+			// no block renders. The fingerprint is over the full summary.
+			facts := map[string]Facts{}
+			for _, n := range c.Instances() {
+				l := c.Locks[n]
+				f := ProfileFacts(profiles[l.Type], l.Type, LockProfile(l))
+				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
+				facts[n] = f
+			}
+			var changed []string
+			cov := shortCovered(c, u.Focus, sum)
+			heading := "Other changes since the last lox up:"
+			if first {
+				fmt.Fprintln(u.Out, "First lox up of this workspace. Review:")
+				changed = uncovered(sum, cov)
+				heading = "Also applied:"
+			} else {
+				fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+				// Only an added line can be rendered by a block: a removed
+				// line is always shown.
+				for _, l := range d {
+					if rest, ok := strings.CutPrefix(l, "+ "); !ok || !cov[rest] {
+						changed = append(changed, l)
+					}
+				}
+				if caChanged(d) {
+					changed = append(changed, vaultCANote)
+				}
+			}
+			renderShortAs(u.Out, c, u.Focus, facts, true, changed, heading)
+		}
+		if u.Review && !first && caChanged(d) {
+			fmt.Fprintln(u.Out, vaultCANote)
 		}
 		if u.DryRun {
 			fmt.Fprintln(u.Out, "dry run: nothing applied")
 			return nil
 		}
-		fmt.Fprint(u.Out, "Apply? [y/N] ")
-		a, _ := u.In.ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(a)) != "y" {
-			return ErrNotConfirmed
+		if len(c.Locks) == 0 && countLocks(prev.Summary) == 0 && !u.Review {
+			fmt.Fprintln(u.Out, "Hub only, no lock: nothing can reach a credential yet; applied without a question (--review shows everything and asks)")
+		} else {
+			fmt.Fprint(u.Out, "Apply? [y/N] ")
+			a, err := readAnswer(ctx, u.In)
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			_ = err // end of input without a "y" is a no
+			if strings.ToLower(strings.TrimSpace(a)) != "y" {
+				return ErrNotConfirmed
+			}
 		}
 	}
 	if u.DryRun {
@@ -543,6 +657,17 @@ func (u *Up) Do(ctx context.Context) error {
 	for t, pr := range profiles {
 		paths.Profiles[t] = pr.Fingerprint
 	}
+	if vaultCA != nil {
+		// 0644 whatever the umask: the consoles' accounts read it through a
+		// read-only bind mount.
+		vp := filepath.Join(u.State, "vault-ca.pem")
+		if err := writeAtomic(vp, vaultCA, 0o644); err != nil {
+			return err
+		}
+		paths.VaultCA, paths.VaultCASum = vp, sha
+	} else {
+		os.Remove(filepath.Join(u.State, "vault-ca.pem"))
+	}
 	composeYAML = []byte(Compose(c, paths))
 	// The profiles go on the setup service's stdin (they can hold
 	// secrets; a process's arguments are public): compose reads this
@@ -570,6 +695,9 @@ func (u *Up) Do(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "lock %s: started\n", n)
 	}
 	if err := os.WriteFile(composePath, composeYAML, 0o600); err != nil {
 		return err
@@ -611,7 +739,7 @@ func (u *Up) Do(ctx context.Context) error {
 			return err
 		}
 		if _, err := os.Lstat(nf); errors.Is(err, os.ErrNotExist) {
-			if err := writeFileMode(nf, raw, 0o644); err != nil {
+			if err := WriteFileMode(nf, raw, 0o644); err != nil {
 				return err
 			}
 			fmt.Fprintf(u.Out, "%s now lives in %s (lea's agents only read it there); remove %s\n", FileName, nf, u.File)
@@ -661,11 +789,100 @@ func (u *Up) Do(ctx context.Context) error {
 	for _, l := range devNotes {
 		fmt.Fprintln(u.Out, l)
 	}
-	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	if len(c.Locks) > 0 {
+		fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	}
 	for _, n := range c.Instances() {
 		fmt.Fprintf(u.Out, "  lox attach %s\n", n)
 	}
 	return nil
+}
+
+var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)
+
+// probeReady reports whether a probe can compare fingerprints without
+// creating anything: the directories, the hub key, the facade keys and the
+// facade set exist, something was applied, and every declared lock was
+// applied (so its key already exists).
+func (u *Up) probeReady(c *Config, dirs []string, hubPub, facadeSet, facadeKeys, applied string) bool {
+	for _, d := range dirs {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	for _, f := range []string{hubPub, facadeSet} {
+		if _, err := os.Stat(f); err != nil {
+			return false
+		}
+	}
+	for _, f := range HostFacades {
+		if _, err := keys.Load(FacadeKeyPath(facadeKeys, f)); err != nil {
+			return false
+		}
+	}
+	b, err := os.ReadFile(applied)
+	if err != nil {
+		return false
+	}
+	var a Applied
+	if json.Unmarshal(b, &a) != nil {
+		return false
+	}
+	for _, n := range c.Instances() {
+		if !slices.Contains(a.Summary, fmt.Sprintf("lock %s type %s", n, c.Locks[n].Type)) {
+			return false
+		}
+	}
+	return true
+}
+
+// AppliedLocks is the number of locks the last confirmed lox up of the
+// workspace state applied (0 when none ran).
+func AppliedLocks(state string) (int, error) {
+	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var a Applied
+	if err := json.Unmarshal(b, &a); err != nil {
+		return 0, err
+	}
+	return countLocks(a.Summary), nil
+}
+
+// countLocks counts the locks of an applied summary.
+func countLocks(summary []string) int {
+	n := 0
+	for _, l := range summary {
+		if lockLine.MatchString(l) {
+			n++
+		}
+	}
+	return n
+}
+
+// readAnswer reads one line of in, or returns ctx.Err() as soon as ctx is
+// done (Ctrl-C at the review). The read goroutine stays blocked on in
+// until the process ends.
+func readAnswer(ctx context.Context, in *bufio.Reader) (string, error) {
+	type res struct {
+		s   string
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		s, err := in.ReadString('\n')
+		ch <- res{s, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.s, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // privateDir creates d (0700) if needed and refuses it unless it is a
@@ -745,4 +962,48 @@ func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, compos
 		}
 	}
 	return nil
+}
+
+// vaultCAFile is the ca_file the locks with vault: true trust ("" when no
+// lock uses Vault or none is set).
+func (c *Config) vaultCAFile() string {
+	if c.Vault == nil {
+		return ""
+	}
+	for _, l := range c.Locks {
+		if l.Vault {
+			return c.Vault.CAFile
+		}
+	}
+	return ""
+}
+
+// readCA reads vault.ca_file once: a regular file (links are not followed)
+// of at most 64 KiB. It returns the content and its sha256 (hex). Errors
+// never carry the path or the content.
+func readCA(path string) ([]byte, string, error) {
+	bad := errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
+	if !filepath.IsAbs(path) {
+		return nil, "", bad
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		// The load tolerates a missing file (it may live on another
+		// machine); applying it needs the file.
+		return nil, "", errors.New(`vault.ca_file: the file does not exist (lox vault set --ca-file PATH, or --ca-file "")`)
+	}
+	if err != nil {
+		return nil, "", bad
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxCAFile {
+		return nil, "", bad
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxCAFile+1))
+	if err != nil || len(b) > maxCAFile {
+		return nil, "", bad
+	}
+	s := sha256.Sum256(b)
+	return b, hex.EncodeToString(s[:]), nil
 }

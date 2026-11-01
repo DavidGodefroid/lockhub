@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-// Locks are the lock types lox init knows, in checklist order.
+// Locks are the lock types lox init knows, in the order its prerequisites
+// screen lists their launchers.
 var Locks = []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog"}
 
 // Env is what lox init finds on the machine. Tests give their own.

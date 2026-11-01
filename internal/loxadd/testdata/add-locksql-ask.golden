@@ -1,0 +1,11 @@
+lox add locksql: one database, applied at once (Ctrl-C before the review: nothing is kept)
+
+Engine: postgres, mysql, mariadb or sqlite (required) [postgres]: 
+Host (required) [host.docker.internal]: 
+Port (required) [5432]: 
+User (optional: empty = the console asks for it at start with the password): 
+Database (optional: empty = the server's default database): 
+Production? (each approval needs the profile name typed) [y/N] 
+TLS: disable, prefer, require, verify-ca or verify-full (required) [disable]: 
+Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
+Name (required) [db]: 

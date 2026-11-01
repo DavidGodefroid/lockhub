@@ -1,0 +1,9 @@
+lox add lockmq: one broker, applied at once (Ctrl-C before the review: nothing is kept)
+
+Management URL (required) [http://host.docker.internal:15672]: https://mq.example.com:15671
+User (optional: empty = the console asks for it at start with the password): 
+Vhost (optional: empty = all vhosts the user can see): 
+AMQP URL, such as amqp://<mgmt host>:5672 (optional: - = no stream reads) [amqps://mq.example.com:5671]: 
+Production? (each approval needs the profile name typed) [y/N] 
+Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
+Name (required) [mq]: 

@@ -82,10 +82,11 @@ a type it has switched on:
   `dev.lockfamily.instance=<name>`, `dev.lockfamily.type=<type>`, and
   refuses any other volume (a lock's home holds its private key: no
   agent ever mounts it);
-- mounts it on `/run/<type>` and adds the clients group, instead of the
-  fixed `<type>-run` volume of a console started by the tool's own
-  launcher. One instance per type: with two of a type, lea leaves the
-  type out and says so.
+- mounts it and adds the clients group, instead of the fixed `<type>-run`
+  volume of a console started by the tool's own launcher. One lock of a
+  type: `/run/<type>`; several: each on `/run/<type>/<instance>` (Codex
+  gets one server per instance; a Claude agent passes `--instance NAME`
+  or sets `<TOOL>_INSTANCE`).
 
 For a lockhttp instance, lea's gate (beside lea's proxy) mounts the socket
 volume on `/run/lockhttp` and the volume of role `gate-home` as its
@@ -198,6 +199,39 @@ volume made with `docker volume create` and the same labels; it adds
 nothing against an agent with Docker access, which can read the state
 directory too.
 
+## The review and the output
+
+`lox up` keeps cosign's and docker's own output out of the way: it is shown
+when a step fails, or with `-v`.
+
+The review a human confirms is short by default. For each lock (only the one
+`lox add` or `lox remove` is about, when they run `lox up`) it shows one
+block:
+
+```
+lock shop-db (locksql)
+  image        ghcr.io/davidgodefroid/locksql@sha256:… (signature verified)
+  target       …
+  environment  none
+  credentials  ask, typed at the console's start
+  production   no
+  profile      sha256:…  (lox up --review prints it in full)
+```
+
+`environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
+`credentials` then reads `vault, <path>`. A profile that changed since the last
+`lox up` says so. Every summary line that no block renders is listed under
+`Other changes since the last lox up:` (`Also applied:` on the first run), so
+the fingerprint that `lox up` compares still covers everything the review
+shows or lists. The question is `Apply? [y/N]`.
+
+`lox up --review` shows everything: on the first run the whole configuration,
+then, for a later change, the lines that changed and every profile line by
+line. It asks even for a hub with no lock.
+
+The first `lox up` of a workspace with no lock declared and none applied
+before asks nothing (the hub alone cannot reach a credential) and says so.
+
 ## Profiles: a reviewed copy
 
 A lock's profile directory is in the workspace, which agents may write. lox
@@ -285,9 +319,17 @@ Locks resolve `host.docker.internal` to the host, as their launchers do
 (their profile wizards name a local database or broker so). A TOML file of a
 profile must be UTF-8 of at most 64 KiB: every line of it is in the review.
 
-Not yet (lockhub#45): Vault (`credentials = "vault"` needs `VAULT_ADDR` and the
-`-vault` image variant, which lox up does not pass or pin), and lockfile's
-shipped seccomp profile (lox up uses Docker's default).
+Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
+`-vault` variant of its image (`lox add` pins it) and gets `VAULT_ADDR` (and
+`VAULT_NAMESPACE`, and the reviewed CA copy mounted read-only when the block
+names a `ca_file`) from the workspace's one `vault:` block; its profile names
+its own Vault path. The review shows the environment and the path of each such
+lock. The token is typed at the console's start (`lox attach`), never
+written anywhere. See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
+set`.
+
+Not yet (lockhub#45): lockfile's shipped seccomp profile (lox up uses
+Docker's default).
 
 ## Restoring a hub version, rotating keys
 
