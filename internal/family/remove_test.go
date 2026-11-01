@@ -2,6 +2,7 @@ package family
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -65,5 +66,58 @@ func TestAddAllowedUIDs(t *testing.T) {
 	// Refused as lox up would: the console's own uid.
 	if err := Add(w.file, AddOptions{Type: "locksql", Name: "other", Image: sqlImg, AllowedUIDs: []int{10001}}); err == nil {
 		t.Error("allowed_uids with the console's own uid accepted")
+	}
+}
+
+const profilesTOML = `# shop profiles
+[profiles.orders]
+host = "db.example.com"
+vhosts = [
+  "a",
+]
+
+[profiles.orders.extra]
+x = 1
+
+# inventory below
+[profiles.inventory]
+host = "inv.example.com"
+`
+
+func TestRemoveProfileKeepsOthers(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(cfg, []byte(profilesTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveProfile(dir, "orders"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(cfg)
+	want := "# shop profiles\n\n# inventory below\n[profiles.inventory]\nhost = \"inv.example.com\"\n"
+	if string(b) != want {
+		t.Errorf("config.toml:\n%s\nwant:\n%s", b, want)
+	}
+	if fi, _ := os.Stat(cfg); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v", fi.Mode().Perm())
+	}
+	if err := RemoveProfile(dir, "orders"); err == nil || !strings.Contains(err.Error(), "orders") {
+		t.Errorf("a profile that is not there: %v", err)
+	}
+}
+
+func TestRemoveProfileRefusesMultiline(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	src := "[profiles.orders]\nnote = \"\"\"\n[profiles.fake]\n\"\"\"\n"
+	if err := os.WriteFile(cfg, []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := RemoveProfile(dir, "orders")
+	if err == nil || err.Error() != "config.toml holds a multi-line string: remove [profiles.orders] by hand" {
+		t.Errorf("err = %v", err)
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != src {
+		t.Errorf("file changed:\n%s", b)
 	}
 }

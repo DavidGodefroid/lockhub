@@ -520,7 +520,10 @@ func (u *Up) Do(ctx context.Context) error {
 		return nil
 	}
 	if u.Focus != "" {
-		if _, ok := c.Locks[u.Focus]; !ok {
+		// A lock applied before and taken out since (lox remove) may be the
+		// focus: its lines show as removed.
+		_, ok := c.Locks[u.Focus]
+		if !ok && !slices.ContainsFunc(prev.Summary, func(l string) bool { return strings.HasPrefix(l, "lock "+u.Focus+" ") }) {
 			return fmt.Errorf("no lock %s in %s", u.Focus, u.File)
 		}
 	}

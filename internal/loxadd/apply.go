@@ -62,9 +62,9 @@ type rollbackError struct {
 func (e *rollbackError) Error() string   { return e.msg }
 func (e *rollbackError) Unwrap() []error { return e.errs }
 
-// snapshot is a file as it was before: its bytes, or its absence (and
+// Snapshot is a file as it was before: its bytes, or its absence (and
 // whether its directory was there).
-type snapshot struct {
+type Snapshot struct {
 	path    string
 	data    []byte
 	mode    os.FileMode
@@ -72,8 +72,9 @@ type snapshot struct {
 	dirWas  bool
 }
 
-func takeSnapshot(path string) (snapshot, error) {
-	s := snapshot{path: path}
+// TakeSnapshot keeps the file at path as it is now.
+func TakeSnapshot(path string) (Snapshot, error) {
+	s := Snapshot{path: path}
 	if _, err := os.Lstat(filepath.Dir(path)); err == nil {
 		s.dirWas = true
 	}
@@ -94,11 +95,11 @@ func takeSnapshot(path string) (snapshot, error) {
 	return s, nil
 }
 
-// restore puts the file back byte for byte, or removes it (and the
+// Restore puts the file back byte for byte, or removes it (and the
 // directory made for it, when empty) if it did not exist. It is plain
 // file work: nothing in it waits on a context, so an interrupt cannot cut
 // it short.
-func (s snapshot) restore() error {
+func (s Snapshot) Restore() error {
 	if s.existed {
 		return family.WriteFileMode(s.path, s.data, s.mode)
 	}
@@ -130,9 +131,9 @@ func (s *Steps) rel(path string) string {
 // undone. Once lox up started the console, nothing is rolled back.
 func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 	cfg := filepath.Join(s.Root, "."+l.Type, "config.toml")
-	var snaps []snapshot
+	var snaps []Snapshot
 	for _, p := range []string{cfg, s.File} {
-		sn, err := takeSnapshot(p)
+		sn, err := TakeSnapshot(p)
 		if err != nil {
 			return err
 		}
@@ -250,14 +251,14 @@ func (s *Steps) failed(ctx context.Context, step string, err error) error {
 
 // rollback restores the snapshots, saves the draft and returns the
 // rollback error for cause (the interrupt, when there was one).
-func (s *Steps) rollback(ctx context.Context, l Lock, a Answers, snaps []snapshot, cfg string, cause error) error {
+func (s *Steps) rollback(ctx context.Context, l Lock, a Answers, snaps []Snapshot, cfg string, cause error) error {
 	errs := []error{cause}
 	if cerr := ctx.Err(); cerr != nil && !errors.Is(cause, cerr) {
 		errs = append(errs, cerr)
 	}
 	var bad []string
 	for _, sn := range snaps {
-		if err := sn.restore(); err != nil {
+		if err := sn.Restore(); err != nil {
 			bad = append(bad, fmt.Sprintf("%s could not be restored (%v)", s.rel(sn.path), err))
 		}
 	}

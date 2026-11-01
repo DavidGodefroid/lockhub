@@ -62,6 +62,10 @@ Usage:
                                           enable the Slack facade; asks for its tokens at the terminal
   lox add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
                                           enable the Telegram facade; asks for the bot token at the terminal
+  lox remove NAME [--purge] [-v] [--file lockfamily.yaml]
+                                          take a lock out of lockfamily.yaml and stop its console after one
+                                          review; its profile stays in the lock's config.toml unless --purge;
+                                          a "n", a failure or Ctrl-C keeps the lock
   lox import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
@@ -118,6 +122,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			return addTelegramCmd(args[2:], stdin, stdout, stderr)
 		}
 		return addCmd(args[1:], stdin, stdout, stderr)
+	case "remove":
+		return removeCmd(args[1:], stdin, stdout, stderr)
 	case "import":
 		return importCmd(args[1:], stdout, stderr)
 	case "attach":
