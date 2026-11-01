@@ -110,6 +110,13 @@ var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "l
 // registry serves for it, once cosign verified that digest's signature
 // by repo's release workflow run for tag.
 func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) {
+	return r.ImageVariant(ctx, repo, tag, "")
+}
+
+// ImageVariant is Image for the release's variant image (manifest
+// <version>-<variant>, e.g. "vault"); the cosign identity is the plain
+// image's. Variant "" is the plain image.
+func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) (string, error) {
 	if !semverTag.MatchString(tag) {
 		return "", errors.New("release tag: want vX.Y.Z (lox add --version)")
 	}
@@ -119,6 +126,9 @@ func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) 
 	name := "davidgodefroid/" + repo
 	// The release workflows tag the image with the version without the v.
 	ver := strings.TrimPrefix(tag, "v")
+	if variant != "" {
+		ver += "-" + variant
+	}
 	var tok struct {
 		Token string `json:"token"`
 	}
@@ -139,6 +149,9 @@ func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) 
 		return "", err
 	}
 	resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound && variant != "" {
+		return "", fmt.Errorf("%s %s publishes no -%s image: choose credentials ask, or a release that has one", repo, tag, variant)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("image %s:%s: registry answered %s", name, ver, resp.Status)
 	}

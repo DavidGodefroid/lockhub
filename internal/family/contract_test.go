@@ -574,3 +574,47 @@ func TestProfileTOMLMustBeShowable(t *testing.T) {
 		}
 	}
 }
+
+func variantServer(t *testing.T, dg string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/token":
+			w.Write([]byte(`{"token":"t"}`))
+		case r.URL.Path == "/v2/davidgodefroid/locksql/manifests/1.2.3-vault" && r.Method == http.MethodHead:
+			w.Header().Set("Docker-Content-Digest", dg)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestImageVariantVault(t *testing.T) {
+	const dg = "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+	srv := variantServer(t, dg)
+	cf := &cosignFake{}
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf}
+	ref, err := r.ImageVariant(context.Background(), "locksql", "v1.2.3", "vault")
+	if err != nil || ref != "ghcr.io/davidgodefroid/locksql@"+dg {
+		t.Fatalf("image: %s %v", ref, err)
+	}
+	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `@refs/tags/v1\.2\.3$ `+ref) {
+		t.Errorf("cosign: %v", cf.calls)
+	}
+}
+
+func TestImageVariantMissing(t *testing.T) {
+	srv := variantServer(t, "sha256:"+strings.Repeat("6", 64))
+	cf := &cosignFake{}
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf}
+	_, err := r.ImageVariant(context.Background(), "locksql", "v1.2.4", "vault")
+	want := "locksql v1.2.4 publishes no -vault image: choose credentials ask, or a release that has one"
+	if err == nil || err.Error() != want {
+		t.Errorf("error: %v", err)
+	}
+	if len(cf.calls) != 0 {
+		t.Errorf("cosign ran: %v", cf.calls)
+	}
+}
