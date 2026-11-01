@@ -4,10 +4,10 @@ name: e2e-lox-up
 # phase 1 (locksql's TestHubPhase1 against this lockhub), phase 2 (lox up
 # stack, tickets approved through the facade socket, a host agent's
 # `locksql mcp` and `lockmq mcp` through up.json, I2, I11) and
-# phase 5 (install.sh, lox add, lox up, lox import), and lox init on a
-# compose project (ci/e2e/init.sh). Phases 2 and 5 and lox init run this
-# commit's hub image (ci/e2e/local-hub.sh), not the latest release that
-# lox add pins.
+# phase 5 (install.sh, lox add, lox up, lox import), and the first run
+# (ci/e2e/firstrun.sh: lox init, lox add locksql with ask and with Vault,
+# lox remove). Phases 2 and 5 and the first run run this commit's hub image
+# (ci/e2e/local-hub.sh), not the latest release that lox add pins.
 on:
   push:
     branches: [main]
@@ -116,29 +116,29 @@ jobs:
           export LOCKMQ_LAUNCHER="$GITHUB_WORKSPACE/lockmq-launcher/scripts/lockmq"
           sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lox"
 
-  init:
-    name: e2e lox init (compose project, auto mode, agent queries approved, re-run)
+  first-run:
+    name: e2e first run (lox init, lox add locksql ask and vault, lox remove)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # The job runs the flow twice: without and with the Vault half.
+    timeout-minutes: 45
+    env:
+      # The Vault dev server of the lock with credentials = vault, at a
+      # real exact patch tag. The release process pins the digest; until
+      # then the REPLACE_ME placeholder does not pull, and the Vault steps
+      # below are allowed to fail (their comments say when to tighten).
+      E2E_VAULT_IMAGE: hashicorp/vault:2.2.1@sha256:REPLACE_ME
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The launchers lox init drives (their verbs, then the host agents'
-      # mcp): the commits on main whose doctor --fix keeps .locksql/ and
-      # .lockmq/ as lox up reads them (DavidGodefroid/locksql#164,
-      # DavidGodefroid/lockmq#43), until a release ships them: move to the
-      # v0.13.1 and v0.6.1 tags once released. Their verbs run the images
-      # lox add pins (the latest signed releases, ci/e2e/init.sh); lox init
-      # runs doctor --fix only once those are v0.13.1 / v0.6.1 or later.
+      # The launcher lox add drives (profile add, init claude, doctor, then
+      # the host agents' mcp): the v0.13.1 release, whose profile add takes
+      # --credentials ask|vault --vault-path and whose console asks the
+      # Vault token at its start. The job this one replaces pinned a commit
+      # on main for that (DavidGodefroid/locksql#164) until the tag existed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DavidGodefroid/locksql
-          ref: 7f52bf011ea7e84adf932126042e2c520013309b
+          ref: v0.13.1
           path: locksql-launcher
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: DavidGodefroid/lockmq
-          ref: a7453258375a9d78db70c6d0e5ff24bee629a793
-          path: lockmq-launcher
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.x"
@@ -148,7 +148,29 @@ jobs:
       - run: go build -o "$RUNNER_TEMP/bin/lox" ./cmd/lox
       - name: this commit's hub image (containerd image store, cosign shim)
         run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
-      - name: lox init
+      # Not a service container, for the same reason as phase 2's
+      # databases: it would not survive the Docker restart of the image
+      # store switch. In dev mode the server is unsealed and answers on
+      # 8200 (published as 58200). The root token is a throwaway, generated
+      # here and handed to the next steps through the environment; it
+      # reaches no file the e2e greps (the workspace but .env, lox up's
+      # state directory).
+      # Allowed to fail while the image tag's digest above is the
+      # REPLACE_ME placeholder (the release process pins it).
+      - name: Vault dev server (for the lock with credentials = vault)
+        continue-on-error: true
+        run: |
+          token="e2e-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          docker run -d --name "e2e-vault-${{ github.run_id }}" -p 58200:8200 \
+            -e VAULT_DEV_ROOT_TOKEN_ID="$token" \
+            "$E2E_VAULT_IMAGE" server -dev -dev-listen-address 0.0.0.0:8200 >/dev/null
+          {
+            echo "E2E_VAULT_CONTAINER=e2e-vault-${{ github.run_id }}"
+            echo "E2E_VAULT_TOKEN=$token"
+          } >>"$GITHUB_ENV"
+          for i in $(seq 1 30); do docker exec -e VAULT_ADDR=http://127.0.0.1:8200 "e2e-vault-${{ github.run_id }}" vault status >/dev/null 2>&1 && break; sleep 1; done
+          docker exec -e VAULT_ADDR=http://127.0.0.1:8200 "e2e-vault-${{ github.run_id }}" vault status >/dev/null
+      - name: first run (lox init, lox add locksql, lox remove)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -156,8 +178,22 @@ jobs:
           export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
-          export LOCKMQ_LAUNCHER="$GITHUB_WORKSPACE/lockmq-launcher/scripts/lockmq"
-          sh ci/e2e/init.sh "$RUNNER_TEMP/bin/lox"
+          sh ci/e2e/firstrun.sh "$RUNNER_TEMP/bin/lox"
+      # The Vault half of the first run. It needs, at the same time: a
+      # locksql release whose console asks the Vault token at start
+      # (lockkit v0.11.0 — no such release at the time of writing) and the
+      # pinned Vault image above. Allowed to fail until both land; the
+      # failure stays visible in this step. Then remove continue-on-error.
+      - name: first run (lox add locksql with Vault)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_ID: e2e-vault-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state-vault" XDG_RUNTIME_DIR="$RUNNER_TEMP/run-vault"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
+          E2E_VAULT=1 sh ci/e2e/firstrun.sh "$RUNNER_TEMP/bin/lox"
 
   phase5:
     name: e2e phase 5 (install.sh, lox add, lox up, lox import)
