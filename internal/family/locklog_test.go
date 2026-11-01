@@ -75,11 +75,14 @@ func TestComposeLocklog(t *testing.T) {
     stdin_open: true
     environment:
       HOME: "/home/locklog"
+      LOCKLOG_PII_DIR: "/home/locklog/pii-rules"
     extra_hosts: ["host.docker.internal:host-gateway"]
     working_dir: "/w"
     command: ["console", "--allowed-uids", "1000", "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", "/run/lockfamily/hub.pub", "--instance", "logs"]
     logging:
       driver: none
+    labels:
+      locklog.console: "1"
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

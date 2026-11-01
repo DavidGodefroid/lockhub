@@ -57,6 +57,9 @@ Usage:
                                           answer a lock console's start-up questions (policy, credentials);
                                           detach with Ctrl-P Ctrl-Q
   lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
+  lox refresh INSTANCE [--file lockfamily.yaml]
+                                          rewrite a locklog lock's containers map once (its docker source's
+                                          containers, from the globs lox up applied)
   lox approve [--socket PATH] [--once] [--facade-keys DIR]
                                           answer approval tickets in this terminal (o: clear values, also Ctrl-O
                                           where the terminal passes it; r on an expired ticket: approve again)
@@ -110,6 +113,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return attachCmd(args[1:], stdin, stdout, stderr)
 	case "doctor":
 		return doctorCmd(args[1:], stdout, stderr)
+	case "refresh":
+		return refreshCmd(args[1:], stdout, stderr)
 	case "audit":
 		if len(args) < 2 || args[1] != "verify" {
 			fmt.Fprintln(stderr, "usage: lox audit verify --data DIR --hub-key-file FILE")
@@ -594,6 +599,41 @@ func doctorCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%d problem(s)\n", n)
 		return 1
 	}
+	return 0
+}
+
+// refreshCmd is lox refresh: a locklog lock's containers map, rewritten
+// once from the globs the last confirmed lox up applied.
+func refreshCmd(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("refresh", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml, or a legacy ./lockfamily.yaml)")
+	pos, err := parse(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(pos) != 1 {
+		fmt.Fprintln(stderr, "usage: lox refresh INSTANCE")
+		return 2
+	}
+	abs, err := lockFile(*file, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, "lox refresh:", err)
+		return 1
+	}
+	c, err := family.Load(abs)
+	if err != nil {
+		fmt.Fprintln(stderr, "lox refresh:", err)
+		return 1
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	msg, err := family.Refresh(ctx, family.Exec{Stderr: stderr}, stateDir(family.Project(family.Workspace(abs))), c, pos[0])
+	if err != nil {
+		fmt.Fprintln(stderr, "lox refresh:", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, msg)
 	return 0
 }
 

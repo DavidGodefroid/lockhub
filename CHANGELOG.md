@@ -11,6 +11,14 @@ digest).
   A lock kind can cap its console's CPUs: locklog's gets `cpus: min(2, the
   Docker host's CPUs)` (`docker info`); the other locks' services are
   unchanged. Mounts of the logs, networks and routing for locklog come next.
+- A locklog lock mounts what its profile reads (#86). lox up runs `locklog
+  mounts` on the reviewed copy and checks each line on the host, as
+  locklog's launcher does. It binds the log directories read-only and
+  non-recursive, adds the allowlisted groups (adm, systemd-journal, and 0
+  for the Docker containers root), and passes the device and inode the
+  console checks. Every derived line is in the review. A docker source's
+  containers map lives in the state directory; `lox refresh <instance>`
+  rewrites it, and `lox doctor` says when it is stale.
 
 ## v0.3.0 (2026-10-31)
 

@@ -31,6 +31,8 @@ func TestRun(t *testing.T) {
 		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lox add telegram"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "0"}, 2, "", "telegram.chats"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "42"}, 1, "", "stdin is not one"},
+		{[]string{"refresh"}, 2, "", "usage: lox refresh INSTANCE"},
+		{[]string{"help"}, 0, "lox refresh INSTANCE", ""},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)
@@ -97,6 +99,13 @@ func TestAddImportDoctor(t *testing.T) {
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "crm:") {
 		t.Errorf("file:\n%s", b)
+	}
+	// lox refresh: only a locklog lock has a containers map.
+	if code, _, e := call("refresh", "crm", "--file", file); code != 1 || !strings.Contains(e, "only a locklog lock") {
+		t.Errorf("refresh of a locksql lock: %d %q", code, e)
+	}
+	if code, _, e := call("refresh", "nope", "--file", file); code != 1 || !strings.Contains(e, `no lock "nope"`) {
+		t.Errorf("refresh of an unknown lock: %d %q", code, e)
 	}
 	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lox up") {
 		t.Errorf("doctor before lox up: %d %q", code, o)

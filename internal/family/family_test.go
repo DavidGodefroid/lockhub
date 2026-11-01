@@ -80,6 +80,23 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		}
 		return []byte("8\n"), nil
 	}
+	// locklog: the mount plan (keys["plan/<instance>"]), the profile
+	// copy's device and inode, the Docker host's facts.
+	if i := strings.Index(line, " --no-deps mounts-"); i >= 0 {
+		if pl, ok := f.keys["plan/"+line[i+len(" --no-deps mounts-"):]]; ok {
+			return []byte(pl), nil
+		}
+		return []byte("profile default false\n"), nil
+	}
+	if strings.HasSuffix(line, " --no-deps profile-locklog") {
+		return []byte("2049:131074\n"), nil
+	}
+	if out, ok := f.keys["docker/"+line]; ok {
+		return []byte(out), nil
+	}
+	if line == "docker info --format {{.DockerRootDir}}" {
+		return []byte("/var/lib/docker\n"), nil
+	}
 	if strings.HasSuffix(line, " lockhub help") {
 		if f.keys["nohelp"] != "" {
 			return []byte("lockhub serve\n"), nil

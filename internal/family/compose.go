@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -43,6 +44,13 @@ type Paths struct {
 	// Rotate are the locks whose key lox up --rotate replaces: each gets
 	// the setup service rotkey-<instance> (rotate.go).
 	Rotate []string
+	// Logs are the checked mount plans of the locks whose kind takes one
+	// (Kind.Mounts), by instance: their binds, groups and map. A lock
+	// with none yet (before the review) mounts no log.
+	Logs map[string]*LogPlan
+	// ProfileIDs are the device:inode of each type's profile volume, as
+	// its copy service printed it (Kind.Mounts: LOCKLOG_EXPECT_DIR).
+	ProfileIDs map[string]string
 	// NCPU is the Docker host's processor count (docker info), which
 	// caps a kind's CPUs: compose refuses more CPUs than the host has.
 	// lox up reads it only when a lock's kind sets CPUs; 0: unknown, the
@@ -72,6 +80,10 @@ type Kind struct {
 	// CPUs, when set, caps the console's CPUs (compose's cpus) at
 	// min(CPUs, the Docker host's NCPU), as lox up renders it; 0: no cap.
 	CPUs int
+	// Mounts is locklog: the console reads host logs through the mount
+	// plan its image derives from the profile (locklog mounts), which
+	// lox up checks, reviews and mounts (locklog.go).
+	Mounts bool
 }
 
 // Kinds are the lock types' images (their Dockerfiles).
@@ -82,7 +94,7 @@ var Kinds = map[string]Kind{
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 	// locklog's console scans and masks the logs itself: at most two of
 	// the host's CPUs, as its launcher.
-	"locklog": {UID: "10051", GID: "10050", Project: true, Mem: "1g", Pids: 256, CPUs: 2},
+	"locklog": {UID: "10051", GID: "10050", Project: true, Mem: "1g", Pids: 256, CPUs: 2, Mounts: true},
 }
 
 // cpus is the console's CPU cap on a host of ncpu processors (0:
@@ -227,6 +239,22 @@ func Compose(c *Config, p Paths) string {
 			// rule sets in its own volume, seeded from the profile's.
 			w("      LOCKSQL_PII_DIR: %s", q(LocksqlPIIDir))
 		}
+		lp := p.Logs[name]
+		if k.Mounts {
+			// The PII rule sets in the home volume; the device and inode of
+			// the profile copy and of each bound root, which the console
+			// checks on its mount points before it opens anything.
+			w("      LOCKLOG_PII_DIR: %s", q(LocklogPIIDir))
+			if id := p.ProfileIDs[l.Type]; id != "" {
+				w("      LOCKLOG_EXPECT_DIR: %s", q(id))
+			}
+			if lp != nil {
+				w("      LOCKLOG_EXPECT_ROOTS: %s", q(lp.Expect))
+				if lp.DockerRoot != "" {
+					w("      LOCKLOG_DOCKER_ROOT: %s", q(lp.DockerRoot))
+				}
+			}
+		}
 		cmd := []string{"console"}
 		if prof := l.Profile; prof != "" || l.Type == "lockfile" {
 			if prof == "" {
@@ -262,8 +290,12 @@ func Compose(c *Config, p Paths) string {
 		// A gate kind's console only serves the policy: its devices go to
 		// the gate (lea's), through up.json, not to the console.
 		fp, dev := p.Profiles[l.Type], p.DevicesID != "" && l.Devices && !k.Gate
-		if fp != "" || dev {
+		if fp != "" || dev || k.Mounts {
 			w("    labels:")
+			if k.Mounts {
+				// A locklog console: never in a containers map.
+				w("      %s: \"1\"", LocklogConsoleLabel)
+			}
 			if fp != "" {
 				w("      lockfamily.profile: %s", q(fp))
 			}
@@ -275,6 +307,13 @@ func Compose(c *Config, p Paths) string {
 		if n := k.cpus(p.NCPU); n > 0 {
 			w("    cpus: %d", n)
 		}
+		if lp != nil && len(lp.GIDs) > 0 {
+			g := make([]string, len(lp.GIDs))
+			for i, x := range lp.GIDs {
+				g[i] = q(strconv.FormatUint(uint64(x), 10))
+			}
+			w("    group_add: [%s]", strings.Join(g, ", "))
+		}
 		w("    volumes:")
 		w("      - %s", q(name+"-run:/run/"+l.Type))
 		w("      - %s", q(name+"-home:"+home))
@@ -285,6 +324,24 @@ func Compose(c *Config, p Paths) string {
 			w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
 		} else {
 			w("      - %s", q("profile-"+l.Type+":"+home+"/.config/"+l.Type+":ro"))
+		}
+		if lp != nil {
+			// The plan's log directories, read-only and non-recursive (no
+			// submount of them appears), at their own paths.
+			for _, d := range lp.Binds {
+				w("      - type: bind")
+				w("        source: %s", q(d))
+				w("        target: %s", q(d))
+				w("        read_only: true")
+				w("        bind:")
+				w("          recursive: disabled")
+			}
+			if lp.MapDir != "" {
+				w("      - type: bind")
+				w("        source: %s", q(lp.MapDir))
+				w("        target: %s", q(LocklogMapTarget))
+				w("        read_only: true")
+			}
 		}
 		if p.Devices != "" && l.Devices && !k.Gate {
 			w("      - type: bind")
@@ -333,6 +390,33 @@ func Compose(c *Config, p Paths) string {
 			w("      - %s", q(name+"-gate:/g"))
 		}
 	}
+	for _, name := range c.Instances() {
+		l := c.Locks[name]
+		if !Kinds[l.Type].Mounts {
+			continue
+		}
+		// mounts-<instance> derives the mount plan from the reviewed copy
+		// (on its stdin, unpacked in a tmpfs at the workspace's path), as
+		// the image's agent with no network, as the launcher's read_plan.
+		args := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s mounts "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
+		if l.Profile != "" {
+			args = append(args, "--profile", l.Profile)
+		}
+		w("  %s:", q("mounts-"+name))
+		w("    image: %s", q(l.Image))
+		w("    profiles: [setup]")
+		w("    user: %s", q(agentAccount))
+		w("    environment:")
+		w("      HOME: \"/tmp\"")
+		w("    entrypoint: [%s]", quoteAll(args))
+		w("    network_mode: none")
+		w("    read_only: true")
+		w("    cap_drop: [ALL]")
+		w("    security_opt: [\"no-new-privileges:true\"]")
+		w("    tmpfs: [\"/tmp:size=16m\", %s]", q(p.Workspace+":size=2m,uid=10052,gid=10050,mode=0700"))
+		w("    pids_limit: 64")
+		w("    mem_limit: 256m")
+	}
 	for _, name := range p.Rotate {
 		l, ok := c.Locks[name]
 		if !ok {
@@ -362,7 +446,12 @@ func Compose(c *Config, p Paths) string {
 		w("    image: %s", q(firstImage(c, t)))
 		w("    profiles: [setup]")
 		w("    user: \"0:0\"")
-		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p && chown %s:%s /p && chmod 0700 /p", maxTar, Kinds[t].UID, Kinds[t].GID)))
+		script := fmt.Sprintf("find /p -mindepth 1 -delete && head -c %d | tar -x -C /p && chown %s:%s /p && chmod 0700 /p", maxTar, Kinds[t].UID, Kinds[t].GID)
+		if Kinds[t].Mounts {
+			// The copy's device and inode, for LOCKLOG_EXPECT_DIR.
+			script += " && stat -c %d:%i /p"
+		}
+		w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(script))
 		w("    network_mode: none")
 		hardening(w)
 		// The archive's owner (the console) and modes, kept by root, which
