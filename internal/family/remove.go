@@ -147,6 +147,12 @@ func RemoveProfile(dir, profile string) error {
 	if !found {
 		return fmt.Errorf("no profile %q in %s", profile, path)
 	}
+	// Safety net: a line this editor misread must never cost another
+	// table. Unbalanced brackets, or a header lost besides the profile's
+	// own, leave the file as it is.
+	if depth != 0 || !sameHeaders(headers(lines), headers(out), profile) {
+		return fmt.Errorf("%s: cannot be edited safely: remove [profiles.%s] by hand", path, profile)
+	}
 	return WriteFileMode(path, []byte(strings.Join(out, "")), fi.Mode().Perm())
 }
 
@@ -157,9 +163,7 @@ func tableHeader(line string) (string, bool) {
 	if !strings.HasPrefix(t, "[") {
 		return "", false
 	}
-	if i := strings.Index(t, "#"); i >= 0 && !strings.Contains(t[:i], `"`) {
-		t = strings.TrimSpace(t[:i])
-	}
+	t = strings.TrimSpace(cutComment(t))
 	inner := strings.TrimSuffix(strings.TrimPrefix(t, "["), "]")
 	if strings.HasPrefix(inner, "[") {
 		inner = strings.TrimSuffix(strings.TrimPrefix(inner, "["), "]")
@@ -170,14 +174,17 @@ func tableHeader(line string) (string, bool) {
 	return strings.NewReplacer(" ", "", `"`, "", "'", "").Replace(inner), true
 }
 
-// bracketDelta is the opening minus the closing brackets of a value
-// line, outside its strings and comment: an array spread over lines keeps
-// its inner lines from being read as table headers.
-func bracketDelta(line string) int {
-	d := 0
+// cutComment is line without its trailing comment: a # inside a string
+// (basic strings take backslash escapes, literal ones do not) is not one.
+func cutComment(line string) string {
 	var q rune
-	for _, r := range line {
+	esc := false
+	for i, r := range line {
 		switch {
+		case esc:
+			esc = false
+		case q == '"' && r == '\\':
+			esc = true
 		case q != 0:
 			if r == q {
 				q = 0
@@ -185,7 +192,31 @@ func bracketDelta(line string) int {
 		case r == '"' || r == '\'':
 			q = r
 		case r == '#':
-			return d
+			return line[:i]
+		}
+	}
+	return line
+}
+
+// bracketDelta is the opening minus the closing brackets of a value
+// line, outside its strings and comment: an array spread over lines keeps
+// its inner lines from being read as table headers.
+func bracketDelta(line string) int {
+	d := 0
+	var q rune
+	esc := false
+	for _, r := range cutComment(line) {
+		switch {
+		case esc:
+			esc = false
+		case q == '"' && r == '\\':
+			esc = true
+		case q != 0:
+			if r == q {
+				q = 0
+			}
+		case r == '"' || r == '\'':
+			q = r
 		case r == '[':
 			d++
 		case r == ']':
@@ -196,10 +227,37 @@ func bracketDelta(line string) int {
 }
 
 // appendKept adds the blank and comment lines kept after a removed table,
-// without a blank line to open the file or to double one.
+// without a blank line to open the file or to double one: blank lines
+// next to the removed table fold into the one already there.
 func appendKept(out, kept []string) []string {
 	for len(kept) > 0 && strings.TrimSpace(kept[0]) == "" && (len(out) == 0 || strings.TrimSpace(out[len(out)-1]) == "") {
 		kept = kept[1:]
 	}
 	return append(out, kept...)
+}
+
+// headers are the table headers of lines, in order.
+func headers(lines []string) []string {
+	var hs []string
+	depth := 0
+	for _, ln := range lines {
+		if k, ok := tableHeader(ln); ok && depth == 0 {
+			hs = append(hs, k)
+			continue
+		}
+		depth = max(0, depth+bracketDelta(ln))
+	}
+	return hs
+}
+
+// sameHeaders reports whether after is before less the headers of
+// profiles.P and its sub-tables.
+func sameHeaders(before, after []string, profile string) bool {
+	var want []string
+	for _, k := range before {
+		if k != "profiles."+profile && !strings.HasPrefix(k, "profiles."+profile+".") {
+			want = append(want, k)
+		}
+	}
+	return slices.Equal(want, after)
 }

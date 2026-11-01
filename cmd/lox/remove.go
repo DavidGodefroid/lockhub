@@ -81,20 +81,14 @@ func (r *removal) run(ctx context.Context) int {
 	}
 	dir := filepath.Join(family.Workspace(r.File), "."+l.Type)
 	cfg := "." + l.Type + "/config.toml"
-	effective := func(x family.Lock) string {
-		if x.Profile == "" && x.Type == "lockfile" {
-			return "default"
-		}
-		return x.Profile
-	}
-	profile := effective(l)
+	profile := family.LockProfile(l)
 	if r.Purge {
 		// Refused before anything is changed.
 		if profile == "" {
 			return fail("--purge: %s names no profile in %s: its profile is the only one of %s, remove it by hand", r.Name, filepath.Base(r.File), cfg)
 		}
 		for _, n := range c.Instances() {
-			if o := c.Locks[n]; n != r.Name && o.Type == l.Type && effective(o) == profile {
+			if o := c.Locks[n]; n != r.Name && o.Type == l.Type && family.LockProfile(o) == profile {
 				return fail("--purge: lock %s serves profile %s of %s too", n, profile, cfg)
 			}
 		}

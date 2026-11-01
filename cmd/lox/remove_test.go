@@ -132,7 +132,9 @@ func TestRemoveInterruptAndFailure(t *testing.T) {
 func TestRemovePurgeRefusedBeforeChange(t *testing.T) {
 	_, file := removeWorld(t)
 	two := removeYAML + "  stock:\n    type: locksql\n    image: " + sqlImg + "\n    profile: orders\n"
-	os.WriteFile(file, []byte(two), 0o600)
+	if err := os.WriteFile(file, []byte(two), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var out, errb bytes.Buffer
 	called := false
 	r := &removal{File: file, Name: "orders", Purge: true, Out: &out, Err: &errb, Up: func(context.Context, string) error { called = true; return nil }}

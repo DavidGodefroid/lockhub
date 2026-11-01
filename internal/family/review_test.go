@@ -356,11 +356,18 @@ func TestFocusOnARemovedLock(t *testing.T) {
 	if err := RemoveLock(w.file, "orders"); err != nil {
 		t.Fatal(err)
 	}
+	// Another lock added meanwhile is listed, not hidden by the focus.
+	if err := Add(w.file, AddOptions{Type: "lockmq", Name: "events", Image: mqImg}); err != nil {
+		t.Fatal(err)
+	}
 	var out strings.Builder
 	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000",
 		Run: &fake{keys: f.keys}, In: bufio.NewReader(strings.NewReader("n\n")), Out: &out, Focus: "orders"}
 	err := u.Do(context.Background())
 	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out.String(), "- lock orders type locksql") || !strings.Contains(out.String(), "Apply? [y/N]") {
 		t.Errorf("Do = %v\n%s", err, out.String())
+	}
+	if _, other, ok := strings.Cut(out.String(), "Other changes since the last lox up:"); !ok || !strings.Contains(other, "+ lock events type lockmq") {
+		t.Errorf("the other change is not listed:\n%s", out.String())
 	}
 }

@@ -121,3 +121,47 @@ func TestRemoveProfileRefusesMultiline(t *testing.T) {
 		t.Errorf("file changed:\n%s", b)
 	}
 }
+
+// The other profiles are kept byte for byte when the removed one holds an
+// escaped quote before a bracket, or when a header has quotes and a
+// trailing comment.
+func TestRemoveProfileTrickyTOML(t *testing.T) {
+	for name, c := range map[string]struct{ in, want string }{
+		"escaped quote": {
+			"[profiles.orders]\npw = \"a\\\"[b\"\n\n[profiles.inventory]\nhost = \"inv\"\n",
+			"[profiles.inventory]\nhost = \"inv\"\n"},
+		"quoted header with comment": {
+			"[profiles.orders]\nhost = \"x\"\n\n[profiles.\"inventory\"] # main\nhost = \"inv\"\n",
+			"[profiles.\"inventory\"] # main\nhost = \"inv\"\n"},
+		"literal string": {
+			"[profiles.orders]\npw = 'a\\'\n\n[profiles.inventory]\nhost = \"inv\"\n",
+			"[profiles.inventory]\nhost = \"inv\"\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := filepath.Join(dir, "config.toml")
+			os.WriteFile(cfg, []byte(c.in), 0o600)
+			if err := RemoveProfile(dir, "orders"); err != nil {
+				t.Fatal(err)
+			}
+			if b, _ := os.ReadFile(cfg); string(b) != c.want {
+				t.Errorf("config.toml:\n%s\nwant:\n%s", b, c.want)
+			}
+		})
+	}
+}
+
+// Safety net: a file whose brackets do not balance (a line this editor
+// misreads) is refused untouched, never emptied.
+func TestRemoveProfileRefusesWhatItMisreads(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config.toml")
+	src := "[profiles.orders]\nx = [\n  1,\n\n[profiles.inventory]\nhost = \"inv\"\n"
+	os.WriteFile(cfg, []byte(src), 0o600)
+	if err := RemoveProfile(dir, "orders"); err == nil {
+		t.Error("removed from a file it cannot read")
+	}
+	if b, _ := os.ReadFile(cfg); string(b) != src {
+		t.Errorf("file changed:\n%s", b)
+	}
+}

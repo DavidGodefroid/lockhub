@@ -555,7 +555,7 @@ func (u *Up) Do(ctx context.Context) error {
 			facts := map[string]Facts{}
 			for _, n := range c.Instances() {
 				l := c.Locks[n]
-				f := ProfileFacts(profiles[l.Type], l.Type, lockProfile(l))
+				f := ProfileFacts(profiles[l.Type], l.Type, LockProfile(l))
 				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
 				facts[n] = f
 			}

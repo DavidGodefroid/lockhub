@@ -132,9 +132,9 @@ func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 	return cov
 }
 
-// lockProfile is the profile a lock's console serves: the one named in
+// LockProfile is the profile a lock's console serves: the one named in
 // lockfamily.yaml, "default" for lockfile, else the only one of config.toml.
-func lockProfile(l Lock) string {
+func LockProfile(l Lock) string {
 	if l.Profile != "" {
 		return l.Profile
 	}
