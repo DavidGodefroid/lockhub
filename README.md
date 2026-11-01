@@ -46,7 +46,9 @@ Early development. This repository holds:
   shipped in the same image and release, and as static archives
   (`lox_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
   Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
-  installs into `~/.local/bin`.
+  installs into `~/.local/bin`. Each release tag also bumps the `lox` formula
+  of the [Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap)
+  (`brew install davidgodefroid/tap/lox`).
 
 The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
