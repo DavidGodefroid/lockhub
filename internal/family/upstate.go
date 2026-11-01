@@ -8,9 +8,11 @@ import (
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
-// UpFile is the name of what lox up tells lea, in the workspace's
-// .lockfamily directory (which lea's agents only read): how to reach the
-// locks it runs. Nothing in it is secret.
+// UpFile is the name of what lox up tells lea and the locks' launchers
+// (host agents), in the workspace's .lockfamily directory (which lea's
+// agents only read): how to reach the locks it runs. Nothing in it is
+// secret. The launchers read it with a POSIX sh reader of
+// json.MarshalIndent's two-space layout (docs/lox-up.md): keep it.
 const UpFile = "up.json"
 
 // UpState is lox up's contract with lea (version 1): lea mounts in its

@@ -45,6 +45,19 @@ func TestUpWritesLeaContract(t *testing.T) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		t.Fatal(err)
 	}
+	// The locks' launchers (host agents) read up.json with a POSIX sh
+	// reader of exactly this layout: json.MarshalIndent, two spaces, the
+	// members they read at their depth (docs/lox-up.md, Host agents).
+	for _, want := range []string{"{\n  \"version\": 1,\n", "\n  \"project\": \"" + Project(ws) + "\",\n", "\n  \"workspace\": \"" + ws + "\",\n",
+		"\n  \"locks\": {\n", "\n    \"crm-prod\": {\n      \"type\": \"locksql\",\n", "\n      \"socket_volume\": \"" + Project(ws) + "_crm-prod-run\",\n",
+		"\n      \"client_gid\": \"10000\"\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("up.json lacks %q (the launchers' layout):\n%s", want, b)
+		}
+	}
+	if !strings.HasSuffix(string(b), "\n  }\n}\n") {
+		t.Errorf("up.json does not end with the locks, then the closing brace:\n%s", b)
+	}
 	p := Project(ws)
 	if s.Version != 1 || s.Project != p || s.Workspace != ws || s.HubNetwork != p+"_lockhub" || s.HubKey != f.keys["hub"] {
 		t.Errorf("up.json: %+v", s)

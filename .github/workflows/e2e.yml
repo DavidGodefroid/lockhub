@@ -2,7 +2,8 @@ name: e2e-lox-up
 
 # The hub plan's exit demos, end to end, with real images and Docker:
 # phase 1 (locksql's TestHubPhase1 against this lockhub), phase 2 (lox up
-# stack, a ticket approved through the facade socket, I2, I11) and
+# stack, tickets approved through the facade socket, a host agent's
+# `locksql mcp` through up.json, I2, I11) and
 # phase 5 (install.sh, lox add, lox up, lox import). Phases 2 and 5
 # run this commit's hub image (ci/e2e/local-hub.sh), not the latest
 # release that lox add pins.
@@ -50,11 +51,20 @@ jobs:
           grep -q '^--- PASS: TestHubPhase1 ' phase1.out
 
   phase2:
-    name: e2e phase 2 (lox up with locksql and LockHTTP, facade approvals, I2, I11)
+    name: e2e phase 2 (lox up with locksql and LockHTTP, facade approvals, a host agent, I2, I11)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # locksql's host launcher (scripts/locksql), for the host agent
+      # (`locksql mcp`, lockhub#78): the commit that reads up.json
+      # (DavidGodefroid/locksql#153, its merge commit on main), until a
+      # locksql release ships it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DavidGodefroid/locksql
+          ref: 9fb7376d574e58aaf1aa8c92c5eae9a19948d2b2
+          path: locksql-launcher
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.x"
@@ -81,6 +91,7 @@ jobs:
         run: |
           export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
           sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lox"
 
   phase5:

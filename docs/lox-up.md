@@ -1,15 +1,18 @@
 # lox up and lea
 
-`lox up` runs the hub and a workspace's locks with Docker Compose. lea's
-agents reach the locks' sockets, never the hub. This page is the contract
-between the two.
+`lox up` runs the hub and a workspace's locks with Docker Compose. Agents
+reach the locks' sockets, never the hub: lea's agents in their containers,
+and a host agent (Claude Code, Codex... run in a terminal) through the
+locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, as
+`<lock> init` writes them in `.mcp.json`). This page is the contract
+between `lox up` and both.
 
 ## Files
 
 | Path | Written by | Read by |
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lox add`, `lox import`) | `lox` |
-| `<workspace>/.lockfamily/up.json` | `lox up`, after a confirmed apply | lea |
+| `<workspace>/.lockfamily/up.json` | `lox up`, after a confirmed apply | lea; the locks' launchers (host agents) |
 | `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lox up`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox up` | `lox` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox up pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox up` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
@@ -105,6 +108,86 @@ phones sealed. lea refuses hub mode (and runs the standalone gate, saying
 why) when `require_device` is set and no device is paired. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
+
+## Host agents: the locks' launchers
+
+An agent on the host runs a lock's launcher, as `.mcp.json` says: `locksql
+mcp` (and the other agent commands: `status`, `plan`, `run`...; lockmq's and
+lockfile's alike; lockhttp has no agent command: its gate is lea's). The
+launcher runs the command in the lock's image, with the socket volume of the
+workspace's lock of its type mounted **read-only** on `/run/<type>`
+(connecting to a socket needs no write), never a fixed volume: the consoles
+run hub-attached only, started by `lox up`. It takes the volume only after
+lea's checks, in POSIX sh:
+
+- up.json is found in the nearest directory up from the working directory
+  whose `.lockfamily` holds one: that directory is the workspace. The
+  `.lockfamily` directory and up.json are no link, are the user's, and
+  neither group nor others may write them; up.json is at most 1 MiB, and is
+  the same file after the read as before.
+- up.json is read as `lox up` writes it: Go's `json.MarshalIndent` with a
+  two-space indent, the members the launcher reads (`version`, `project`,
+  `workspace`, and per lock `type`, `socket_volume`, `client_gid`) at their
+  depth, their values with nothing escaped. Anything else is not lox up's
+  state. lox up keeps that layout (`TestUpWritesLeaContract`).
+- version 1, `project` `lockfamily-<8 hex of sha256(workspace)>` and
+  `workspace` this physical directory.
+- the lock: the workspace's only lock of the launcher's type, or the one
+  `--instance NAME` names (the launcher's option, taken out of the command
+  line; in `.mcp.json`, `"args": ["mcp", "--instance", "NAME"]`). With
+  several and no `--instance`, the error names them.
+- `socket_volume` is `<project>_<instance>-run`, `client_gid` the image's
+  clients group.
+- Docker confirms the volume: `docker volume inspect` prints its labels
+  `com.docker.compose.project`, `com.docker.compose.volume`
+  (`<instance>-run`), `dev.lockfamily.role` (`socket`),
+  `dev.lockfamily.instance`, `dev.lockfamily.type`,
+  `dev.lockfamily.workspace`, each as JSON on a line of its own, compared
+  whole with what they must be.
+- every container that mounts the volume (`docker ps -a --filter
+  volume=…`, then `docker inspect` of each, labels as JSON) is lox up's own
+  (compose ran it with `com.docker.compose.project.working_dir` lox up's
+  state directory `$XDG_STATE_HOME/lockfamily/<project>`, and
+  `config_files` `-` or that directory's `compose.yaml`) or mounts the
+  volume read-only. A container that mounts it read-write, of another
+  compose run or none, could listen on the socket's path: the launcher then
+  trusts none of that socket.
+
+Without up.json, or with a lock or volume it cannot trust, the launcher
+says why and what to do (`lox up`), exits 2 (as a client that finds no
+console) and runs nothing: it never falls back to the fixed `<type>-run`
+volume of the consoles the launchers used to start. up.json only names the
+lock: what is mounted is what Docker's labels prove. `.mcp.json` stays
+`<lock> mcp`.
+
+The socket's name is the lock's: `<project hash>-<profile>.sock`, where
+the project hash comes from the lock's profile directory up from the
+working directory (`.locksql`, `.lockmq`; lockfile has none: `user`) and the
+profile is the one the console serves (lox up passes `--profile` only for
+a lock that names one, and `default` for lockfile). Run the agent from the
+workspace, whose profile directory lox up's console serves.
+
+### Threat model
+
+The checks are against mistakes (a stale or copied up.json, another
+workspace's lock, a volume or compose file of the same name, a container
+squatting the volume) and against files others than the user can write.
+They are **not** a boundary against the host agent itself: it usually runs
+as the user, often with Docker access, and can then rewrite up.json, create
+volumes and containers with any labels, `docker exec` into lox up's
+containers, or read a lock's home volume. What it still cannot do: decide a
+ticket (the hub signs decisions with its key, which the consoles pin, and
+only a human at a facade approves), or see a lock's credentials through
+the socket (the console holds them). An impostor socket could at most feed
+another agent false answers or collect its requests. To contain the agent,
+run it in lea: its containers have no Docker access and see `.lockfamily`
+read-only.
+
+Binding the volume to lox up's state (a nonce label that lox up records in
+its state directory and the launchers compare) would also stop a look-alike
+volume made with `docker volume create` and the same labels; it adds
+nothing against an agent with Docker access, which can read the state
+directory too.
 
 ## Profiles: a reviewed copy
 
