@@ -111,7 +111,7 @@ are listed above the questions as `found: ...` hints.
 | `Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: ` | not sqlite; `--credentials` |
 | `Vault path (required) [database/creds/<name>]: ` | vault only; `<name>` is the suggested name, since Name is asked last: Enter keeps the path following the name you then type (or `--name`); `--vault-path` |
 | `Vault address, such as https://vault.example.com:8200 (required): ` | vault, when `lockfamily.yaml` has no vault block yet; `--vault-address` |
-| `Vault namespace (optional: empty = the root namespace): ` | same condition; names of letters, digits, `_ . -` separated by `/`; `--vault-namespace` |
+| `Vault namespace (optional: empty = the root namespace): ` | same condition; names of letters, digits, `_ . -` separated by `/` (one trailing `/`, as Vault prints it, is dropped); `--vault-namespace` |
 | `Vault CA file (optional: empty = the system's CA certificates): ` | same condition; `--vault-ca-file` |
 | `Name (required) [db]: ` | the lock's and its profile's name; the default is the compose service, database or vhost the files name, made unique; `--name` |
 

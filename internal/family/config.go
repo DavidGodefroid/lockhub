@@ -71,6 +71,7 @@ func (v *Vault) validate() error {
 	if err := ValidateVaultNamespace(v.Namespace); err != nil {
 		return err
 	}
+	v.Namespace = TrimVaultNamespace(v.Namespace)
 	if v.CAFile != "" {
 		// A file missing at load time is tolerated (it may live on another
 		// machine); SetVault and lox add refuse it when it is written.
@@ -102,12 +103,23 @@ var vaultNamespaceRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`
 // ValidateVaultNamespace is the rule of vault.namespace (empty: the root
 // namespace), shared by the file's load, lox vault set and the lox add
 // question: the value is printed in the review, so it holds no control
-// character, space or "..". It never echoes the value.
+// character, space or "..". One trailing "/" (the form `vault namespace
+// list` prints) is accepted; TrimVaultNamespace gives the value to store.
+// It never echoes the value.
 func ValidateVaultNamespace(ns string) error {
+	if ns == "/" {
+		return errors.New("vault.namespace: names of letters, digits, _ . and -, separated by /")
+	}
+	ns = TrimVaultNamespace(ns)
 	if ns != "" && (!vaultNamespaceRE.MatchString(ns) || strings.Contains(ns, "..")) {
 		return errors.New("vault.namespace: names of letters, digits, _ . and -, separated by /")
 	}
 	return nil
+}
+
+// TrimVaultNamespace drops one trailing "/" from a Vault namespace.
+func TrimVaultNamespace(ns string) string {
+	return strings.TrimSuffix(ns, "/")
 }
 
 // ValidateVaultCAFile is the rule of vault.ca_file: an absolute path to an

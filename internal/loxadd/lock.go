@@ -63,7 +63,7 @@ func Build(lock string, a Answers) (Lock, error) {
 		}
 	}
 	if addr := a["vault-address"]; addr != "" {
-		l.Vault = &family.Vault{Address: addr, Namespace: a["vault-namespace"], CAFile: a["vault-ca"]}
+		l.Vault = &family.Vault{Address: addr, Namespace: family.TrimVaultNamespace(a["vault-namespace"]), CAFile: a["vault-ca"]}
 	}
 	return l, nil
 }

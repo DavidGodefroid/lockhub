@@ -93,6 +93,24 @@ func TestVaultAddressRefusesLoopback(t *testing.T) {
 	}
 }
 
+func TestVaultNamespaceTrailingSlashStored(t *testing.T) {
+	c, err := loadVaultConf(t, vaultConf("vault:\n  address: https://vault.example.com\n  namespace: team/\n", ""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.Vault.Namespace != "team" {
+		t.Errorf("load stored %q", c.Vault.Namespace)
+	}
+	w := newWS(t, yamlConf(""))
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", Namespace: "team/"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(w.file)
+	if !strings.Contains(string(b), "namespace: team\n") || strings.Contains(string(b), "team/") {
+		t.Errorf("SetVault wrote %s", b)
+	}
+}
+
 func TestVaultNamespaceRefused(t *testing.T) {
 	const msg = "vault.namespace: names of letters, digits, _ . and -, separated by /"
 	for ns, ok := range map[string]bool{
@@ -102,7 +120,8 @@ func TestVaultNamespaceRefused(t *testing.T) {
 		"team_1.prod-a": true,
 		"\x1b[2K":       false,
 		"a\nlock x":     false,
-		"shop/":         false,
+		"shop/":         true,
+		"shop//":        false,
 		"/shop":         false,
 		"shop//orders":  false,
 		"shop/../root":  false,
@@ -120,6 +139,9 @@ func TestVaultNamespaceRefused(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), ns) {
 			t.Errorf("%q: the error echoes the value", ns)
 		}
+	}
+	if ValidateVaultNamespace("/") == nil {
+		t.Error("a lone slash is accepted")
 	}
 	// The file's load and lox vault set refuse it too.
 	if _, err := loadVaultConf(t, vaultConf("vault:\n  address: https://vault.example.com\n  namespace: \"a\\nlock x\"\n", "")); err == nil || !strings.Contains(err.Error(), msg) {
