@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/family"
@@ -53,9 +54,10 @@ func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	project := family.Project(ws)
 	state := stateDir(project)
 	rel := newReleases()
+	user := sync.OnceValue(func() string { return hubUser(ctx, family.Exec{Stderr: io.Discard}) })
 	newUp := func(out io.Writer, runErr io.Writer) *family.Up {
 		return &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
-			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: family.QuietExec{Verbose: *verbose, Stderr: runErr},
+			User: user(), Run: family.QuietExec{Verbose: *verbose, Stderr: runErr},
 			In: in, Out: out, Review: *review}
 	}
 	ini := &loxinit.Init{

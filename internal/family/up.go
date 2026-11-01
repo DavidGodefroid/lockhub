@@ -266,16 +266,23 @@ func (u *Up) Do(ctx context.Context) error {
 	if facadeKeys == "" {
 		facadeKeys = filepath.Join(filepath.Dir(u.State), "facades")
 	}
-	for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
-		if err := privateDir(d); err != nil {
-			return err
-		}
-	}
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	appliedPath := filepath.Join(u.State, "applied.json")
-	if _, err := os.Stat(appliedPath); u.Probe && err != nil {
-		return nil
+	facadesPath := filepath.Join(u.State, FacadesFile)
+	if u.Probe {
+		// A probe creates nothing: whatever is missing (a directory, a
+		// key, the applied state, a lock never applied) is a change, not
+		// something to make now.
+		if !u.probeReady(c, []string{u.State, hubData, facadeDir, facadeKeys}, hubPubPath, facadesPath, facadeKeys, appliedPath) {
+			return nil
+		}
+	} else {
+		for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
+			if err := privateDir(d); err != nil {
+				return err
+			}
+		}
 	}
 	// The new hub key, made before the review (lockhub keygen) and kept
 	// until it is the hub's.
@@ -289,7 +296,6 @@ func (u *Up) Do(ctx context.Context) error {
 			return errors.New("--rotate: nothing to rotate before the first lox up of this workspace")
 		}
 	}
-	facadesPath := filepath.Join(u.State, FacadesFile)
 	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
@@ -785,6 +791,42 @@ func (u *Up) Do(ctx context.Context) error {
 }
 
 var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)
+
+// probeReady reports whether a probe can compare fingerprints without
+// creating anything: the directories, the hub key, the facade keys and the
+// facade set exist, something was applied, and every declared lock was
+// applied (so its key already exists).
+func (u *Up) probeReady(c *Config, dirs []string, hubPub, facadeSet, facadeKeys, applied string) bool {
+	for _, d := range dirs {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	for _, f := range []string{hubPub, facadeSet} {
+		if _, err := os.Stat(f); err != nil {
+			return false
+		}
+	}
+	for _, f := range HostFacades {
+		if _, err := keys.Load(FacadeKeyPath(facadeKeys, f)); err != nil {
+			return false
+		}
+	}
+	b, err := os.ReadFile(applied)
+	if err != nil {
+		return false
+	}
+	var a Applied
+	if json.Unmarshal(b, &a) != nil {
+		return false
+	}
+	for _, n := range c.Instances() {
+		if !slices.Contains(a.Summary, fmt.Sprintf("lock %s type %s", n, c.Locks[n].Type)) {
+			return false
+		}
+	}
+	return true
+}
 
 // AppliedLocks is the number of locks the last confirmed lox up of the
 // workspace state applied (0 when none ran).

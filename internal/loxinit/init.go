@@ -81,10 +81,9 @@ func (in *Init) Do(ctx context.Context) error {
 	if !created && in.HubImageGiven {
 		in.say("--hub-image: lockfamily.yaml exists, its hub image is kept (lox up --pin to change it)")
 	}
-	if !created && !in.Review && in.Running(ctx) && in.Unchanged(ctx) {
-		in.end()
-		return nil
-	}
+	// Only a hub that already runs, from a file that was already there,
+	// can be left alone; --review always runs lox up.
+	maybeNoop := !created && !in.Review && in.Running(ctx)
 	decl, err := in.Declared()
 	if err != nil {
 		return err
@@ -112,6 +111,12 @@ func (in *Init) Do(ctx context.Context) error {
 			in.end()
 			return nil
 		}
+	}
+	// The terminal guards come first: the check is lox up's own and may
+	// start docker and cosign.
+	if maybeNoop && in.Unchanged(ctx) {
+		in.end()
+		return nil
 	}
 	in.say("")
 	if err := in.Up(ctx); err != nil {

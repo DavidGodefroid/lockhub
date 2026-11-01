@@ -39,6 +39,7 @@ func TestRun(t *testing.T) {
 		{[]string{"init", "--yes"}, 2, "", "flag provided but not defined"},
 		{[]string{"init", "--manual"}, 2, "", ""},
 		{[]string{"init", "extra"}, 2, "", "flags only"},
+		{[]string{"init", "--review"}, 1, "", "--review asks at a terminal"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)

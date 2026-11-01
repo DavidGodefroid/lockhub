@@ -53,7 +53,7 @@ type harness struct {
 	ups  int
 	// created is what Hub answers; running what Running answers.
 	created, running, unchanged bool
-	applied                     int
+	applied, probes             int
 	decl                        []Declared
 }
 
@@ -75,7 +75,7 @@ func newHarness(root string) *harness {
 		// The marker shows where lox up's own lines go.
 		Up:        func(context.Context) error { h.ups++; h.out.WriteString("[lox up]\n"); return nil },
 		Running:   func(context.Context) bool { return h.running },
-		Unchanged: func(context.Context) bool { return h.unchanged },
+		Unchanged: func(context.Context) bool { h.probes++; return h.unchanged },
 		Applied:   func() (int, error) { return h.applied, nil },
 	}
 	return h
@@ -294,8 +294,8 @@ func TestInitRunsUpWhenConfigChanged(t *testing.T) {
 	if err := h.in.Do(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, h.out.String())
 	}
-	if h.ups != 1 {
-		t.Errorf("up %d with a changed configuration: want once", h.ups)
+	if h.ups != 1 || h.probes != 1 {
+		t.Errorf("up %d, probes %d with a changed configuration: want 1, 1", h.ups, h.probes)
 	}
 }
 
@@ -307,8 +307,8 @@ func TestInitReviewAlwaysRunsUp(t *testing.T) {
 	if err := h.in.Do(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if h.ups != 1 {
-		t.Errorf("up %d with --review: want once", h.ups)
+	if h.ups != 1 || h.probes != 0 {
+		t.Errorf("up %d, probes %d with --review: want 1, 0", h.ups, h.probes)
 	}
 }
 
@@ -374,5 +374,27 @@ func TestInitHubImageKept(t *testing.T) {
 	}
 	if strings.Contains(h.out.String(), "--hub-image") {
 		t.Errorf("--hub-image note on a created file:\n%s", h.out.String())
+	}
+}
+
+// A file created now is never probed, and without a terminal the guard
+// answers before any probe.
+func TestInitProbeOnlyWhenUpWouldRun(t *testing.T) {
+	h := newHarness(t.TempDir()) // created
+	h.running, h.unchanged = true, true
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.probes != 0 || h.ups != 1 {
+		t.Errorf("created: probes %d, up %d: want 0, 1", h.probes, h.ups)
+	}
+	h = newHarness(t.TempDir())
+	h.created, h.running, h.unchanged = false, true, true
+	h.decl = []Declared{{Instance: "orders", Lock: "locksql"}}
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.probes != 0 || h.ups != 0 {
+		t.Errorf("declared, no terminal: probes %d, up %d: want 0, 0", h.probes, h.ups)
 	}
 }
