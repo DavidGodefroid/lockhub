@@ -122,11 +122,9 @@ jobs:
     # The job runs the flow twice: without and with the Vault half.
     timeout-minutes: 45
     env:
-      # The Vault dev server of the lock with credentials = vault, at a
-      # real exact patch tag. The release process pins the digest; until
-      # then the REPLACE_ME placeholder does not pull, and the Vault steps
-      # below are allowed to fail (their comments say when to tighten).
-      E2E_VAULT_IMAGE: hashicorp/vault:2.2.1@sha256:REPLACE_ME
+      # The Vault dev server of the lock with credentials = vault, at an
+      # exact patch tag pinned by its multi-platform index digest.
+      E2E_VAULT_IMAGE: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The launcher lox add drives (profile add, init claude, doctor, then
@@ -155,10 +153,7 @@ jobs:
       # here and handed to the next steps through the environment; it
       # reaches no file the e2e greps (the workspace but .env, lox up's
       # state directory).
-      # Allowed to fail while the image tag's digest above is the
-      # REPLACE_ME placeholder (the release process pins it).
       - name: Vault dev server (for the lock with credentials = vault)
-        continue-on-error: true
         run: |
           token="e2e-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
           docker run -d --name "e2e-vault-${{ github.run_id }}" -p 58200:8200 \
@@ -179,13 +174,10 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
           sh ci/e2e/firstrun.sh "$RUNNER_TEMP/bin/lox"
-      # The Vault half of the first run. Its console's Vault-token prompt is
-      # released (locksql v0.13.1, checked out above); what is left is the
-      # pinned Vault image above (the REPLACE_ME digest). Allowed to fail
-      # until the release process pins it; the failure stays visible in this
-      # step. Then remove continue-on-error.
+      # The Vault half of the first run: one ask lock and one vault lock in
+      # the same workspace, both queries approved. Its console's
+      # Vault-token prompt is released (locksql v0.13.1, checked out above).
       - name: first run (lox add locksql with Vault)
-        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           E2E_ID: e2e-vault-${{ github.run_id }}-${{ github.run_attempt }}

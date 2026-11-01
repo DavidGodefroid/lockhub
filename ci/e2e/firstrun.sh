@@ -7,9 +7,9 @@
 # E2E_VAULT=1 (default 0) also adds a lock whose credentials Vault holds,
 # against the Vault dev server the CI job starts (E2E_VAULT_CONTAINER and
 # E2E_VAULT_TOKEN). That half needs a locksql console that asks the Vault
-# token at its start (lockkit v0.11.0) and the job's pinned Vault image;
-# e2e.yml runs it as a step of its own, allowed to fail until a locksql
-# release ships it (see the workflow's comment).
+# token at its start (locksql v0.13.1, the launcher e2e.yml checks out) and
+# the job's Vault image, pinned by digest; e2e.yml runs it as a step of its
+# own.
 #
 # Steps: lox init (no question, the found hint, the end line, the hub alone
 # in up.json; a re-run changes nothing) — lox add locksql for orders (the
