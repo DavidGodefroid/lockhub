@@ -218,6 +218,40 @@ func TestUnsignedImageStops(t *testing.T) {
 	}
 }
 
+const hubOnly = "version: 1\nhub:\n  image: " + hubImg + "\n"
+
+func TestZeroLocksValid(t *testing.T) {
+	for name, conf := range map[string]string{"no locks key": hubOnly, "empty locks": hubOnly + "locks: {}\n"} {
+		p := filepath.Join(t.TempDir(), "lockfamily.yaml")
+		os.WriteFile(p, []byte(conf), 0o644)
+		c, err := Load(p)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(c.Locks) != 0 {
+			t.Errorf("%s: locks %v", name, c.Instances())
+		}
+	}
+}
+
+func TestUpHubOnly(t *testing.T) {
+	w := newWS(t, hubOnly)
+	f := newFake()
+	if _, err := w.up("y\n", f); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran("up -d --remove-orphans") {
+		t.Errorf("no compose up: %v", f.calls)
+	}
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(w.file)), Dir, UpFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"locks": {}`) {
+		t.Errorf("up.json:\n%s", b)
+	}
+}
+
 func TestConfigRefusals(t *testing.T) {
 	for name, conf := range map[string]string{
 		"literal secret":            strings.Replace(yamlConf(""), "    image: "+sqlImg, "    image: "+sqlImg+"\n    password: hunter2", 1),

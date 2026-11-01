@@ -184,7 +184,7 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c, err := decode(raw, u.File, true)
+	c, err := decode(raw, u.File)
 	if err != nil {
 		return err
 	}
@@ -203,7 +203,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if raw, err = setHubImage(raw, ref); err != nil {
 				return fmt.Errorf("--pin: %s: %w", u.File, err)
 			}
-			if c, err = decode(raw, u.File, true); err != nil {
+			if c, err = decode(raw, u.File); err != nil {
 				return err
 			}
 			pinned = true

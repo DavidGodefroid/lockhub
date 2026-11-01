@@ -144,7 +144,7 @@ func Import(path string, srcs []string) ([]string, error) {
 		return nil, err
 	default:
 		// The workspace may declare only its hub.
-		if base, err = decode(b, path, false); err != nil {
+		if base, err = decode(b, path); err != nil {
 			return nil, err
 		}
 	}

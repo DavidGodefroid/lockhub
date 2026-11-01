@@ -221,7 +221,7 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decode(b, path, true)
+	return decode(b, path)
 }
 
 // readConfig reads the lockfamily.yaml at path; in .lockfamily, only once
@@ -235,25 +235,23 @@ func readConfig(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-// decode parses and validates a lockfamily.yaml; needLocks refuses one
-// without locks (lox up has nothing to run then).
-func decode(b []byte, path string, needLocks bool) (*Config, error) {
+// decode parses and validates a lockfamily.yaml (it may declare no lock:
+// the hub alone).
+func decode(b []byte, path string) (*Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("%s: %w (a lock's target, production flag and credentials belong to its own profile, never here)", path, scrubYAML(err, b))
 	}
-	if err := c.validate(needLocks); err != nil {
+	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &c, nil
 }
 
 // Validate checks c and fills defaults.
-func (c *Config) Validate() error { return c.validate(true) }
-
-func (c *Config) validate(needLocks bool) error {
+func (c *Config) Validate() error {
 	if c.Version != 1 {
 		return fmt.Errorf("version: want 1, got %d", c.Version)
 	}
@@ -297,9 +295,6 @@ func (c *Config) validate(needLocks bool) error {
 		if err := c.Hub.Mobile.validate(); err != nil {
 			return fmt.Errorf("hub.%w", err)
 		}
-	}
-	if needLocks && len(c.Locks) == 0 {
-		return fmt.Errorf("locks: none declared")
 	}
 	for name, l := range c.Locks {
 		if !keys.ValidInstance(name) {

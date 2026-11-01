@@ -28,13 +28,20 @@ func TestRemoveLock(t *testing.T) {
 	if err := RemoveLock(w.file, "nope"); err == nil {
 		t.Error("removed a lock that is not there")
 	}
-	// The last lock: lox up has nothing to run then; refused, file kept.
-	before, _ := os.ReadFile(w.file)
-	if err := RemoveLock(w.file, "crm-prod"); err == nil {
-		t.Error("removed the last lock")
+}
+
+// The only lock may go: a hub alone is a valid lockfamily.yaml.
+func TestRemoveLastLock(t *testing.T) {
+	w := newWS(t, "version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  crm-prod:\n    type: locksql\n    image: "+sqlImg+"\n")
+	if err := RemoveLock(w.file, "crm-prod"); err != nil {
+		t.Fatal(err)
 	}
-	if after, _ := os.ReadFile(w.file); string(after) != string(before) {
-		t.Error("a refused removal changed the file")
+	c, err := Load(w.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Locks) != 0 {
+		t.Errorf("locks %v", c.Instances())
 	}
 }
 
