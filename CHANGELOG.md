@@ -3,7 +3,13 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
-## Unreleased
+## v0.4.0 (2026-11-01)
+
+Supported locks: as v0.3.0. `lox init` drives the launcher verbs of
+locksql v0.13.0, lockmq v0.6.0, lockfile v0.6.0 and lockhttp v0.7.0 or
+later (lockkit v0.10.0); it runs `doctor --fix --yes` for locksql
+v0.13.1 and lockmq v0.6.1 or later, and only the advisory `doctor`
+before them.
 
 - Release: each tag bumps the `lox` formula of the Homebrew tap
   (`brew install davidgodefroid/tap/lox`), through a dispatch to
