@@ -18,7 +18,9 @@ const UpFile = "up.json"
 // UpState is lox up's contract with lea (version 1): lea mounts in its
 // agents' containers each lock's socket volume, after checking that the
 // volume carries compose's project label and the socket role (it never
-// mounts any other volume of a lock), on /run/<type>; for a lockhttp
+// mounts any other volume of a lock), on /run/<type> when it is the only
+// lock of its type, each on /run/<type>/<instance> when there are several;
+// for a lockhttp
 // instance, lea's gate mounts the socket volume and the gate's home,
 // asks the hub at HubURL with HubKey pinned, and only lea's proxy joins
 // HubNetwork.

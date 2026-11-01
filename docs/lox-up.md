@@ -82,10 +82,11 @@ a type it has switched on:
   `dev.lockfamily.instance=<name>`, `dev.lockfamily.type=<type>`, and
   refuses any other volume (a lock's home holds its private key: no
   agent ever mounts it);
-- mounts it on `/run/<type>` and adds the clients group, instead of the
-  fixed `<type>-run` volume of a console started by the tool's own
-  launcher. One instance per type: with two of a type, lea leaves the
-  type out and says so.
+- mounts it and adds the clients group, instead of the fixed `<type>-run`
+  volume of a console started by the tool's own launcher. One lock of a
+  type: `/run/<type>`; several: each on `/run/<type>/<instance>` (Codex
+  gets one server per instance; a Claude agent passes `--instance NAME`
+  or sets `<TOOL>_INSTANCE`).
 
 For a lockhttp instance, lea's gate (beside lea's proxy) mounts the socket
 volume on `/run/lockhttp` and the volume of role `gate-home` as its
