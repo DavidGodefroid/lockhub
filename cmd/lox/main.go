@@ -66,6 +66,8 @@ Usage:
                                           take a lock out of lockfamily.yaml and stop its console after one
                                           review; its profile stays in the lock's config.toml unless --purge;
                                           a "n", a failure or Ctrl-C keeps the lock
+  lox vault set --address URL [--namespace NS] [--ca-file PATH] [--file lockfamily.yaml]
+                                          write the shared vault: block; lox up reviews and applies it
   lox import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
@@ -124,6 +126,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return addCmd(args[1:], stdin, stdout, stderr)
 	case "remove":
 		return removeCmd(args[1:], stdin, stdout, stderr)
+	case "vault":
+		return vaultCmd(args[1:], stdout, stderr)
 	case "import":
 		return importCmd(args[1:], stdout, stderr)
 	case "attach":
