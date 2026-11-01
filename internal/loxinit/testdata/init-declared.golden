@@ -1,0 +1,13 @@
+lox init: /project
+
+Prerequisites
+  ok  Docker 29.0.0
+  ok  cosign (lox add and lox up verify every image's signature)
+  ok  lea
+  ok  launchers: locksql, lockmq, lockfile, lockhttp
+
+lockfamily.yaml declares locks, kept as they are: orders (locksql)
+
+[lox up]
+
+Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp`.
