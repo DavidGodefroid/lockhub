@@ -524,8 +524,21 @@ func TestApplyLeaHint(t *testing.T) {
 	} {
 		w := newApplyWorld(t)
 		w.steps.LeaRunning = tc.running
+		if tc.running != nil {
+			running := tc.running
+			w.steps.LeaRunning = func(ctx context.Context) bool {
+				w.fake.log = append(w.fake.log, "lea check")
+				return running(ctx)
+			}
+		}
 		if err := w.steps.Apply(context.Background(), mustBuild(t, a), a); err != nil {
 			t.Fatalf("%s: Apply: %v", name, err)
+		}
+		if tc.want {
+			up, check, attach := slices.Index(w.fake.log, "up orders"), slices.Index(w.fake.log, "lea check"), slices.Index(w.fake.log, "attach orders")
+			if up < 0 || !(up < check && check < attach) {
+				t.Errorf("%s: order = %q, want up, lea check, attach", name, w.fake.log)
+			}
 		}
 		if got := strings.Contains(w.out.String(), hint); got != tc.want {
 			t.Errorf("%s: hint shown = %v, want %v\n%s", name, got, tc.want, w.out.String())

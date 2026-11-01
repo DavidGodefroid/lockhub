@@ -118,21 +118,39 @@ func TestVaultRefusesABadCAFile(t *testing.T) {
 	}
 }
 
-func TestVaultLoadErrorLeavesFileUntouched(t *testing.T) {
-	// The current vault address is one Load refuses, and the new address
-	// would make the file valid again: the kept namespace and ca_file
-	// cannot be read, and must not be silently cleared.
-	file, _ := vaultWorld(t)
+func TestVaultRepairsAFileLoadRefuses(t *testing.T) {
+	// The current address is localhost, which Load refuses: set must still
+	// repair the file and keep the namespace and ca_file.
+	file, ca := vaultWorld(t)
 	b, _ := os.ReadFile(file)
-	before := strings.Replace(string(b), "https://old.example.com:8200", "http://localhost:8200", 1)
-	if err := os.WriteFile(file, []byte(before), 0o600); err != nil {
+	bad := strings.Replace(string(b), "https://old.example.com:8200", "http://localhost:8200", 1)
+	if err := os.WriteFile(file, []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200"}, &out, &errb); code != 0 {
+		t.Fatalf("code %d, %s", code, errb.String())
+	}
+	c, err := family.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Vault.Address != "https://vault.example.com:8200" || c.Vault.Namespace != "shop" || c.Vault.CAFile != ca {
+		t.Errorf("vault = %+v", c.Vault)
+	}
+}
+
+func TestVaultUnparseableYAMLLeavesFileUntouched(t *testing.T) {
+	file, _ := vaultWorld(t)
+	broken := "version: 1\nlocks: [unclosed\n"
+	if err := os.WriteFile(file, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
 	if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "lox vault set:") {
 		t.Fatalf("code %d, err %q", code, errb.String())
 	}
-	if after, _ := os.ReadFile(file); string(after) != before {
+	if after, _ := os.ReadFile(file); string(after) != broken {
 		t.Errorf("lockfamily.yaml changed:\n%s", after)
 	}
 }

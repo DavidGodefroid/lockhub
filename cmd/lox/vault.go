@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/DavidGodefroid/lockhub/internal/family"
 )
@@ -42,18 +45,18 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	if !given["namespace"] || !given["ca-file"] {
 		// An omitted flag keeps the current value; an explicit "" clears it.
-		c, err := family.Load(abs)
+		// Read leniently: the file may be one its vault block makes invalid,
+		// which this command repairs.
+		cur, err := currentVault(abs)
 		if err != nil {
 			fmt.Fprintln(stderr, "lox vault set:", err)
 			return 1
 		}
-		if c.Vault != nil {
-			if !given["namespace"] {
-				v.Namespace = c.Vault.Namespace
-			}
-			if !given["ca-file"] {
-				v.CAFile = c.Vault.CAFile
-			}
+		if !given["namespace"] {
+			v.Namespace = cur.Namespace
+		}
+		if !given["ca-file"] {
+			v.CAFile = cur.CAFile
 		}
 	}
 	if err := family.SetVault(abs, v); err != nil {
@@ -62,4 +65,24 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "%s: vault set; run lox up to review and apply it\n", abs)
 	return 0
+}
+
+// currentVault reads the vault block's namespace and ca_file from the file
+// without validating the file. Unparseable YAML is an error that names the
+// file, never its content.
+func currentVault(path string) (family.Vault, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return family.Vault{}, err
+	}
+	var doc struct {
+		Vault struct {
+			Namespace string `yaml:"namespace"`
+			CAFile    string `yaml:"ca_file"`
+		} `yaml:"vault"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return family.Vault{}, fmt.Errorf("%s: not readable YAML", path)
+	}
+	return family.Vault{Namespace: doc.Vault.Namespace, CAFile: doc.Vault.CAFile}, nil
 }
