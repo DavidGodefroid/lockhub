@@ -42,7 +42,8 @@ hub_is_local() {
 # also logs its line to SHIM_DIR/log; each check empties the log, so the
 # next one needs a new verify.
 hub_cosigned() {
-	grep -q "^hub image verified$" "$1" || die "lox up did not verify the hub image (no \"hub image verified\" in $1)"
+	# OUT comes from a terminal: its lines end in \r\n.
+	tr -d '\r' <"$1" | grep -qx "hub image verified" || die "lox up did not verify the hub image (no \"hub image verified\" in $1)"
 	grep -qF "e2e: $E2E_HUB_IMAGE is this commit's hub build: cosign verifies the released hub $(cat "$E2E_COSIGN_SHIM/released") with lox up's flags" "$E2E_COSIGN_SHIM/log" ||
 		die "lox up did not check the hub's signer identity (no cosign shim line in $E2E_COSIGN_SHIM/log)"
 	: >"$E2E_COSIGN_SHIM/log"
