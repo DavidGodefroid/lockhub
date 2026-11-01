@@ -31,7 +31,7 @@ func TestClassify(t *testing.T) {
 		{name: "init: no JSON, exit 0", stdout: "created .mcp.json\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			o := classify([]byte(c.stdout), []byte(c.stderr), c.code, c.err)
+			o := Classify([]byte(c.stdout), []byte(c.stderr), c.code, c.err)
 			if o.Code != c.want || (o.Profile != nil) != c.profile || (o.Doctor != nil) != c.doctor {
 				t.Fatalf("got %+v", o)
 			}

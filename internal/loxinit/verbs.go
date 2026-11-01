@@ -118,10 +118,10 @@ func tail(b []byte, n int) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-// classify reads a verb run: its JSON answer when there is one (an Error
+// Classify reads a verb run: its JSON answer when there is one (an Error
 // has a code, a Doctor has checks, a Profile has a profile), else its exit
 // status, a non-zero one with no JSON being CodeFailed with the stderr.
-func classify(stdout, stderr []byte, code int, runErr error) Outcome {
+func Classify(stdout, stderr []byte, code int, runErr error) Outcome {
 	if runErr != nil {
 		return Outcome{Code: CodeFailed, Message: runErr.Error()}
 	}
