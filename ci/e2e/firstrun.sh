@@ -249,7 +249,7 @@ if [ "$vault" = 1 ]; then
 		-H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
 		"https://ghcr.io/v2/davidgodefroid/locksql/manifests/$ver-vault" | tr -d '\r' | grep -i '^docker-content-digest: ' | cut -d' ' -f2)
 	[ -n "$reg" ] || die "the registry names no $ver-vault digest"
-	[ "$pinned" = "$reg" ] || die "inventory pins $pinned, not the $ver-vault digest $reg"
+	[ "${pinned#*@}" = "$reg" ] || die "inventory pins $pinned, not the $ver-vault digest $reg"
 	# VAULT_ADDR is only the inventory console's, in the applied compose.
 	[ -f "$state/compose.yaml" ] || die "no applied compose"
 	[ "$(grep -c 'VAULT_ADDR' "$state/compose.yaml")" = 1 ] || die "VAULT_ADDR is not the only one in the applied compose"

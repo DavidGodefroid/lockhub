@@ -22,14 +22,14 @@ mkdir -p "$shim"
 real=$(command -v cosign) || { echo "local-hub: no cosign in PATH" >&2; exit 1; }
 [ "$(realpath "$real")" != "$(realpath "$shim")/cosign" ] || { echo "local-hub: cosign resolves to the shim itself" >&2; exit 1; }
 real=$(realpath "$real")
-rm -f "$shim/released"
+rm -f "$shim/released" "$shim/log"
 cat >"$shim/cosign" <<SHIM
 #!/bin/sh
 for a; do last=\$a; done
 if [ "\${1:-}" = verify ] && [ "\${last:-}" = "$ref" ]; then
 	released=\$(cat "$shim/released" 2>/dev/null) && [ -n "\$released" ] ||
 		{ echo "e2e: no released hub in $shim/released (ci/e2e/lib.sh local_hub)" >&2; exit 1; }
-	echo "e2e: \$last is this commit's hub build: cosign verifies the released hub \$released with lox up's flags" >&2
+	echo "e2e: \$last is this commit's hub build: cosign verifies the released hub \$released with lox up's flags" | tee -a "$shim/log" >&2
 	# lox up's arguments but the last (the ref), then the released ref.
 	n=\$#
 	i=0
