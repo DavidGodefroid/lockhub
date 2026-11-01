@@ -3,6 +3,48 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## v0.5.0
+
+Supported locks: as v0.4.0.
+
+The first run is `brew install davidgodefroid/tap/lockfamily`, then lea, then
+`lox add` one source at a time.
+
+- Breaking: `lox init` sets no lock up and asks nothing. It checks the
+  prerequisites, lists the data sources the project's files name as hints,
+  writes a `lockfamily.yaml` with the hub alone and runs `lox up`. The flags
+  `--yes`, `--manual`, `--prod`, `--credentials`, `--vault-path`, `--tls` and
+  `--no-attach`, the plan screen and the manual checklist are removed,
+  without an alias (the project is pre-v1). `lox init` takes `--file`,
+  `--hub-image`, `--review` and `-v`.
+- `lox add TYPE` (locksql, lockmq, lockfile, lockhttp) sets one source up,
+  guided and applied at once: its questions, the lock's `profile add`,
+  `init claude` and `doctor`, the declaration in `lockfamily.yaml`, the short
+  review of that lock and the console's questions at your terminal. A
+  failure, a `n` or Ctrl-C puts the lock's `config.toml` and `lockfamily.yaml`
+  back and keeps the answers as a draft (`add-<type>.json` in the state
+  directory, no secret) that the next `lox add TYPE` offers. `--non-interactive`
+  takes the answers as flags and only declares the lock. `lox add TYPE
+  INSTANCE` still only declares one ([docs/lox-add.md](docs/lox-add.md)).
+- Each question says what an empty answer means: `(required)`, or
+  `(optional: empty = ...)` (`(optional: - = ...)` when it has a default).
+  Production is asked per lock, and there is no dev or prod question.
+- Vault is per lock: a lock chooses `ask` or `vault`, runs the `-vault`
+  image variant, and names its own Vault path. The Vault address, namespace
+  and CA file are one shared `vault:` block, asked by the first lock with
+  Vault. The token is typed at the console's start, never written.
+  `lox vault set --address URL [--namespace NS] [--ca-file PATH]` writes
+  that block. The "Not yet" note for Vault is gone from
+  [docs/lox-up.md](docs/lox-up.md).
+- `lox remove NAME [--purge]` takes a lock out and stops its console after one
+  review.
+- `lox up` is quiet: cosign's and docker's own output shows only when a step
+  fails (`-v` shows it). Its review is short, one block per lock, and
+  `--review` shows everything and asks. The first `lox up` of a workspace with
+  no lock asks nothing.
+- When lea already runs, a lock `lox add` declared reaches it at lea's next
+  start: `lea stop`, then `lea`.
+
 ## v0.4.0 (2026-11-01)
 
 Supported locks: as v0.3.0. `lox init` drives the launcher verbs of
