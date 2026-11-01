@@ -141,7 +141,7 @@ func (f *verbFake) Verb(ctx context.Context, _, name string, args ...string) ([]
 // a PATH holding only a fake lea.
 func addWorld(t *testing.T) (ws, file string, verbs *verbFake) {
 	t.Helper()
-	dir := t.TempDir()
+	dir, _ := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is a link
 	t.Setenv("HOME", filepath.Join(dir, "home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(dir, "run"))
