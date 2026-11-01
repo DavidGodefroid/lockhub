@@ -618,3 +618,18 @@ func TestImageVariantMissing(t *testing.T) {
 		t.Errorf("cosign ran: %v", cf.calls)
 	}
 }
+
+func TestImageVariantRejectsPathChars(t *testing.T) {
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits++ }))
+	defer srv.Close()
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: &cosignFake{}}
+	for _, v := range []string{"../x", "a:b", "a/b", "x y", "-a", "A"} {
+		if _, err := r.ImageVariant(context.Background(), "locksql", "v1.2.3", v); err == nil || strings.Contains(err.Error(), v) {
+			t.Errorf("variant %q: %v", v, err)
+		}
+	}
+	if hits != 0 {
+		t.Errorf("registry hit %d times", hits)
+	}
+}

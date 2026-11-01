@@ -113,10 +113,15 @@ func (r *Releases) Image(ctx context.Context, repo, tag string) (string, error) 
 	return r.ImageVariant(ctx, repo, tag, "")
 }
 
+var variantName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
 // ImageVariant is Image for the release's variant image (manifest
 // <version>-<variant>, e.g. "vault"); the cosign identity is the plain
 // image's. Variant "" is the plain image.
 func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) (string, error) {
+	if variant != "" && !variantName.MatchString(variant) {
+		return "", errors.New("image variant: lower case letters, digits and -")
+	}
 	if !semverTag.MatchString(tag) {
 		return "", errors.New("release tag: want vX.Y.Z (lox add --version)")
 	}
@@ -149,6 +154,8 @@ func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) 
 		return "", err
 	}
 	resp.Body.Close()
+	// "vault" is the only variant today, so the hint names the credentials
+	// choice; a new variant needs its own wording.
 	if resp.StatusCode == http.StatusNotFound && variant != "" {
 		return "", fmt.Errorf("%s %s publishes no -%s image: choose credentials ask, or a release that has one", repo, tag, variant)
 	}
