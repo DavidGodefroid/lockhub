@@ -1,0 +1,104 @@
+lox init: /project
+
+Prerequisites
+  ok  Docker 29.0.0
+  ok  cosign (lox add and lox up verify every image's signature)
+  ok  lea
+  ok  launchers: locksql, lockmq, lockfile, lockhttp
+
+Declared in .lockfamily/lockfamily.yaml (kept as they are)
+  web          lockhttp, profile default
+
+Detected (read only: .env*, compose*.yaml, config/; no secret is read or kept)
+  1  PostgreSQL  host.docker.internal:55432  user shop, database shop, tls disable
+       from compose.yaml (service db), .env (DATABASE_URL)
+  2  RabbitMQ    http://host.docker.internal:55672  user orders, vhost orders, AMQP amqp://host.docker.internal:55673
+       from compose.yaml (service mq)
+  3  MySQL       inventory.internal:3307  user stock, database stock, tls verify-full
+       from config/inventory.yaml
+
+Auto (one lock per source above) or manual (a checklist)? a/m/q [a] 
+Manual mode: what to set up (type numbers to toggle, Enter when done)
+  1  [x] lea        runs the agents; they reach the locks
+  2  [x] locksql    databases: PostgreSQL, MySQL, MariaDB, SQLite
+  3  [x] lockmq     RabbitMQ: queues and streams
+  4  [ ] lockfile   files: a local directory, S3, SFTP
+  5  [ ] lockhttp   the web requests of lea's agents, held at lea's gate
+  6  [-] locklog    not available yet: no release, and lox up does not run it
+  declared in lockfamily.yaml (uncheck to remove; its profile stays in the lock's directory):
+  7  [x] web        lockhttp, profile default
+> 
+Manual mode: what to set up (type numbers to toggle, Enter when done)
+  1  [ ] lea        runs the agents; they reach the locks
+  2  [x] locksql    databases: PostgreSQL, MySQL, MariaDB, SQLite
+  3  [x] lockmq     RabbitMQ: queues and streams
+  4  [ ] lockfile   files: a local directory, S3, SFTP
+  5  [-] lockhttp   needs lea (its gate is lea's)
+  6  [-] locklog    not available yet: no release, and lox up does not run it
+  declared in lockfamily.yaml (uncheck to remove; its profile stays in the lock's directory):
+  7  [x] web        lockhttp, profile default
+>   lockhttp: needs lea (its gate is lea's)
+
+Manual mode: what to set up (type numbers to toggle, Enter when done)
+  1  [ ] lea        runs the agents; they reach the locks
+  2  [x] locksql    databases: PostgreSQL, MySQL, MariaDB, SQLite
+  3  [x] lockmq     RabbitMQ: queues and streams
+  4  [ ] lockfile   files: a local directory, S3, SFTP
+  5  [-] lockhttp   needs lea (its gate is lea's)
+  6  [-] locklog    not available yet: no release, and lox up does not run it
+  declared in lockfamily.yaml (uncheck to remove; its profile stays in the lock's directory):
+  7  [x] web        lockhttp, profile default
+> 
+Manual mode: what to set up (type numbers to toggle, Enter when done)
+  1  [x] lea        runs the agents; they reach the locks
+  2  [x] locksql    databases: PostgreSQL, MySQL, MariaDB, SQLite
+  3  [ ] lockmq     RabbitMQ: queues and streams
+  4  [x] lockfile   files: a local directory, S3, SFTP
+  5  [ ] lockhttp   the web requests of lea's agents, held at lea's gate
+  6  [-] locklog    not available yet: no release, and lox up does not run it
+  declared in lockfamily.yaml (uncheck to remove; its profile stays in the lock's directory):
+  7  [ ] web        lockhttp, profile default
+> 
+locksql
+  1) PostgreSQL host.docker.internal:55432 user shop, database shop, tls disable
+  2) MySQL inventory.internal:3307 user stock, database stock, tls verify-full
+  3) another
+Which one? [1] Engine (postgres, mysql, mariadb, sqlite): [postgres] Host (host.docker.internal is this machine): [host.docker.internal] Port: [55432] User: [shop] Database: [shop] TLS (disable, prefer, require, verify-ca, verify-full): [disable] Instance name (lockfamily.yaml): [db] 
+lockfile
+Source (local, s3, sftp): [local] Directory (an absolute path): [/project] Instance name (lockfamily.yaml): [files] 
+Environment of these locks: dev or prod? [dev] Passwords: asked by each console at its start (ask), or read from Vault (vault)? [ask] 
+Plan (nothing is written before your yes)
+  locksql orders
+    locksql profile add --profile orders --production --credentials ask --engine postgres --host host.docker.internal --port 55432 --user shop --database shop --tls require
+    then locksql init claude, locksql doctor, lox add locksql orders --profile orders
+    allowed_uids [1000]: lea's agents run as uid 1000
+  lockfile files
+    lockfile profile add --profile files --production --source local --path /srv/shared
+    then lockfile init claude, lockfile doctor, lox add lockfile files --profile files
+    allowed_uids [1000]: lea's agents run as uid 1000
+  remove: web (lockhttp) from lockfamily.yaml; its profile stays in .lockhttp/
+Then lox up shows the whole change for your review: nothing starts without your yes there.
+Go on? [y/N] 
+locksql orders
+  profile add: profile orders written to /project/.locksql/config.toml (credentials ask)
+  init claude: the agent's files written
+  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (doctor --fix)
+    lox init does not run locksql doctor --fix: it gives .locksql/ to the console account, and lox up copies a profile only from your own files
+  lox add: lock orders declared
+lockfile files
+  profile add: profile files written to /project/.lockfile/config.toml
+  init claude: the agent's files written
+  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (doctor --fix)
+    lox init does not run lockfile doctor --fix: it gives .lockfile/ to the console account, and lox up copies a profile only from your own files
+  lox add: lock files declared
+removed web from lockfamily.yaml
+
+lox up: review the change
+
+Each console that started asks its questions here: its policy (y to approve it, on a first start) and the password it does not read from Vault (masked). Detach with Ctrl-P Ctrl-Q once it says Listening.
+
+
+
+Run `lea` (or `claude` + `lox approve`).

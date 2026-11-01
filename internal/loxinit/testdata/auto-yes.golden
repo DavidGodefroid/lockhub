@@ -1,0 +1,61 @@
+lox init: /project
+
+Prerequisites
+  ok  Docker 29.0.0
+  ok  cosign (lox add and lox up verify every image's signature)
+  ok  lea
+  ok  launchers: locksql, lockmq, lockfile, lockhttp
+
+Detected (read only: .env*, compose*.yaml, config/; no secret is read or kept)
+  1  PostgreSQL  host.docker.internal:55432  user shop, database shop, tls disable
+       from compose.yaml (service db), .env (DATABASE_URL)
+  2  RabbitMQ    http://host.docker.internal:55672  user orders, vhost orders, AMQP amqp://host.docker.internal:55673
+       from compose.yaml (service mq)
+  3  MySQL       inventory.internal:3307  user stock, database stock, tls verify-full
+       from config/inventory.yaml
+
+Plan (nothing is written before your yes)
+  locksql db
+    locksql profile add --profile db --credentials ask --engine postgres --host host.docker.internal --port 55432 --user shop --database shop --tls disable
+    then locksql init claude, locksql doctor, lox add locksql db --profile db
+    allowed_uids [1000]: lea's agents run as uid 1000
+  lockmq mq
+    lockmq profile add --profile mq --credentials ask --url http://host.docker.internal:55672 --user orders --vhost orders --amqp-url amqp://host.docker.internal:55673
+    then lockmq init claude, lockmq doctor, lox add lockmq mq --profile mq
+    allowed_uids [1000]: lea's agents run as uid 1000
+  locksql stock
+    locksql profile add --profile stock --credentials ask --engine mysql --host inventory.internal --port 3307 --user stock --database stock --tls verify-full
+    then locksql init claude, locksql doctor, lox add locksql stock --profile stock
+    allowed_uids [1000]: lea's agents run as uid 1000
+Then lox up shows the whole change for your review: nothing starts without your yes there.
+
+locksql db
+  profile add: profile db written to /project/.locksql/config.toml (credentials ask)
+  init claude: the agent's files written
+  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (doctor --fix)
+    lox init does not run locksql doctor --fix: it gives .locksql/ to the console account, and lox up copies a profile only from your own files
+  lox add: lock db declared
+lockmq mq
+  profile add: profile mq written to /project/.lockmq/config.toml (credentials ask)
+  init claude: the agent's files written
+  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (doctor --fix)
+    lox init does not run lockmq doctor --fix: it gives .lockmq/ to the console account, and lox up copies a profile only from your own files
+  lox add: lock mq declared
+locksql stock
+  profile add: profile stock written to /project/.locksql/config.toml (credentials ask)
+  init claude: the agent's files written
+  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (doctor --fix)
+    lox init does not run locksql doctor --fix: it gives .locksql/ to the console account, and lox up copies a profile only from your own files
+  lox add: lock stock declared
+
+lox up: review the change
+
+Each console that started asks its questions here: its policy (y to approve it, on a first start) and the password it does not read from Vault (masked). Detach with Ctrl-P Ctrl-Q once it says Listening.
+
+
+
+
+Run `lea` (or `claude` + `lox approve`).
