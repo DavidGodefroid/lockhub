@@ -3,6 +3,7 @@ package loxadd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,10 @@ func TestPromptMarkers(t *testing.T) {
 					if !strings.Contains(p, " (required)") || strings.Contains(p, "optional") {
 						t.Errorf("%s %s: %q wants (required) only", lock, f.Key, p)
 					}
+				} else if f.Default != "" {
+					if !strings.Contains(p, " (optional: - = "+f.Empty+")") || strings.Contains(p, "(required)") {
+						t.Errorf("%s %s: %q wants the optional marker with a default", lock, f.Key, p)
+					}
 				} else if !strings.Contains(p, " (optional: empty = "+f.Empty+")") || strings.Contains(p, "(required)") {
 					t.Errorf("%s %s: %q wants the optional marker", lock, f.Key, p)
 				}
@@ -65,7 +70,7 @@ func TestPromptMarkers(t *testing.T) {
 
 func TestPromptsVerbatim(t *testing.T) {
 	sql := fieldsOf(t, "locksql", Defaults{})
-	pg := Answers{"engine": "postgres"}
+	pg := Answers{"engine": "postgres", "host": "host.docker.internal"}
 	for key, want := range map[string]string{
 		"engine":   "Engine: postgres, mysql, mariadb or sqlite (required) [postgres]: ",
 		"host":     "Host (required) [host.docker.internal]: ",
@@ -325,8 +330,8 @@ func TestLockfileSFTPQuestions(t *testing.T) {
 		t.Error("a relative known_hosts path was accepted")
 	}
 	// Local reads no secret: no credentials question; s3 asks one.
+	c := find(t, fs, "credentials", Answers{"source": "s3"})
 	for src, want := range map[string]bool{"local": false, "s3": true, "sftp": true} {
-		c := find(t, fs, "credentials", Answers{"source": "s3"})
 		if got := c.When(Answers{"source": src}); got != want {
 			t.Errorf("credentials asked for %s: %v", src, got)
 		}
@@ -336,5 +341,95 @@ func TestLockfileSFTPQuestions(t *testing.T) {
 		if strings.Contains(Prompt(f), "sekret") {
 			t.Fatal("prompt leaks")
 		}
+	}
+}
+
+func TestTLSDefaultFollowsTheHost(t *testing.T) {
+	fs := fieldsOf(t, "locksql", Defaults{})
+	for _, c := range []struct {
+		host, prod, want string
+	}{
+		{"db.example.com", "n", "verify-full"},
+		{"host.docker.internal", "n", "disable"},
+		{"localhost", "", "disable"},
+		{"127.0.0.1", "n", "disable"},
+		{"::1", "n", "disable"},
+		{"host.docker.internal", "y", "verify-full"},
+		{"db.example.com", "y", "verify-full"},
+	} {
+		a := Answers{"engine": "postgres", "host": c.host, "production": c.prod}
+		if got := find(t, fs, "tls", a).Default; got != c.want {
+			t.Errorf("tls for %s production=%q: %q, want %q", c.host, c.prod, got, c.want)
+		}
+	}
+	// A detected mode and a draft beat the rule.
+	fs = fieldsOf(t, "locksql", Defaults{Source: &shopDB})
+	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "disable" {
+		t.Errorf("detected tls %q", got)
+	}
+	fs = fieldsOf(t, "locksql", Defaults{Draft: Answers{"tls": "require"}})
+	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "require" {
+		t.Errorf("draft tls %q", got)
+	}
+	// Production is asked before TLS.
+	var keys []string
+	for _, f := range fieldsOf(t, "locksql", Defaults{}) {
+		keys = append(keys, f.Key)
+	}
+	if slices.Index(keys, "production") > slices.Index(keys, "tls") {
+		t.Errorf("order %v", keys)
+	}
+}
+
+func TestAnswer(t *testing.T) {
+	fs := fieldsOf(t, "locksql", Defaults{Source: &shopDB})
+	pg := Answers{"engine": "postgres", "host": "host.docker.internal"}
+	host, user, db := find(t, fs, "host", pg), find(t, fs, "user", pg), find(t, fs, "database", pg)
+	port := find(t, fs, "port", pg)
+	for _, c := range []struct {
+		f           Field
+		typed, want string
+		reason      string
+	}{
+		{port, "", "55432", ""},
+		{port, "6000", "6000", ""},
+		{port, "x", "", "port: want a number"},
+		{port, "-", "", "port: a value is needed"},
+		{host, "-", "", "host: a value is needed"},
+		{user, "", "shop", ""},
+		{user, "-", "", ""},
+		{user, "bob", "bob", ""},
+		{db, "-", "", ""},
+	} {
+		v, r := Answer(c.f, c.typed, pg)
+		if v != c.want || c.reason == "" && r != "" || c.reason != "" && !strings.Contains(r, c.reason) {
+			t.Errorf("Answer(%s, %q) = %q, %q; want %q, %q", c.f.Key, c.typed, v, r, c.want, c.reason)
+		}
+	}
+	// No default: empty keeps the empty answer.
+	mq := fieldsOf(t, "lockmq", Defaults{})
+	vhost := find(t, mq, "vhost", nil)
+	if v, r := Answer(vhost, "", nil); v != "" || r != "" {
+		t.Errorf("optional empty: %q %q", v, r)
+	}
+	if _, r := Answer(find(t, fieldsOf(t, "lockfile", Defaults{}), "bucket", Answers{"source": "s3"}), "", nil); r == "" {
+		t.Error("a required empty answer was accepted")
+	}
+}
+
+func TestVaultPathFollowsDraftName(t *testing.T) {
+	fs := fieldsOf(t, "locksql", Defaults{Source: &shopDB, Draft: Answers{"name": "orders-db"}})
+	if got := find(t, fs, "vault-path", Answers{"engine": "postgres", "credentials": "vault"}).Default; got != "database/creds/orders-db" {
+		t.Errorf("vault path %q", got)
+	}
+}
+
+func TestSQLitePathRefusesADirectory(t *testing.T) {
+	f := find(t, fieldsOf(t, "locksql", Defaults{}), "path", Answers{"engine": "sqlite"})
+	if r := f.Check(t.TempDir(), nil); r == "" {
+		t.Error("a directory was accepted")
+	}
+	if r := f.Check(filepath.Join(t.TempDir(), "shop.db"), nil); r != "" {
+		t.Errorf("new file refused: %q", r)
 	}
 }

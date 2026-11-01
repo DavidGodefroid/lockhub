@@ -29,7 +29,10 @@ type Field struct {
 	Empty string
 	YesNo bool
 	// Check says why v is refused ("" when it is fine); a is what was
-	// answered so far. The reason names the key, never the value.
+	// answered so far. The reason names the key, never the value. An empty
+	// answer takes Default before Check; Check("") means the empty answer
+	// was kept: refused when required, the Empty meaning when optional.
+	// Answer does all of this.
 	Check func(v string, a Answers) string
 	// When says whether the field is asked, given the answers so far
 	// (nil: always).
@@ -59,6 +62,8 @@ func Prompt(f Field) string {
 	p := f.Label
 	if f.Empty == "" {
 		p += " (required)"
+	} else if f.Default != "" {
+		p += " (optional: - = " + f.Empty + ")"
 	} else {
 		p += " (optional: empty = " + f.Empty + ")"
 	}
@@ -106,6 +111,38 @@ func Fields(lock string, d Defaults) ([]Field, error) {
 		}
 	}
 	return fs, nil
+}
+
+// Answer is the value of field f for what was typed: an empty answer takes
+// Default, "-" chooses the optional meaning (the value ""), then Check
+// runs. reason is "" when the value is accepted.
+func Answer(f Field, typed string, a Answers) (value, reason string) {
+	if typed == "-" {
+		if f.Empty == "" {
+			return "", f.Key + ": a value is needed"
+		}
+		return "", ""
+	}
+	if typed == "" {
+		typed = f.Default
+	}
+	if f.Check != nil {
+		if r := f.Check(typed, a); r != "" {
+			return "", r
+		}
+	}
+	return typed, ""
+}
+
+// hostIsLocal: host names this machine (loopback, localhost, or the name a
+// console gives the host).
+func hostIsLocal(host string) bool {
+	h := strings.ToLower(strings.Trim(host, "[]"))
+	if h == "localhost" || h == loxinit.DockerHost {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 func eq(key, val string) func(Answers) bool { return func(a Answers) bool { return a[key] == val } }
@@ -196,6 +233,22 @@ func checkBucket(v string, _ Answers) string {
 	return ""
 }
 
+// checkDBFile accepts an absolute path that is not a directory.
+func checkDBFile(key string) func(string, Answers) string {
+	return func(v string, _ Answers) string {
+		if r := safe(key, v); r != "" {
+			return r
+		}
+		if !filepath.IsAbs(v) {
+			return key + ": want an absolute path to a file"
+		}
+		if fi, err := os.Stat(v); err == nil && fi.IsDir() {
+			return key + ": that is a directory: want a file"
+		}
+		return ""
+	}
+}
+
 func checkAbsDir(key string) func(string, Answers) string {
 	return func(v string, _ Answers) string {
 		if r := safe(key, v); r != "" {
@@ -284,10 +337,36 @@ func vaultFields(d Defaults, pathDefault string, when func(Answers) bool) []Fiel
 	)
 }
 
+// tlsField is one of the two TLS questions: the one asked for a database
+// on this machine (default disable) or the other (default verify-full, as
+// for production). A detected mode beats both.
+func tlsField(detected string, local bool) Field {
+	def := "verify-full"
+	if local {
+		def = "disable"
+	}
+	if detected != "" {
+		def = detected
+	}
+	return Field{Key: "tls", Label: "TLS: disable, prefer, require, verify-ca or verify-full", Choices: TLSModes, Default: def,
+		Check: oneOf("tls", "want disable, prefer, require, verify-ca or verify-full", TLSModes...),
+		When: func(a Answers) bool {
+			prod := strings.HasPrefix(strings.ToLower(a["production"]), "y")
+			return a["engine"] != "sqlite" && (local == (hostIsLocal(a["host"]) && !prod))
+		}}
+}
+
+func vaultName(d Defaults, suggested string) string {
+	if n := d.Draft["name"]; n != "" {
+		return n
+	}
+	return suggested
+}
+
 func sqlFields(d Defaults) []Field {
 	engines := []string{loxinit.KindPostgres, loxinit.KindMySQL, loxinit.KindMariaDB, "sqlite"}
 	engine, host, user, database := loxinit.KindPostgres, loxinit.DockerHost, "", ""
-	tls := "disable"
+	var tls string // a detected TLS mode, which beats the host rule
 	var s loxinit.Source
 	if d.Source != nil {
 		s = *d.Source
@@ -299,9 +378,6 @@ func sqlFields(d Defaults) []Field {
 		}
 		user, database = s.User, s.Database
 		tls = s.TLS
-		if tls == "" {
-			tls = DefaultTLS(s, false)
-		}
 	}
 	suggested := uniqueName(SuggestName(s), func(n string) bool { return slices.Contains(d.Declared, n) })
 	remote := not(eq("engine", "sqlite"))
@@ -315,18 +391,18 @@ func sqlFields(d Defaults) []Field {
 	}
 	fs := []Field{
 		{Key: "engine", Label: "Engine: postgres, mysql, mariadb or sqlite", Choices: engines, Default: engine, Check: oneOf("engine", "want postgres, mysql, mariadb or sqlite", engines...)},
-		{Key: "path", Label: "Path", Check: checkAbsDir("path"), When: eq("engine", "sqlite")},
+		{Key: "path", Label: "Path", Check: checkDBFile("path"), When: eq("engine", "sqlite")},
 		{Key: "host", Label: "Host", Default: host, Check: checkHost, When: remote},
 		port("5432", loxinit.KindPostgres),
 		port("3306", loxinit.KindMySQL, loxinit.KindMariaDB),
 		{Key: "user", Label: "User", Empty: "the console asks for it at start with the password", Default: user, Check: text("user"), When: remote},
 		{Key: "database", Label: "Database", Empty: "the server's default database", Default: database, Check: text("database"), When: remote},
-		{Key: "tls", Label: "TLS: disable, prefer, require, verify-ca or verify-full", Choices: TLSModes, Default: tls,
-			Check: oneOf("tls", "want disable, prefer, require, verify-ca or verify-full", TLSModes...), When: remote},
 		productionField(nil),
+		tlsField(tls, true),
+		tlsField(tls, false),
 		credentialsField(remote),
 	}
-	fs = append(fs, vaultFields(d, "database/creds/"+suggested, remote)...)
+	fs = append(fs, vaultFields(d, "database/creds/"+vaultName(d, suggested), remote)...)
 	return append(fs, nameField(d, SuggestName(s)))
 }
 
@@ -348,7 +424,7 @@ func mqFields(d Defaults) []Field {
 		productionField(nil),
 		credentialsField(nil),
 	}
-	fs = append(fs, vaultFields(d, "rabbitmq/creds/"+uniqueName(name, func(n string) bool { return slices.Contains(d.Declared, n) }), nil)...)
+	fs = append(fs, vaultFields(d, "rabbitmq/creds/"+vaultName(d, uniqueName(name, func(n string) bool { return slices.Contains(d.Declared, n) })), nil)...)
 	return append(fs, nameField(d, name))
 }
 
@@ -375,6 +451,6 @@ func fileFields(d Defaults) []Field {
 		productionField(nil),
 		credentialsField(src("s3", "sftp")),
 	}
-	fs = append(fs, vaultFields(d, "secret/data/lockfile/"+name.Default, src("s3", "sftp"))...)
+	fs = append(fs, vaultFields(d, "secret/data/lockfile/"+vaultName(d, name.Default), src("s3", "sftp"))...)
 	return append(fs, name)
 }
