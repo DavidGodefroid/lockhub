@@ -3,19 +3,25 @@ package family
 import (
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
 // Facts are what the short review shows of a lock's profile: the few
 // lines a human decides on, read from the [profiles.<name>] table of the
 // profile's config.toml (lockkit's configuration refuses secrets in it).
+// A value the review cannot show exactly as the profile says it (an
+// escape, a multi-line array, a string where a boolean belongs) is not
+// shown as a fact: Odd holds the profile's own text of it by key, and the
+// short form prints that instead.
 type Facts struct {
 	Target, Credentials, VaultPath string
 	Production                     bool
-	// Profile is the profile directory and its sha256 as the review shows
-	// them, ".locksql/ sha256:…".
+	Odd                            map[string]string
+	// Profile is the profile directory, its table and its sha256 as the
+	// review shows them, ".locksql/ [profiles.orders] sha256:…".
 	Profile string
+	// Changed: the profile differs from the one the last lox up applied.
+	Changed bool
 }
 
 // factKeys are the keys read per lock type for the target.
@@ -29,29 +35,20 @@ var (
 	profileHeader = regexp.MustCompile(`^\[profiles\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*(?:#.*)?$`)
 	tomlKey       = regexp.MustCompile(`^([A-Za-z0-9_-]+)\s*=\s*(.*)$`)
 	tomlLine      = regexp.MustCompile(`^config\.toml:([0-9]+) (.*)$`)
+	bareValue     = regexp.MustCompile(`^(?:[0-9]+|true|false)$`)
 )
 
 // ProfileFacts reads the facts of the profile named profile (empty: the
 // only one) of a lock of type typ, from p's "config.toml:N text" lines.
 // Other profiles' lines are not read.
 func ProfileFacts(p *Profile, typ, profile string) Facts {
-	f, _ := readFacts(p, typ, profile)
-	return f
-}
-
-// readFacts is ProfileFacts and the profile lines it shows (the header
-// and the last line of each key it read, as they appear in the summary
-// after "profile <type> "): the short review must not hide any other.
-func readFacts(p *Profile, typ, profile string) (Facts, []string) {
 	f := Facts{}
 	if p == nil {
-		return f, nil
+		return f
 	}
 	f.Profile = fmt.Sprintf(".%s/ %s", typ, p.Fingerprint)
-	// The sections of config.toml: name -> key -> {value, raw line}.
-	type kv struct{ val, raw string }
-	secs := map[string]map[string]kv{}
-	hdr := map[string]string{}
+	// The tables of config.toml: name -> key -> value text (last wins).
+	secs := map[string]map[string]string{}
 	var order []string
 	cur := ""
 	for _, l := range p.Lines {
@@ -65,8 +62,7 @@ func readFacts(p *Profile, typ, profile string) (Facts, []string) {
 			if h := profileHeader.FindStringSubmatch(text); h != nil {
 				cur = h[1] + h[2]
 				if _, ok := secs[cur]; !ok {
-					secs[cur] = map[string]kv{}
-					hdr[cur] = l
+					secs[cur] = map[string]string{}
 					order = append(order, cur)
 				}
 			}
@@ -76,7 +72,7 @@ func readFacts(p *Profile, typ, profile string) (Facts, []string) {
 			continue
 		}
 		if k := tomlKey.FindStringSubmatch(text); k != nil {
-			secs[cur][k[1]] = kv{tomlValue(k[2]), l}
+			secs[cur][k[1]] = k[2]
 		}
 	}
 	name := profile
@@ -85,77 +81,128 @@ func readFacts(p *Profile, typ, profile string) (Facts, []string) {
 	}
 	sec, ok := secs[name]
 	if !ok {
-		return f, nil
+		return f
 	}
-	covered := []string{hdr[name]}
-	use := func(key string) string {
-		v, ok := sec[key]
-		if ok {
-			covered = append(covered, v.raw)
+	f.Profile = fmt.Sprintf(".%s/ [profiles.%s] %s", typ, name, p.Fingerprint)
+	// use returns the value of key as the profile says it, or "" when it
+	// is absent or cannot be shown exactly (then Odd has its text).
+	use := func(key string, want byte) string {
+		raw, ok := sec[key]
+		if !ok {
+			return ""
 		}
-		return v.val
+		v, kind, ok := strictValue(raw)
+		if !ok || (want != 0 && kind != want) {
+			if f.Odd == nil {
+				f.Odd = map[string]string{}
+			}
+			f.Odd[key] = key + " = " + strings.TrimSpace(raw)
+			return ""
+		}
+		return v
 	}
 	var parts []string
 	switch typ {
 	case "locksql":
-		addr := use("host")
-		if port := use("port"); port != "" {
+		addr := use("host", 0)
+		if port := use("port", 0); port != "" {
 			addr += ":" + port
 		}
-		if e := strings.TrimSpace(use("engine") + " " + addr); e != "" {
+		if e := strings.TrimSpace(use("engine", 0) + " " + addr); e != "" {
 			parts = append(parts, e)
 		}
-		if d := use("database"); d != "" {
+		if d := use("database", 0); d != "" {
 			parts = append(parts, "database "+d)
 		}
 	case "lockmq":
-		if u := use("url"); u != "" {
+		if u := use("url", 0); u != "" {
 			parts = append(parts, u)
 		}
-		if v := use("vhosts"); v != "" {
+		if v := use("vhosts", 'a'); v != "" {
 			parts = append(parts, "vhosts "+v)
 		}
 	case "lockfile":
 		for _, k := range factKeys[typ] {
-			if v := use(k); v != "" {
+			if v := use(k, 0); v != "" {
 				parts = append(parts, k+" "+v)
 			}
 		}
 	}
+	f.Credentials = use("credentials", 's')
+	f.VaultPath = use("vault_path", 's')
+	switch pv := use("production", 'b'); pv {
+	case "true":
+		f.Production = true
+	case "false", "":
+	default:
+		// A number is not a boolean: shown as the profile says it.
+		if f.Odd == nil {
+			f.Odd = map[string]string{}
+		}
+		f.Odd["production"] = "production = " + pv
+	}
+	for _, k := range factKeys[typ] {
+		if o, ok := f.Odd[k]; ok {
+			parts = append(parts, "? ("+o+" in the profile)")
+		}
+	}
 	f.Target = strings.Join(parts, ", ")
-	f.Credentials = use("credentials")
-	f.VaultPath = use("vault_path")
-	f.Production, _ = strconv.ParseBool(use("production"))
-	return f, covered
+	return f
 }
 
-// tomlValue is a TOML value as text: a string without its quotes, an
-// array as its elements joined by commas, anything else up to a comment.
-func tomlValue(raw string) string {
+// strictValue is a TOML value of one line that can be shown exactly: a
+// simple string (no escape), an array of simple strings, or a bare
+// integer or boolean, each followed by nothing or a comment. kind is 's',
+// 'a' or 'b'.
+func strictValue(raw string) (val string, kind byte, ok bool) {
 	raw = strings.TrimSpace(raw)
-	unq := func(s string) string {
-		s = strings.TrimSpace(s)
-		if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') {
-			if i := strings.IndexByte(s[1:], s[0]); i >= 0 {
-				return s[1 : 1+i]
-			}
+	tail := func(r string) bool { r = strings.TrimSpace(r); return r == "" || strings.HasPrefix(r, "#") }
+	str := func(s string) (string, string, bool) {
+		if s == "" || (s[0] != '"' && s[0] != '\'') {
+			return "", "", false
 		}
-		if i := strings.Index(s, " #"); i >= 0 {
-			s = strings.TrimSpace(s[:i])
+		i := strings.IndexByte(s[1:], s[0])
+		if i < 0 {
+			return "", "", false
 		}
-		return s
+		in := s[1 : 1+i]
+		if strings.ContainsRune(in, '\\') {
+			return "", "", false
+		}
+		return in, s[2+i:], true
 	}
-	if strings.HasPrefix(raw, "[") {
-		if i := strings.IndexByte(raw, ']'); i >= 0 {
-			raw = raw[1:i]
-		}
+	switch {
+	case strings.HasPrefix(raw, "["):
+		rest := strings.TrimSpace(raw[1:])
 		var out []string
-		for _, e := range strings.Split(raw, ",") {
-			if e = unq(e); e != "" {
-				out = append(out, e)
+		for !strings.HasPrefix(rest, "]") {
+			v, r, ok := str(rest)
+			if !ok {
+				return "", 0, false
+			}
+			out = append(out, v)
+			rest = strings.TrimSpace(r)
+			if t, found := strings.CutPrefix(rest, ","); found {
+				rest = strings.TrimSpace(t)
+			} else if !strings.HasPrefix(rest, "]") {
+				return "", 0, false
 			}
 		}
-		return strings.Join(out, ",")
+		if !tail(rest[1:]) {
+			return "", 0, false
+		}
+		return strings.Join(out, ","), 'a', true
+	case raw != "" && (raw[0] == '"' || raw[0] == '\''):
+		v, r, ok := str(raw)
+		if !ok || !tail(r) {
+			return "", 0, false
+		}
+		return v, 's', true
 	}
-	return unq(raw)
+	b, _, _ := strings.Cut(raw, "#")
+	b = strings.TrimSpace(b)
+	if !bareValue.MatchString(b) {
+		return "", 0, false
+	}
+	return b, 'b', true
 }

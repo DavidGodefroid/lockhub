@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,8 +138,8 @@ func TestProfileFacts(t *testing.T) {
 	)
 	f := ProfileFacts(p, "locksql", "orders")
 	want := Facts{Target: "postgres host.docker.internal:55432, database orders", Credentials: "vault",
-		VaultPath: "database/creds/orders", Production: false, Profile: ".locksql/ sha256:abc"}
-	if f != want {
+		VaultPath: "database/creds/orders", Production: false, Profile: ".locksql/ [profiles.orders] sha256:abc"}
+	if !reflect.DeepEqual(f, want) {
 		t.Errorf("orders: %+v, want %+v", f, want)
 	}
 	if s := ProfileFacts(p, "locksql", "shop"); !s.Production || strings.Contains(s.Target, "orders") {
@@ -150,6 +151,37 @@ func TestProfileFacts(t *testing.T) {
 	}
 	if n := ProfileFacts(p, "locksql", ""); n.Target != "" {
 		t.Errorf("two profiles and none named: %+v", n)
+	}
+}
+
+// A value the block cannot show exactly is shown as the profile says it.
+func TestProfileFactsOddValues(t *testing.T) {
+	for _, c := range []struct {
+		name, typ string
+		lines     []string
+		check     func(Facts) bool
+	}{
+		{"production string", "locksql", []string{`[profiles.p]`, `production = "yes"`}, func(f Facts) bool { return !f.Production && f.Odd["production"] == `production = "yes"` }},
+		{"production number", "locksql", []string{`[profiles.p]`, `production = 1`}, func(f Facts) bool { return !f.Production && f.Odd["production"] != "" }},
+		{"multi-line vhosts", "lockmq", []string{`[profiles.p]`, `url = "amqp://mq.example.com"`, `vhosts = [`, `  "a",`, `]`}, func(f Facts) bool {
+			return f.Odd["vhosts"] == "vhosts = [" && strings.Contains(f.Target, "? (vhosts = [ in the profile)")
+		}},
+		{"escaped quote", "locksql", []string{`[profiles.p]`, `database = "or\"ders"`}, func(f Facts) bool {
+			return f.Odd["database"] != "" && !strings.Contains(f.Target, "database or") && strings.Contains(f.Target, "? (database = ")
+		}},
+		{"credentials number", "locksql", []string{`[profiles.p]`, `credentials = 3`}, func(f Facts) bool { return f.Odd["credentials"] != "" }},
+		{"exact", "locksql", []string{`[profiles.p]`, `production = true  # yes`, `database = 'orders'`}, func(f Facts) bool { return f.Production && f.Odd == nil && f.Target == "database orders" }},
+	} {
+		if f := ProfileFacts(tomlProfile(c.lines...), c.typ, "p"); !c.check(f) {
+			t.Errorf("%s: %+v", c.name, f)
+		}
+	}
+	// The block prints the raw text, never a wrong fact.
+	c := &Config{Locks: map[string]Lock{"o": {Type: "locksql", Image: sqlImg}}}
+	var out strings.Builder
+	renderShort(&out, c, "", map[string]Facts{"o": ProfileFacts(tomlProfile(`[profiles.p]`, `production = "yes"`), "locksql", "p")}, true, nil)
+	if !strings.Contains(out.String(), `  production   ? (production = "yes" in the profile)`) {
+		t.Errorf("production row:\n%s", out.String())
 	}
 }
 
@@ -207,11 +239,15 @@ func TestShortReviewNeverHidesAChange(t *testing.T) {
 	if !strings.Contains(out, "lock orders (locksql)") || !strings.Contains(out, "target       postgres host.docker.internal\n") {
 		t.Errorf("no short block:\n%s", out)
 	}
-	if strings.Contains(out, "config.toml:2") || strings.Contains(out, "lock orders type locksql\n  lock orders image") {
+	if strings.Contains(out, "lock orders type locksql") || strings.Contains(out, "lock orders image") || strings.Contains(out, "lock orders profile") {
 		t.Errorf("rendered lines repeated:\n%s", out)
 	}
-	if !strings.Contains(out, "config.toml:4 readonly = false") {
-		t.Errorf("a profile line no block renders is hidden:\n%s", out)
+	// The profile is not dumped: its block line stands for it.
+	if strings.Contains(out, "config.toml:") || strings.Contains(out, "profile locksql ") || strings.Contains(out, "Other changes") || !strings.Contains(out, "Also applied:") {
+		t.Errorf("the profile is dumped without --review:\n%s", out)
+	}
+	if !strings.Contains(out, "profile      .locksql/ [profiles.orders] sha256:") {
+		t.Errorf("no profile line:\n%s", out)
 	}
 	os.WriteFile(w.file, []byte(strings.Replace(shortConf, "hub:\n", "hub:\n  routing:\n    orders: [tty]\n", 1)), 0o644)
 	f2 := &fake{keys: f.keys}
@@ -253,5 +289,57 @@ func TestVaultCAChangeNote(t *testing.T) {
 	out, err := w.up("n\n", &fake{keys: f.keys})
 	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "vault CA changed: the locks with vault: true restart (lox attach NAME for what they ask)") {
 		t.Errorf("CA note: %v\n%s", err, out)
+	}
+}
+
+func TestShortReviewFoldsTheProfile(t *testing.T) {
+	conf := strings.Replace(shortConf, "locks:\n", "locks:\n  gate:\n    type: lockhttp\n    image: ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444\n", 1)
+	w := newWS(t, conf)
+	proj := filepath.Join(w.dir, "projects")
+	os.WriteFile(filepath.Join(proj, ".locksql", "config.toml"), []byte("[profiles.orders]\nengine = \"postgres\"\nreadonly = false\n"), 0o644)
+	os.Mkdir(filepath.Join(proj, ".lockhttp"), 0o755)
+	var pol strings.Builder
+	for i := 0; i < 70; i++ {
+		pol.WriteString("[[rule]]\nhost = \"api.example.com\"\n")
+	}
+	os.WriteFile(filepath.Join(proj, ".lockhttp", "policy.toml"), []byte(pol.String()), 0o644)
+	f := newFake()
+	f.keys["orders"], f.keys["gate"] = pubKey(), pubKey()
+	out, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, no := range []string{"config.toml:", "policy.toml:", "profile locksql ", "profile lockhttp "} {
+		if strings.Contains(out, no) {
+			t.Errorf("%q printed without --review:\n%s", no, out)
+		}
+	}
+	if !strings.Contains(out, "profile      .lockhttp/ sha256:") {
+		t.Errorf("no lockhttp profile line:\n%s", out)
+	}
+	// A changed profile says so; --review prints every line.
+	os.WriteFile(filepath.Join(proj, ".locksql", "config.toml"), []byte("[profiles.orders]\nengine = \"mysql\"\n"), 0o644)
+	out, err = w.up("n\n", &fake{keys: f.keys})
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "(changed since the last lox up; lox up --review shows the lines)") || strings.Contains(out, "+ profile locksql config.toml") {
+		t.Errorf("changed profile: %v\n%s", err, out)
+	}
+	out, _ = upReview(w, context.Background(), strings.NewReader("n\n"), true, &fake{keys: f.keys})
+	if !strings.Contains(out, "config.toml:2 engine = \"mysql\"") {
+		t.Errorf("--review lacks the lines:\n%s", out)
+	}
+}
+
+func TestUnknownFocusRefusedEvenUnchanged(t *testing.T) {
+	w := newWS(t, shortConf)
+	f := newFake()
+	f.keys["orders"] = pubKey()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var out strings.Builder
+	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000",
+		Run: &fake{keys: f.keys}, In: bufio.NewReader(strings.NewReader("")), Out: &out, Focus: "nope"}
+	if err := u.Do(context.Background()); err == nil || !strings.Contains(err.Error(), "no lock nope") {
+		t.Errorf("focus: %v", err)
 	}
 }

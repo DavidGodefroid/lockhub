@@ -277,7 +277,7 @@ func TestProfileReviewedAndCopied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "profile      .locksql/ "+pr.Fingerprint) {
+	if !strings.Contains(out, "profile      .locksql/ [profiles.crm] "+pr.Fingerprint) {
 		t.Errorf("review lacks the profile:\n%s", out)
 	}
 	copied := false
@@ -558,7 +558,7 @@ func TestLegacyAdoptedAfterFirstUp(t *testing.T) {
 	if err != nil || len(c.Locks) != 3 {
 		t.Fatalf("lox add after adoption lost locks: %v %v", c, err)
 	}
-	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "+ lock more type lockmq") || strings.Contains(out, "- lock crm-prod type") {
+	if out, err := up(nf, "n\n"); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "lock more (lockmq)") || strings.Contains(out, "- lock crm-prod type") {
 		t.Errorf("second lox up: %v\n%s", err, out)
 	}
 }

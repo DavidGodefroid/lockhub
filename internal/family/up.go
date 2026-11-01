@@ -499,14 +499,14 @@ func (u *Up) Do(ctx context.Context) error {
 			return fmt.Errorf("%s: %w", appliedPath, err)
 		}
 	}
+	if u.Focus != "" {
+		if _, ok := c.Locks[u.Focus]; !ok {
+			return fmt.Errorf("no lock %s in %s", u.Focus, u.File)
+		}
+	}
 	if prev.Fingerprint == fp {
 		fmt.Fprintln(u.Out, "configuration unchanged since the last lox up")
 	} else {
-		if u.Focus != "" {
-			if _, ok := c.Locks[u.Focus]; !ok {
-				return fmt.Errorf("no lock %s in %s", u.Focus, u.File)
-			}
-		}
 		d := diff(prev.Summary, sum)
 		switch {
 		case u.Review && first:
@@ -529,16 +529,20 @@ func (u *Up) Do(ctx context.Context) error {
 		default:
 			// The short review: a block per lock, then every summary line
 			// no block renders. The fingerprint is over the full summary.
-			facts, shown := map[string]Facts{}, map[string][]string{}
+			facts := map[string]Facts{}
 			for _, n := range c.Instances() {
 				l := c.Locks[n]
-				facts[n], shown[n] = readFacts(profiles[l.Type], l.Type, lockProfile(l))
+				f := ProfileFacts(profiles[l.Type], l.Type, lockProfile(l))
+				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
+				facts[n] = f
 			}
 			var changed []string
-			cov := shortCovered(c, u.Focus, ws, profiles, shown)
+			cov := shortCovered(c, u.Focus, sum)
+			heading := "Other changes since the last lox up:"
 			if first {
 				fmt.Fprintln(u.Out, "First lox up of this workspace. Review:")
 				changed = uncovered(sum, cov)
+				heading = "Also applied:"
 			} else {
 				fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
 				// Only an added line can be rendered by a block: a removed
@@ -552,7 +556,7 @@ func (u *Up) Do(ctx context.Context) error {
 					changed = append(changed, vaultCANote)
 				}
 			}
-			renderShort(u.Out, c, u.Focus, facts, true, changed)
+			renderShortAs(u.Out, c, u.Focus, facts, true, changed, heading)
 		}
 		if u.Review && !first && caChanged(d) {
 			fmt.Fprintln(u.Out, vaultCANote)

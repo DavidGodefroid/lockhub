@@ -26,6 +26,11 @@ func shortLocks(c *Config, focus string) []string {
 // renderShort writes one block per lock (the focus lock, or all of them),
 // then the changes the blocks do not render.
 func renderShort(w io.Writer, c *Config, focus string, facts map[string]Facts, imagesOK bool, changed []string) {
+	renderShortAs(w, c, focus, facts, imagesOK, changed, "Other changes since the last lox up:")
+}
+
+// renderShortAs is renderShort with the heading of the lines no block renders.
+func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts, imagesOK bool, changed []string, heading string) {
 	row := func(k, v string) { fmt.Fprintf(w, "  %-13s%s\n", k, v) }
 	for _, n := range shortLocks(c, focus) {
 		l, f := c.Locks[n], facts[n]
@@ -55,12 +60,19 @@ func renderShort(w io.Writer, c *Config, focus string, facts map[string]Facts, i
 				creds = "vault"
 			}
 		}
-		if creds == "vault" {
-			creds = "vault, " + strings.TrimSpace(f.VaultPath)
-			if f.VaultPath == "" {
+		switch {
+		case f.Odd["credentials"] != "":
+			creds = "? (" + f.Odd["credentials"] + " in the profile)"
+		case creds == "vault":
+			switch {
+			case f.Odd["vault_path"] != "":
+				creds = "vault, ? (" + f.Odd["vault_path"] + " in the profile)"
+			case f.VaultPath == "":
 				creds = "vault, (no vault_path in the profile)"
+			default:
+				creds = "vault, " + f.VaultPath
 			}
-		} else if creds == "ask" {
+		case creds == "ask":
 			creds = "ask, typed at the console's start"
 		}
 		row("credentials", creds)
@@ -68,13 +80,20 @@ func renderShort(w io.Writer, c *Config, focus string, facts map[string]Facts, i
 		if f.Production {
 			prod = "yes"
 		}
+		if o := f.Odd["production"]; o != "" {
+			prod = "? (" + o + " in the profile)"
+		}
 		row("production", prod)
 		if f.Profile != "" {
-			row("profile", f.Profile+"  (lox up --review prints it in full)")
+			note := "(lox up --review prints it in full)"
+			if f.Changed {
+				note = "(changed since the last lox up; lox up --review shows the lines)"
+			}
+			row("profile", f.Profile+"  "+note)
 		}
 	}
 	if len(changed) > 0 {
-		fmt.Fprintln(w, "Other changes since the last lox up:")
+		fmt.Fprintln(w, heading)
 		for _, l := range changed {
 			fmt.Fprintln(w, "  "+l)
 		}
@@ -82,22 +101,31 @@ func renderShort(w io.Writer, c *Config, focus string, facts map[string]Facts, i
 }
 
 // shortCovered are the summary lines the short blocks of the shown locks
-// render (see Summary and the profile lines in Up.Do).
-func shortCovered(c *Config, focus, ws string, profiles map[string]*Profile, shown map[string][]string) map[string]bool {
+// render (see Summary and the profile lines in Up.Do). A block's profile
+// line stands for every line of its type's profile: the sha256 covers
+// every byte of it, and lox up --review shows the lines.
+func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 	cov := map[string]bool{}
+	pre := map[string]bool{}
 	for _, n := range shortLocks(c, focus) {
 		l := c.Locks[n]
+		pre["profile "+l.Type+" "] = true
+		cov[fmt.Sprintf("lock %s type %s", n, l.Type)] = true
 		cov[fmt.Sprintf("lock %s image %s", n, l.Image)] = true
+		if l.Profile != "" {
+			cov[fmt.Sprintf("lock %s profile %s", n, l.Profile)] = true
+		}
 		if l.Vault && c.Vault != nil {
 			cov[fmt.Sprintf("lock %s vault VAULT_ADDR=%s", n, c.Vault.Address)] = true
 			if c.Vault.Namespace != "" {
 				cov[fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace)] = true
 			}
 		}
-		if p := profiles[l.Type]; p != nil {
-			cov[fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), p.Fingerprint)] = true
-			for _, line := range shown[n] {
-				cov[fmt.Sprintf("profile %s %s", l.Type, line)] = true
+	}
+	for _, l := range sum {
+		for p := range pre {
+			if strings.HasPrefix(l, p) {
+				cov[l] = true
 			}
 		}
 	}
