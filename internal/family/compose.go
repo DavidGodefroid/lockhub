@@ -46,6 +46,9 @@ type Paths struct {
 	// VaultCA is the reviewed copy of vault.ca_file (<state>/vault-ca.pem),
 	// mounted read-only in the locks with vault: true; "" until it exists.
 	VaultCA string
+	// VaultCASum is its sha256 (hex): a label of the locks that mount it,
+	// so that a changed CA recreates them (a file bind keeps the old inode).
+	VaultCASum string
 }
 
 // VaultCAPath is where the locks with vault: true see the reviewed CA.
@@ -247,13 +250,20 @@ func Compose(c *Config, p Paths) string {
 		// A gate kind's console only serves the policy: its devices go to
 		// the gate (lea's), through up.json, not to the console.
 		fp, dev := p.Profiles[l.Type], p.DevicesID != "" && l.Devices && !k.Gate
-		if fp != "" || dev {
+		vsum := ""
+		if vaultCA {
+			vsum = p.VaultCASum
+		}
+		if fp != "" || dev || vsum != "" {
 			w("    labels:")
 			if fp != "" {
 				w("      lockfamily.profile: %s", q(fp))
 			}
 			if dev {
 				w("      lockfamily.devices: %s", q(p.DevicesID))
+			}
+			if vsum != "" {
+				w("      lockfamily.vault-ca: %s", q(vsum))
 			}
 		}
 		limits(w, k.Mem, k.Pids)

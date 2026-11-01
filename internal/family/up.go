@@ -461,8 +461,8 @@ func (u *Up) Do(ctx context.Context) error {
 	// The CA the locks with vault: true trust, read once here: what is
 	// reviewed (path and digest) is what is copied after the yes.
 	var vaultCA []byte
+	var sha string
 	if ca := c.vaultCAFile(); ca != "" {
-		var sha string
 		if vaultCA, sha, err = readCA(ca); err != nil {
 			return err
 		}
@@ -582,7 +582,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if err := writeAtomic(vp, vaultCA, 0o644); err != nil {
 			return err
 		}
-		paths.VaultCA = vp
+		paths.VaultCA, paths.VaultCASum = vp, sha
+	} else {
+		os.Remove(filepath.Join(u.State, "vault-ca.pem"))
 	}
 	composeYAML = []byte(Compose(c, paths))
 	// The profiles go on the setup service's stdin (they can hold

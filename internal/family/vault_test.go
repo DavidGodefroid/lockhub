@@ -365,3 +365,21 @@ func TestReadCARefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultCALabelFollowsTheCA(t *testing.T) {
+	c := vaultComposeConf(t, "vault:\n  address: https://vault.example.com:8200\n")
+	label := func(p Paths) string {
+		p.Workspace, p.User, p.VaultCA = "/w", "0:0", "/s/vault-ca.pem"
+		return Compose(c, p)
+	}
+	a, b := label(Paths{VaultCASum: "aaaa"}), label(Paths{VaultCASum: "bbbb"})
+	if !strings.Contains(service(a, "lock-orders"), `lockfamily.vault-ca: "aaaa"`) || a == b || !strings.Contains(service(b, "lock-orders"), `lockfamily.vault-ca: "bbbb"`) {
+		t.Errorf("label does not follow the CA:\n%s", service(a, "lock-orders"))
+	}
+	if strings.Count(a, "lockfamily.vault-ca") != 1 {
+		t.Errorf("label on a lock without vault: true:\n%s", a)
+	}
+	if strings.Contains(Compose(c, Paths{Workspace: "/w", User: "0:0", VaultCASum: "aaaa"}), "lockfamily.vault-ca") {
+		t.Error("label without a CA")
+	}
+}
