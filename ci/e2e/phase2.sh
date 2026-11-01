@@ -19,6 +19,9 @@
 # and after the approval through the facade gets the rows, through the
 # socket volume up.json names (lockhub#78); a tampered up.json, or a
 # socket volume another container mounts read-write, is refused.
+# With LOCKMQ_LAUNCHER (lockmq's scripts/lockmq) and a lockmq lock "mq", the
+# same for lockmq: `lockmq mcp` reads a stream, and after the approval
+# through the facade gets its message.
 #
 # Locks: LOCKS="name:type ..." (default: locksql db, LockHTTP web and api);
 # a lockhttp named "web" is the gate, "api" the control gate without
@@ -27,6 +30,13 @@
 # throwaway server, the workflow's container; the script creates the app
 # database and the ro role in it, and drops both at exit, only if it
 # created them: a server that already has one makes the run fail first).
+# A lockmq named "mq" serves RabbitMQ, its management API at
+# MQ_HOST:MQ_MGMT_PORT (default 127.0.0.1:15672) and AMQP on MQ_AMQP_PORT
+# (default 5672), both published on the host (the console reaches them at
+# host.docker.internal); MQ_ADMIN_USER and MQ_ADMIN_PASSWORD (required with
+# it) are an administrator's. The script creates the vhost e2e, the
+# read-only user mqro and a stream orders with one message in it, and
+# deletes the vhost and the user at exit, only if it created them.
 #
 # The deck facade (lea's deck, lea#182/#200) is not driven here: lea
 # routes a hub ticket only to the deck of the lea container whose agent
@@ -39,6 +49,7 @@ lox=$1
 LOCKS=${LOCKS:-"db:locksql web:lockhttp api:lockhttp"}
 here=$(cd "$(dirname "$0")" && pwd)
 case " $LOCKS " in *" db:locksql "*) sql=1 ;; *) sql="" ;; esac
+case " $LOCKS " in *" mq:lockmq "*) mq=1 ;; *) mq="" ;; esac
 # Canonical (lox up prints resolved paths; a TMPDIR may be a link).
 ws=$(realpath "$(mktemp -d)")/projects
 mkdir -p "$ws"
@@ -46,8 +57,13 @@ cd "$ws"
 agents="$E2E_ID-agents"
 gate="$E2E_ID-gate"
 pg() { docker run --rm --network host -e PGPASSWORD="$PGPASSWORD" postgres:17 psql -v ON_ERROR_STOP=1 -h "${PGHOST:-127.0.0.1}" -p "${PGPORT:-5432}" -U postgres "$@"; }
-# What this run created on the Postgres server, dropped at exit.
-made_db="" made_role=""
+# mqapi METHOD PATH [JSON]: RabbitMQ's management API, as the administrator.
+mqapi() {
+	curl -fsS -m 10 -u "$MQ_ADMIN_USER:$MQ_ADMIN_PASSWORD" -H 'content-type: application/json' -X "$1" \
+		${3:+--data} ${3:+"$3"} "http://${MQ_HOST:-127.0.0.1}:${MQ_MGMT_PORT:-15672}/api$2"
+}
+# What this run created on the Postgres server and the broker, dropped at exit.
+made_db="" made_role="" made_vhost="" made_mquser=""
 cleanup() {
 	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" "$E2E_ID-squat-rw" >/dev/null 2>&1 || true
 	# A run that died with up.json tampered with (the host agent's checks).
@@ -69,6 +85,12 @@ cleanup() {
 	fi
 	if [ -n "$made_role" ]; then
 		pg -c "DROP ROLE IF EXISTS ro" >/dev/null 2>&1 || echo "e2e: could not drop the role ro" >&2
+	fi
+	if [ -n "$made_vhost" ]; then
+		mqapi DELETE /vhosts/e2e >/dev/null 2>&1 || echo "e2e: could not delete the vhost e2e" >&2
+	fi
+	if [ -n "$made_mquser" ]; then
+		mqapi DELETE /users/mqro >/dev/null 2>&1 || echo "e2e: could not delete the user mqro" >&2
 	fi
 }
 trap cleanup EXIT INT TERM
@@ -108,6 +130,27 @@ GRANT SELECT ON people TO ro;" >/dev/null
 	printf '[profiles.e2e]\nengine = "postgres"\nhost = "host.docker.internal"\nport = %s\nuser = "ro"\ndatabase = "app"\ntls = "disable"\n' "${PGPORT:-5432}" >.locksql/config.toml
 	chmod 0644 .locksql/config.toml
 fi
+if [ -n "$mq" ]; then
+	say "RabbitMQ: a read-only user, a vhost and a stream with one message"
+	[ -n "${MQ_ADMIN_USER:-}" ] && [ -n "${MQ_ADMIN_PASSWORD:-}" ] || die "a lockmq lock mq needs MQ_ADMIN_USER and MQ_ADMIN_PASSWORD"
+	# PUT is idempotent: a vhost or user already there is not this run's.
+	mqapi GET /vhosts/e2e >/dev/null 2>&1 && die "the broker already has a vhost e2e"
+	mqapi GET /users/mqro >/dev/null 2>&1 && die "the broker already has a user mqro"
+	mqapi PUT /vhosts/e2e >/dev/null
+	made_vhost=1
+	mqapi PUT /users/mqro '{"password":"mq-e2e-only","tags":"monitoring"}' >/dev/null
+	made_mquser=1
+	mqapi PUT /permissions/e2e/mqro '{"configure":"^$","write":"^$","read":"^orders$"}' >/dev/null
+	mqapi PUT "/permissions/e2e/$MQ_ADMIN_USER" '{"configure":".*","write":".*","read":".*"}' >/dev/null
+	mqapi PUT /queues/e2e/orders '{"durable":true,"arguments":{"x-queue-type":"stream"}}' >/dev/null
+	mqapi POST /exchanges/e2e/amq.default/publish '{"properties":{},"routing_key":"orders","payload":"{\"order\":\"e2e-1\"}","payload_encoding":"string"}' >publish.json
+	jq -e '.routed == true' publish.json >/dev/null || { cat publish.json; die "the message was not routed to the stream orders"; }
+	# Tier read (no peek): a stream read, approved on the hub, over AMQP.
+	mkdir -p .lockmq
+	printf '[profiles.e2e]\nurl = "http://host.docker.internal:%s"\namqp_url = "amqp://host.docker.internal:%s"\nvhosts = ["e2e"]\nuser = "mqro"\ntier = "read"\n' \
+		"${MQ_MGMT_PORT:-15672}" "${MQ_AMQP_PORT:-5672}" >.lockmq/config.toml
+	chmod 0644 .lockmq/config.toml
+fi
 mkdir -p .lockhttp
 cat >.lockhttp/config.toml <<'TOML'
 [profiles.default]
@@ -146,6 +189,7 @@ grep -q "up: project " up.out || die "lox up did not finish"
 grep -q "First lox up of this workspace" up.out || die "no full review on the first lox up"
 grep -q "  profile lockhttp " up.out || die "the profile is not in the review"
 [ -z "$sql" ] || grep -q "  profile locksql " up.out || die "the locksql profile is not in the review"
+[ -z "$mq" ] || grep -q "  profile lockmq " up.out || die "the lockmq profile is not in the review"
 [ -z "$sql" ] || grep -q "lock db serves uids 4242 besides its clients group" up.out || die "the db lock's allowed_uids is not in the review"
 say "I11: the legacy root file is read with a warning and copied, exactly as reviewed; the human removes it"
 grep -q "warning: $ws/lockfamily.yaml is at the workspace's root" up.out || die "no warning about the legacy root lockfamily.yaml"
@@ -175,6 +219,12 @@ for l in $LOCKS; do
 			{ cat attach.out; die "the console of $n did not start listening"; }
 		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 		grep -q 'Accept all \[a\]' attach.out || { cat attach.out; die "no PII proposal at the first start of $n: the email column must be proposed"; }
+		;;
+	lockmq)
+		# y to the policy, the broker user's password, then detach.
+		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for mqro@' 'mq-e2e-only\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
+			{ cat attach.out; die "the console of $n did not start listening"; }
+		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 		;;
 	*)
 		python3 "$here/attach.py" 60 'y\n' '(approved policy)' -- "$lox" attach "$n" >attach.out 2>&1 ||
@@ -371,7 +421,7 @@ if [ -n "$sql" ]; then
 	grep -q 'people.email' rules.out || die "the console's rule set does not mask people.email"
 	docker run --rm --network none -v "${p}_profile-locksql:/p:ro" alpine:3.22 sh -c '! ls -A /p/pii 2>/dev/null | grep -q .' ||
 		die "the profile copy holds a rule set (it is read-only: the console's set belongs in its volume)"
-	decisions=2
+	decisions=$((decisions + 1))
 
 	if [ -n "${LOCKSQL_LAUNCHER:-}" ]; then
 		say "a host agent: locksql's launcher, as .mcp.json starts it (locksql mcp), reaches lox up's lock through up.json"
@@ -408,7 +458,7 @@ if [ -n "$sql" ]; then
 		cat hrun2.json
 		[ -n "$ok" ] || die "the host agent's approved ticket did not run"
 		[ "$(jq -r '.rows[0][1]' hrun2.json)" = alpha ] || die "host agent: want label alpha in the first row"
-		decisions=3
+		decisions=$((decisions + 1))
 
 		say "a host agent: up.json or the socket volume tampered with, the launcher refuses (exit 2) and runs nothing"
 		# hostsql: the launcher's exit code and stderr of locksql status.
@@ -440,6 +490,46 @@ if [ -n "$sql" ]; then
 		hostsql restored.err
 		[ "$rc" = 0 ] || die "the launcher refuses lox up's own state once restored (exit $rc)"
 	fi
+fi
+if [ -n "$mq" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ]; then
+	say "a host agent: lockmq's launcher, as .mcp.json starts it (lockmq mcp), reads a stream through lox up's lock"
+	# As for locksql: `lockmq mcp` from the workspace finds up.json and
+	# mounts the socket volume of the lock mq read-only; the image is the
+	# lock's own (the release lox add pinned).
+	mqimg=$(sed -n '/^  mq:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
+	hostmq() { LOCKMQ_IMAGE="$mqimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKMQ_LAUNCHER" mcp; }
+	mqread='"profile":"e2e","vhost":"e2e","name":"orders","from":"first","count":1'
+	hostmq lockmq_read "{$mqread,\"intent\":\"e2e host agent\"}" >mread1.json || { cat mread1.json; die "host lockmq_read failed"; }
+	cat mread1.json
+	jq -e '.data.status == "pending" and .data.lock == "lockmq" and .data.instance == "mq"' mread1.json >/dev/null ||
+		die "host agent: the read did not answer pending on the instance mq"
+	grep -q 'e2e-1' mread1.json && die "host agent: the message was read before a decision"
+	mticket=$(jq -r .data.ticket mread1.json)
+	[ -n "$mticket" ] && [ "$mticket" != null ] || die "host agent: no lockmq ticket"
+	ok=""
+	for i in $(seq 1 30); do
+		tty 'y\n' "$lox" approve --once >approve4.out 2>&1 || true
+		if tr -d '\r' <approve4.out | grep -Eq '(^|: )approved$'; then ok=1; break; fi
+		sleep 2
+	done
+	cat approve4.out
+	[ -n "$ok" ] || { docker logs "${p}-lockhub-1" 2>&1 | tail -20; die "the host agent's lockmq ticket was not approved"; }
+	tr -d '\r' <approve4.out | grep -q "$mticket" || die "the approved ticket is not the host agent's lockmq read ($mticket)"
+	tr -d '\r' <approve4.out | grep -q 'orders' || die "the facade screen does not show the stream read"
+	ok=""
+	for i in $(seq 1 30); do
+		if hostmq lockmq_read "{$mqread,\"ticket\":\"$mticket\"}" >mread2.json && [ "$(jq -r '.data.messages | length' mread2.json 2>/dev/null)" = 1 ]; then ok=1; break; fi
+		# Before the console has the hub's decision, the run of the ticket
+		# answers pending again, on the same ticket.
+		jq -e --arg t "$mticket" '.data.status == "pending" and .data.ticket == $t' mread2.json >/dev/null 2>&1 ||
+			grep -q "no decision yet" mread2.json || break
+		sleep 2
+	done
+	cat mread2.json
+	[ -n "$ok" ] || die "the host agent's approved lockmq read did not run"
+	jq -e '.data.messages[0].body | tostring | contains("e2e-1")' mread2.json >/dev/null || die "host agent: want the message e2e-1"
+	echo "host agent: lockmq read of e2e/orders approved as $mticket, message e2e-1 returned"
+	decisions=$((decisions + 1))
 fi
 "$lox" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lox audit verify failed"; }
 cat audit.out

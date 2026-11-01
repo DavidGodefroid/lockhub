@@ -167,6 +167,15 @@ profile is the one the console serves (lox up passes `--profile` only for
 a lock that names one, and `default` for lockfile). Run the agent from the
 workspace, whose profile directory lox up's console serves.
 
+lockhub's end-to-end test (`ci/e2e/phase2.sh`, run by the e2e workflow's
+phase 2 on every pull request) drives both launchers as `.mcp.json` starts
+them, over MCP on stdio, against the images `lox add` pins: `locksql mcp`
+plans and runs a query and, once the ticket is approved at `lox approve`,
+gets its rows; `lockmq mcp` reads a stream (RabbitMQ) and, once approved,
+gets its message. It also checks the launcher's refusals of a tampered
+up.json and of a squatted socket volume (with locksql's launcher; lockmq's
+makes the same checks).
+
 ### Threat model
 
 The checks are against mistakes (a stale or copied up.json, another
