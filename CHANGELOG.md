@@ -3,7 +3,7 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
-## v0.5.0
+## v0.5.0 (2026-11-01)
 
 Supported locks: as v0.4.0.
 
