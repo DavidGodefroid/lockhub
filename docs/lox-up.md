@@ -57,7 +57,7 @@ project and state.
 ```
 
 What a lock's gate pins (lea's lockhttp gate; `"lockhttp_gate": 1` says
-these members are written, and lea runs its gate in hub mode only then):
+these members are written, and lea runs its gate only then):
 
 - `devices` (top level): the paired devices (lockkit `ticket.DeviceSet`,
   public keys only), the set lox up mounts read-only for the consoles at
@@ -104,8 +104,8 @@ facade and refuses reveals; renewals work either way. When the lock has
 `devices` to a read-only input of its own and passes `--devices-file …`,
 with `--require-device` and `--seal-clear` as the lock says: a decision
 of those risk classes must be device-signed, and clear screens go to the
-phones sealed. lea refuses hub mode (and runs the standalone gate, saying
-why) when `require_device` is set and no device is paired. The gate refuses the hub's addresses as targets,
+phones sealed. lea stops (saying why, and to run `lox up` once a device
+is paired) when `require_device` is set and no device is paired. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
 
@@ -344,9 +344,10 @@ vouches for it.
 ## Why lockhttp is different
 
 (lea's side of this is lea#209: lea runs its gate in hub mode for the one
-lockhttp lock of a workspace's up.json from `"lockhttp_gate": 1` on; with
-an older lox up, or anything in up.json it cannot check, it keeps its
-standalone gate and says why.)
+lockhttp lock of a workspace's up.json from `"lockhttp_gate": 1` on. Since
+lea v0.4.0 (lea#232) there is no standalone gate: without a trusted up.json
+naming one lockhttp lock, with an older lox up, or with anything in up.json
+it cannot check, lea stops, says why, and says to run `lox up`.)
 
 lockhttp's hub mode is in the gate (`lockhttp gate --hub`, lockhttp#11),
 not in its console, and the gate must sit in the network namespace of
