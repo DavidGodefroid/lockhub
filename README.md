@@ -66,11 +66,19 @@ with every Lock.
 ```sh
 brew trust davidgodefroid/tap
 brew install davidgodefroid/tap/lockfamily   # lea, lox and the Locks' launchers
-cd ~/projects        # with lea: its projects directory; with claude: the project
-lox init
-lox add locksql      # one source at a time: locksql, lockmq, lockfile or lockhttp
+lea                  # runs lox init in its projects directory on its first start
+```
+
+Later, one source at a time, in lea's projects directory:
+
+```sh
+lox add locksql      # or lockmq, lockfile, lockhttp
+lea stop             # a lock added while lea runs reaches it at lea's next start
 lea
 ```
+
+Without lea (`claude` on the host): `lox init` in the project, then
+`lox add locksql`.
 
 `lox init` asks nothing. It checks the prerequisites (Docker, cosign, lea,
 the locks' launchers), lists the data sources the project's files name as
