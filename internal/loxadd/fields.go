@@ -359,7 +359,7 @@ func vaultFields(d Defaults, pathDefault string, when func(Answers) bool) []Fiel
 	}
 	return append(fs,
 		Field{Key: "vault-address", Label: "Vault address, such as https://vault.example.com:8200", Check: checkVault("vault-address", family.ValidateVaultAddress), When: w},
-		Field{Key: "vault-namespace", Label: "Vault namespace", Empty: "the root namespace", Check: text("vault-namespace"), When: w},
+		Field{Key: "vault-namespace", Label: "Vault namespace", Empty: "the root namespace", Check: checkVault("vault-namespace", family.ValidateVaultNamespace), When: w},
 		Field{Key: "vault-ca", Label: "Vault CA file", Empty: "the system's CA certificates", Check: checkVault("vault-ca", family.ValidateVaultCAFile), When: w},
 	)
 }

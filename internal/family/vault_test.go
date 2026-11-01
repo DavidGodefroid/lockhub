@@ -93,6 +93,48 @@ func TestVaultAddressRefusesLoopback(t *testing.T) {
 	}
 }
 
+func TestVaultNamespaceRefused(t *testing.T) {
+	const msg = "vault.namespace: names of letters, digits, _ . and -, separated by /"
+	for ns, ok := range map[string]bool{
+		"":              true,
+		"shop":          true,
+		"shop/orders":   true,
+		"team_1.prod-a": true,
+		"\x1b[2K":       false,
+		"a\nlock x":     false,
+		"shop/":         false,
+		"/shop":         false,
+		"shop//orders":  false,
+		"shop/../root":  false,
+		"..":            false,
+		"shop orders":   false,
+		"shop:pw":       false,
+	} {
+		err := ValidateVaultNamespace(ns)
+		switch {
+		case ok && err != nil:
+			t.Errorf("%q refused: %v", ns, err)
+		case !ok && (err == nil || err.Error() != msg):
+			t.Errorf("%q: got %v, want %q", ns, err, msg)
+		}
+		if err != nil && strings.Contains(err.Error(), ns) {
+			t.Errorf("%q: the error echoes the value", ns)
+		}
+	}
+	// The file's load and lox vault set refuse it too.
+	if _, err := loadVaultConf(t, vaultConf("vault:\n  address: https://vault.example.com\n  namespace: \"a\\nlock x\"\n", "")); err == nil || !strings.Contains(err.Error(), msg) {
+		t.Errorf("load: %v", err)
+	}
+	w := newWS(t, yamlConf(""))
+	before, _ := os.ReadFile(w.file)
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", Namespace: "\x1b[2K"}); err == nil || !strings.Contains(err.Error(), msg) {
+		t.Errorf("SetVault: %v", err)
+	}
+	if after, _ := os.ReadFile(w.file); string(after) != string(before) {
+		t.Error("file changed on refusal")
+	}
+}
+
 func TestAddVaultRefusedOnLockhttp(t *testing.T) {
 	w := newWS(t, yamlConf(""))
 	if err := SetVault(w.file, Vault{Address: "https://vault.example.com"}); err != nil {

@@ -68,6 +68,9 @@ func (v *Vault) validate() error {
 	if err := ValidateVaultAddress(v.Address); err != nil {
 		return err
 	}
+	if err := ValidateVaultNamespace(v.Namespace); err != nil {
+		return err
+	}
 	if v.CAFile != "" {
 		// A file missing at load time is tolerated (it may live on another
 		// machine); SetVault and lox add refuse it when it is written.
@@ -90,6 +93,19 @@ func ValidateVaultAddress(addr string) error {
 	h := strings.ToLower(u.Hostname())
 	if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) {
 		return errors.New("vault.address: 127.0.0.1 and localhost are the console's own container: use host.docker.internal for this machine")
+	}
+	return nil
+}
+
+var vaultNamespaceRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
+
+// ValidateVaultNamespace is the rule of vault.namespace (empty: the root
+// namespace), shared by the file's load, lox vault set and the lox add
+// question: the value is printed in the review, so it holds no control
+// character, space or "..". It never echoes the value.
+func ValidateVaultNamespace(ns string) error {
+	if ns != "" && (!vaultNamespaceRE.MatchString(ns) || strings.Contains(ns, "..")) {
+		return errors.New("vault.namespace: names of letters, digits, _ . and -, separated by /")
 	}
 	return nil
 }
