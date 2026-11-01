@@ -156,7 +156,7 @@ func writeHubKeys(state, hp string) error {
 	if slices.Contains(ks, hp) {
 		return fmt.Errorf("%s: the hub key %s is listed already, not last", HubKeysFile, hp)
 	}
-	return writeFileMode(filepath.Join(state, HubKeysFile), []byte(strings.Join(append(ks, hp), "\n")+"\n"), 0o644)
+	return WriteFileMode(filepath.Join(state, HubKeysFile), []byte(strings.Join(append(ks, hp), "\n")+"\n"), 0o644)
 }
 
 // hubImages reads the hub images applied in this workspace, oldest
@@ -281,7 +281,7 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 				return fmt.Errorf("hub key rotation: the hub took %q, not the reviewed key (the hub stays stopped)", strings.TrimSpace(string(out)))
 			}
 		}
-		if err := writeFileMode(filepath.Join(u.State, "hub.pub"), []byte(hp+"\n"), 0o644); err != nil {
+		if err := WriteFileMode(filepath.Join(u.State, "hub.pub"), []byte(hp+"\n"), 0o644); err != nil {
 			return err
 		}
 		if err := writeHubKeys(u.State, hp); err != nil {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -28,12 +29,19 @@ type applyFake struct {
 	exists bool
 	// initFails: init claude fails.
 	initFails bool
+	// killProfileAdd is called by profile add, which then ends as a
+	// launcher killed by its context does.
+	killProfileAdd func()
 }
 
 func (f *applyFake) Verb(_ context.Context, dir, name string, args ...string) ([]byte, []byte, int, error) {
 	f.log = append(f.log, name+" "+strings.Join(args[:min(2, len(args))], " "))
 	switch {
 	case len(args) >= 2 && args[0] == "profile" && args[1] == "add":
+		if f.killProfileAdd != nil {
+			f.killProfileAdd()
+			return nil, []byte("signal: killed"), -1, nil
+		}
 		if f.exists {
 			return []byte(`{"lock":"` + name + `","code":"exists","error":"profile orders exists"}`), nil, 1, nil
 		}
@@ -238,6 +246,86 @@ func TestApplyInterruptedRollsBack(t *testing.T) {
 	}
 	if d, err := LoadDraft(w.draft); err != nil || d["name"] != "orders" {
 		t.Fatalf("draft = %v, %v", d, err)
+	}
+}
+
+// assertInterrupted: an interrupt rolled back, wraps context.Canceled and
+// printed no failure line.
+func assertInterrupted(t *testing.T, w *applyWorld, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrNothingKept) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want ErrNothingKept wrapping context.Canceled", err)
+	}
+	if !strings.HasPrefix(err.Error(), "interrupted: nothing kept: ") {
+		t.Fatalf("message = %q", err.Error())
+	}
+	// A failure line is "STEP failed: ..." or "STEP failed (CODE): ...".
+	if regexp.MustCompile(`failed(?: \([a-z]+\))?: `).MatchString(w.out.String()) {
+		t.Fatalf("an interrupt shown as a failure:\n%s", w.out.String())
+	}
+	for _, p := range []string{filepath.Join(w.root, ".locksql", "config.toml"), w.file} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s left behind (%v)", p, err)
+		}
+	}
+	if slices.Contains(w.fake.log, "up orders") {
+		t.Fatal("up after an interrupt")
+	}
+}
+
+func TestApplyInterruptedDuringProfileAdd(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.fake.killProfileAdd = cancel
+	a := sqlAnswers(CredAsk)
+	assertInterrupted(t, w, w.steps.Apply(ctx, mustBuild(t, a), a))
+}
+
+func TestApplyInterruptedDuringPin(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.steps.PinImage = func(context.Context, string, bool) (string, error) {
+		cancel()
+		return "", errors.New("cosign verify: signal: killed")
+	}
+	a := sqlAnswers(CredAsk)
+	assertInterrupted(t, w, w.steps.Apply(ctx, mustBuild(t, a), a))
+}
+
+func TestApplyRestoreFailureSaysSo(t *testing.T) {
+	w := newApplyWorld(t)
+	writeTestFile(t, w.file, shopFamily)
+	w.steps.Up = func(context.Context, string) error {
+		// The file is gone and its directory replaced by a file: neither
+		// the restore's temporary file nor the file itself can be written.
+		if err := os.RemoveAll(filepath.Dir(w.file)); err != nil {
+			t.Fatal(err)
+		}
+		writeTestFile(t, filepath.Dir(w.file), "x")
+		return family.ErrNotConfirmed
+	}
+	a := sqlAnswers(CredAsk)
+	err := w.steps.Apply(context.Background(), mustBuild(t, a), a)
+	if err == nil || errors.Is(err, ErrNothingKept) {
+		t.Fatalf("err = %v, want a not-restored error, not ErrNothingKept", err)
+	}
+	if !errors.Is(err, family.ErrNotConfirmed) {
+		t.Fatalf("err = %v, want the cause wrapped", err)
+	}
+	if !strings.Contains(err.Error(), ".lockfamily/lockfamily.yaml could not be restored (") {
+		t.Fatalf("message = %q", err.Error())
+	}
+}
+
+func TestApplyRelKeepsDotDotNames(t *testing.T) {
+	s := &Steps{Root: "/p"}
+	if got := s.rel("/p/..cfg/config.toml"); got != "..cfg/config.toml" {
+		t.Fatalf("rel = %q", got)
+	}
+	if got := s.rel("/q/lockfamily.yaml"); got != "/q/lockfamily.yaml" {
+		t.Fatalf("rel outside = %q", got)
 	}
 }
 

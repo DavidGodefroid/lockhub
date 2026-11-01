@@ -106,5 +106,5 @@ func writeUpState(ws string, s UpState) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	// A fresh temporary file renamed over up.json: a planted link is
 	// replaced, never followed; 0644, the user's.
-	return writeFileMode(filepath.Join(d, UpFile), append(b, '\n'), 0o644)
+	return WriteFileMode(filepath.Join(d, UpFile), append(b, '\n'), 0o644)
 }

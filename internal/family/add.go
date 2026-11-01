@@ -211,11 +211,13 @@ func writeFile(path string, b []byte) error {
 	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
 		mode = fi.Mode().Perm() &^ 0o022
 	}
-	return writeFileMode(path, b, mode)
+	return WriteFileMode(path, b, mode)
 }
 
-// writeFileMode is writeFile with the mode given.
-func writeFileMode(path string, b []byte, mode os.FileMode) error {
+// WriteFileMode replaces path with b and mode through a fresh temporary
+// file in its directory (see writeFile): lox add restores and keeps its
+// files with it too.
+func WriteFileMode(path string, b []byte, mode os.FileMode) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".lockfamily-*.yaml")
 	if err != nil {
 		return err

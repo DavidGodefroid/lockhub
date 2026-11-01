@@ -731,7 +731,7 @@ func (u *Up) Do(ctx context.Context) error {
 			return err
 		}
 		if _, err := os.Lstat(nf); errors.Is(err, os.ErrNotExist) {
-			if err := writeFileMode(nf, raw, 0o644); err != nil {
+			if err := WriteFileMode(nf, raw, 0o644); err != nil {
 				return err
 			}
 			fmt.Fprintf(u.Out, "%s now lives in %s (lea's agents only read it there); remove %s\n", FileName, nf, u.File)

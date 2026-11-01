@@ -50,16 +50,17 @@ type Steps struct {
 // are as they were before.
 var ErrNothingKept = errors.New("nothing kept")
 
-// nothingKept is the error of a rollback: its message is the fixed text,
-// and it wraps ErrNothingKept and the cause (a decline, an interrupt, a
-// failed step), which was shown above.
-type nothingKept struct {
-	msg   string
-	cause error
+// rollbackError is the error of a rollback: its message is the fixed
+// text, and it wraps the cause (a decline, an interrupt, a failed step,
+// which was shown above), plus ErrNothingKept when the files are as
+// before.
+type rollbackError struct {
+	msg  string
+	errs []error
 }
 
-func (e *nothingKept) Error() string   { return e.msg }
-func (e *nothingKept) Unwrap() []error { return []error{ErrNothingKept, e.cause} }
+func (e *rollbackError) Error() string   { return e.msg }
+func (e *rollbackError) Unwrap() []error { return e.errs }
 
 // snapshot is a file as it was before: its bytes, or its absence (and
 // whether its directory was there).
@@ -99,7 +100,7 @@ func takeSnapshot(path string) (snapshot, error) {
 // it short.
 func (s snapshot) restore() error {
 	if s.existed {
-		return writePrivate(s.path, s.data, s.mode)
+		return family.WriteFileMode(s.path, s.data, s.mode)
 	}
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -111,38 +112,15 @@ func (s snapshot) restore() error {
 	return nil
 }
 
-// writePrivate replaces path through a fresh temporary file in its
-// directory, with mode.
-func writePrivate(path string, b []byte, mode os.FileMode) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".lox-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, err = f.Write(b)
-	if err == nil {
-		err = f.Chmod(mode)
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(tmp, path)
-	}
-	if err != nil {
-		os.Remove(tmp)
-	}
-	return err
-}
-
 func (s *Steps) say(format string, a ...any) { fmt.Fprintf(s.Out, format+"\n", a...) }
 
 // rel is path as shown to the human: relative to the project when inside.
 func (s *Steps) rel(path string) string {
-	if r, err := filepath.Rel(s.Root, path); err == nil && !strings.HasPrefix(r, "..") {
-		return r
+	r, err := filepath.Rel(s.Root, path)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return path
 	}
-	return path
+	return r
 }
 
 // Apply applies l at once. An error, a decline or an interrupt before the
@@ -189,9 +167,14 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 
 // declare runs the steps before lox up: profile add, init claude, the
 // doctor (advisory) and lox add (with the vault block when it is new).
-// Each failure is shown before it is returned.
+// Each failure is shown before it is returned. A step cut short by an
+// interrupt (a launcher killed, a pin stopped) is not a failure: the
+// interrupt is returned, and nothing is shown.
 func (s *Steps) declare(ctx context.Context, l Lock) error {
 	o := loxinit.Classify(s.Run.Verb(ctx, s.Root, l.Type, l.ProfileArgs(s.Root)...))
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch {
 	case o.Profile != nil:
 		cred := ""
@@ -207,10 +190,10 @@ func (s *Steps) declare(ctx context.Context, l Lock) error {
 		s.say("profile add failed (%s): %s", o.Code, indent(o.Message))
 		return errors.New("profile add failed")
 	}
+	o = loxinit.Classify(s.Run.Verb(ctx, s.Root, l.Type, "init", "claude"))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	o = loxinit.Classify(s.Run.Verb(ctx, s.Root, l.Type, "init", "claude"))
 	if !o.OK() {
 		s.say("init claude failed (%s): %s", o.Code, indent(o.Message))
 		return errors.New("init claude failed")
@@ -223,46 +206,54 @@ func (s *Steps) declare(ctx context.Context, l Lock) error {
 	vault := l.Credentials == CredVault
 	image, err := s.PinImage(ctx, l.Type, vault)
 	if err != nil {
-		return s.failed("image", err)
+		return s.failed(ctx, "image", err)
 	}
 	if _, err := os.Lstat(s.File); errors.Is(err, os.ErrNotExist) {
 		hub, err := s.PinHub(ctx)
 		if err != nil {
-			return s.failed("hub image", err)
+			return s.failed(ctx, "hub image", err)
 		}
 		if _, err := family.InitHub(s.File, hub); err != nil {
-			return s.failed("lox add", err)
+			return s.failed(ctx, "lox add", err)
 		}
 	}
 	// The vault block first: a lock with vault: true needs it to be valid.
+	// family's errors name the key (vault.address, vault.ca_file, a scrubbed
+	// YAML line), never the value typed.
 	if l.Vault != nil {
 		if err := family.SetVault(s.File, *l.Vault); err != nil {
-			return s.failed("vault block", err)
+			return s.failed(ctx, "vault block", err)
 		}
 	}
 	if err := family.Add(s.File, family.AddOptions{Type: l.Type, Name: l.Name, Image: image, Profile: l.Profile,
 		AllowedUIDs: s.AllowedUIDs, Vault: vault}); err != nil {
-		return s.failed("lox add", err)
+		return s.failed(ctx, "lox add", err)
 	}
 	s.say("lock %s declared in %s", l.Name, s.rel(s.File))
 	return nil
 }
 
-// failed shows a step's error (an interrupt is not one) and returns it.
-func (s *Steps) failed(step string, err error) error {
-	if !errors.Is(err, context.Canceled) {
-		s.say("%s failed: %v", step, err)
+// failed shows a step's error and returns it; a step cut short by an
+// interrupt is not shown, and the interrupt is returned.
+func (s *Steps) failed(ctx context.Context, step string, err error) error {
+	if cerr := ctx.Err(); cerr != nil {
+		return cerr
 	}
+	s.say("%s failed: %v", step, err)
 	return err
 }
 
 // rollback restores the snapshots, saves the draft and returns the
-// nothing-kept error for cause.
+// rollback error for cause (the interrupt, when there was one).
 func (s *Steps) rollback(ctx context.Context, l Lock, a Answers, snaps []snapshot, cfg string, cause error) error {
+	errs := []error{cause}
+	if cerr := ctx.Err(); cerr != nil && !errors.Is(cause, cerr) {
+		errs = append(errs, cerr)
+	}
 	var bad []string
 	for _, sn := range snaps {
 		if err := sn.restore(); err != nil {
-			bad = append(bad, s.rel(sn.path))
+			bad = append(bad, fmt.Sprintf("%s could not be restored (%v)", s.rel(sn.path), err))
 		}
 	}
 	if s.DraftPath != "" {
@@ -271,13 +262,14 @@ func (s *Steps) rollback(ctx context.Context, l Lock, a Answers, snaps []snapsho
 		}
 	}
 	if len(bad) > 0 {
-		return &nothingKept{msg: fmt.Sprintf("not applied, and %s could not be restored: check it before lox up", strings.Join(bad, " and ")), cause: cause}
+		// The files are not as before: not ErrNothingKept.
+		return &rollbackError{msg: "not applied, and " + strings.Join(bad, ", and ") + ": check it before lox up", errs: errs}
 	}
 	msg := fmt.Sprintf("nothing kept: %s and %s are as before; lox add %s offers the same answers again", s.rel(cfg), s.rel(s.File), l.Type)
 	if ctx.Err() != nil || errors.Is(cause, context.Canceled) {
 		msg = "interrupted: " + msg
 	}
-	return &nothingKept{msg: msg, cause: cause}
+	return &rollbackError{msg: msg, errs: append(errs, ErrNothingKept)}
 }
 
 func (s *Steps) dropDraft() {
@@ -296,6 +288,9 @@ func (s *Steps) doctor(ctx context.Context, lock string) {
 		name = "doctor --fix"
 	}
 	o := loxinit.Classify(s.Run.Verb(ctx, s.Root, lock, args...))
+	if ctx.Err() != nil {
+		return // interrupted: Apply rolls back, nothing to report
+	}
 	if note != "" {
 		s.say("%s", note)
 	}
@@ -343,7 +338,7 @@ func SaveDraft(path string, a Answers) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return writePrivate(path, append(b, '\n'), 0o600)
+	return family.WriteFileMode(path, append(b, '\n'), 0o600)
 }
 
 // LoadDraft reads the answers SaveDraft kept (none when there is no
