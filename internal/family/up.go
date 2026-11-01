@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
@@ -128,6 +129,12 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		}
 		if l.Reveal {
 			s = append(s, fmt.Sprintf("lock %s pins the host facades' keys: Ctrl-O reveals its clear screen", n))
+		}
+		if l.Vault && c.Vault != nil {
+			s = append(s, fmt.Sprintf("lock %s vault VAULT_ADDR=%s", n, c.Vault.Address))
+			if c.Vault.Namespace != "" {
+				s = append(s, fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace))
+			}
 		}
 		if len(l.AllowedUIDs) > 0 {
 			s = append(s, fmt.Sprintf("lock %s serves uids %s besides its clients group (allowed_uids)", n, l.AllowedUIDsFlag()))
@@ -451,6 +458,16 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	sum = append(sum, devicesSummary(devices)...)
+	// The CA the locks with vault: true trust, read once here: what is
+	// reviewed (path and digest) is what is copied after the yes.
+	var vaultCA []byte
+	if ca := c.vaultCAFile(); ca != "" {
+		var sha string
+		if vaultCA, sha, err = readCA(ca); err != nil {
+			return err
+		}
+		sum = append(sum, fmt.Sprintf("vault ca_file %s sha256:%s", ca, sha))
+	}
 	fp := fingerprint(sum)
 	if rot.any() {
 		var what []string
@@ -557,6 +574,15 @@ func (u *Up) Do(ctx context.Context) error {
 	paths.Profiles = map[string]string{}
 	for t, pr := range profiles {
 		paths.Profiles[t] = pr.Fingerprint
+	}
+	if vaultCA != nil {
+		// 0644 whatever the umask: the consoles' accounts read it through a
+		// read-only bind mount.
+		vp := filepath.Join(u.State, "vault-ca.pem")
+		if err := writeAtomic(vp, vaultCA, 0o644); err != nil {
+			return err
+		}
+		paths.VaultCA = vp
 	}
 	composeYAML = []byte(Compose(c, paths))
 	// The profiles go on the setup service's stdin (they can hold
@@ -799,4 +825,43 @@ func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, compos
 		}
 	}
 	return nil
+}
+
+// vaultCAFile is the ca_file the locks with vault: true trust ("" when no
+// lock uses Vault or none is set).
+func (c *Config) vaultCAFile() string {
+	if c.Vault == nil {
+		return ""
+	}
+	for _, l := range c.Locks {
+		if l.Vault {
+			return c.Vault.CAFile
+		}
+	}
+	return ""
+}
+
+// readCA reads vault.ca_file once: a regular file (links are not followed)
+// of at most 64 KiB. It returns the content and its sha256 (hex). Errors
+// never carry the path or the content.
+func readCA(path string) ([]byte, string, error) {
+	bad := errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
+	if !filepath.IsAbs(path) {
+		return nil, "", bad
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, "", bad
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxCAFile {
+		return nil, "", bad
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxCAFile+1))
+	if err != nil || len(b) > maxCAFile {
+		return nil, "", bad
+	}
+	s := sha256.Sum256(b)
+	return b, hex.EncodeToString(s[:]), nil
 }
