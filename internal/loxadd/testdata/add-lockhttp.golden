@@ -1,0 +1,3 @@
+lox add lockhttp: one HTTP policy for lea's LockHTTP gate, applied at once (Ctrl-C before the review: nothing is kept)
+
+Name (required) [web]: 

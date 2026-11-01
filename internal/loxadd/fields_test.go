@@ -367,7 +367,14 @@ func TestTLSDefaultFollowsTheHost(t *testing.T) {
 	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "disable" {
 		t.Errorf("detected tls %q", got)
 	}
+	// Production forces verify-full even over a detected mode.
+	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com", "production": "y"}).Default; got != "verify-full" {
+		t.Errorf("production over detected tls %q", got)
+	}
 	fs = fieldsOf(t, "locksql", Defaults{Draft: Answers{"tls": "require"}})
+	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com", "production": "y"}).Default; got != "require" {
+		t.Errorf("draft tls over production %q", got)
+	}
 	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "require" {
 		t.Errorf("draft tls %q", got)
 	}

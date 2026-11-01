@@ -1,0 +1,9 @@
+lox add lockfile: one file store, applied at once (Ctrl-C before the review: nothing is kept)
+
+Source: local, s3 or sftp (required) [s3]: 
+Bucket, a bucket name, not a URL (required): shop-invoices
+Endpoint, a URL with its scheme (optional: empty = AWS): 
+Region (required): eu-west-1
+Production? (each approval needs the profile name typed) [y/N] 
+Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
+Name (required) [files]: 

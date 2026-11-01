@@ -337,22 +337,35 @@ func vaultFields(d Defaults, pathDefault string, when func(Answers) bool) []Fiel
 	)
 }
 
-// tlsField is one of the two TLS questions: the one asked for a database
-// on this machine (default disable) or the other (default verify-full, as
-// for production). A detected mode beats both.
-func tlsField(detected string, local bool) Field {
+// tlsField is one of the three TLS questions, exactly one of which is asked:
+// production (default verify-full, even over a detected mode), a database on
+// this machine (default disable) or another (default verify-full). A detected
+// mode beats the host rule but not production; a draft beats all.
+func tlsField(detected string, variant string) Field {
 	def := "verify-full"
-	if local {
+	switch variant {
+	case "local":
 		def = "disable"
-	}
-	if detected != "" {
-		def = detected
+		fallthrough
+	case "remote":
+		if detected != "" {
+			def = detected
+		}
 	}
 	return Field{Key: "tls", Label: "TLS: disable, prefer, require, verify-ca or verify-full", Choices: TLSModes, Default: def,
 		Check: oneOf("tls", "want disable, prefer, require, verify-ca or verify-full", TLSModes...),
 		When: func(a Answers) bool {
+			if a["engine"] == "sqlite" {
+				return false
+			}
 			prod := strings.HasPrefix(strings.ToLower(a["production"]), "y")
-			return a["engine"] != "sqlite" && (local == (hostIsLocal(a["host"]) && !prod))
+			switch variant {
+			case "prod":
+				return prod
+			case "local":
+				return !prod && hostIsLocal(a["host"])
+			}
+			return !prod && !hostIsLocal(a["host"])
 		}}
 }
 
@@ -398,8 +411,9 @@ func sqlFields(d Defaults) []Field {
 		{Key: "user", Label: "User", Empty: "the console asks for it at start with the password", Default: user, Check: text("user"), When: remote},
 		{Key: "database", Label: "Database", Empty: "the server's default database", Default: database, Check: text("database"), When: remote},
 		productionField(nil),
-		tlsField(tls, true),
-		tlsField(tls, false),
+		tlsField(tls, "prod"),
+		tlsField(tls, "local"),
+		tlsField(tls, "remote"),
 		credentialsField(remote),
 	}
 	fs = append(fs, vaultFields(d, "database/creds/"+vaultName(d, suggested), remote)...)
