@@ -4,9 +4,10 @@ name: e2e-lox-up
 # phase 1 (locksql's TestHubPhase1 against this lockhub), phase 2 (lox up
 # stack, tickets approved through the facade socket, a host agent's
 # `locksql mcp` and `lockmq mcp` through up.json, I2, I11) and
-# phase 5 (install.sh, lox add, lox up, lox import). Phases 2 and 5
-# run this commit's hub image (ci/e2e/local-hub.sh), not the latest
-# release that lox add pins.
+# phase 5 (install.sh, lox add, lox up, lox import), and lox init on a
+# compose project (ci/e2e/init.sh). Phases 2 and 5 and lox init run this
+# commit's hub image (ci/e2e/local-hub.sh), not the latest release that
+# lox add pins.
 on:
   push:
     branches: [main]
@@ -114,6 +115,48 @@ jobs:
           export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
           export LOCKMQ_LAUNCHER="$GITHUB_WORKSPACE/lockmq-launcher/scripts/lockmq"
           sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lox"
+
+  init:
+    name: e2e lox init (compose project, auto mode, agent queries approved, re-run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The released launchers lox init drives (their verbs, then the host
+      # agents' mcp): locksql v0.13.0 and lockmq v0.6.0, the releases that
+      # ship the launcher verbs (lockkit GUIDE.md §14) and that lox add
+      # pins as the latest.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DavidGodefroid/locksql
+          ref: b0fd41e8ed312f96bf7cbbca858e3346f7348820 # v0.13.0
+          path: locksql-launcher
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DavidGodefroid/lockmq
+          ref: 3788482cc323c2e22967e7d203bdde63fc932691 # v0.6.0
+          path: lockmq-launcher
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - run: go build -o "$RUNNER_TEMP/bin/lox" ./cmd/lox
+      - name: this commit's hub image (containerd image store, cosign shim)
+        run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
+      - name: lox init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          LOCKSQL_IMAGE: ghcr.io/davidgodefroid/locksql:0.13.0
+          LOCKMQ_IMAGE: ghcr.io/davidgodefroid/lockmq:0.6.0
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
+          export LOCKMQ_LAUNCHER="$GITHUB_WORKSPACE/lockmq-launcher/scripts/lockmq"
+          sh ci/e2e/init.sh "$RUNNER_TEMP/bin/lox"
 
   phase5:
     name: e2e phase 5 (install.sh, lox add, lox up, lox import)

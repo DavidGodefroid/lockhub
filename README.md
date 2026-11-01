@@ -52,6 +52,21 @@ The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
 with every Lock.
 
+## Quick start: lox init
+
+```sh
+cd ~/projects/shop
+lox init
+```
+
+`lox init` checks the prerequisites (Docker, cosign, lea, the locks'
+launchers), detects the project's data sources from its files (`.env*`,
+`compose*.yaml`, `config/`: read only, never a secret), proposes one lock per
+source (or a checklist with `--manual`), and once you said yes runs each
+lock's `profile add`, `init claude` and `doctor`, then `lox add`, `lox up`
+(its review unchanged) and `lox attach` for each console's questions. Then
+run `lea` (or `claude` + `lox approve`). See [docs/lox-init.md](docs/lox-init.md).
+
 [docs/lox-up.md](docs/lox-up.md) is the contract between `lox up` and lea;
 [docs/design-notes.md](docs/design-notes.md) records where the code
 deliberately departs from the hub's design plan.

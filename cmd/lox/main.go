@@ -39,6 +39,11 @@ var version = "dev"
 const usage = `lox: the Lock Family CLI
 
 Usage:
+  lox init [--yes] [--manual] [--prod] [--credentials ask|vault [--vault-path INSTANCE=PATH]] [--tls MODE] [--no-attach]
+           [--hub-image REF] [--file lockfamily.yaml]
+                                          set up the project's locks in one command: prerequisites, the data
+                                          sources its files name (read only, no secret), one lock per source
+                                          (auto) or a checklist (--manual), then lox add, lox up, lox attach
   lox up [--file lockfamily.yaml] [--dry-run] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
                                           review and start the hub and the workspace's locks; --pin sets
                                           the hub image by digest (a previous version restored), --rotate
@@ -96,6 +101,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return mobileCmd(args[1:], stdin, stdout, stderr)
 	case "up":
 		return upCmd(args[1:], stdin, stdout, stderr)
+	case "init":
+		return initCmd(args[1:], stdin, stdout, stderr)
 	case "add":
 		if len(args) > 1 && args[1] == "slack" {
 			return addSlackCmd(args[2:], stdin, stdout, stderr)

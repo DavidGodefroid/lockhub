@@ -5,6 +5,27 @@ digest).
 
 ## Unreleased
 
+- `lox init` (#80): one command activates the Lock Family in a project.
+  It checks Docker (with the install command for the system when it does
+  not answer), cosign, lea and the locks' launchers; detects PostgreSQL,
+  MySQL, MariaDB and RabbitMQ from the project's `.env*`, `compose*.yaml`
+  and `config/` (read only; keys named like secrets are skipped and a URL
+  keeps no password); proposes one lock per source (auto) or a checklist
+  (`--manual`: lea, locksql, lockmq, lockfile, lockhttp, locklog, greyed
+  with the reason when not possible); and, once the plan is confirmed, runs
+  each lock's launcher verbs (`profile add --non-interactive --json`, `init
+  claude`, `doctor --json`, lockkit GUIDE.md §14), `lox add`, `lox up` (its
+  review unchanged) and `lox attach` for each console that started.
+  Re-runnable: declared locks are kept, new sources added, unchecked ones
+  removed through the same review. `--yes` with flags for non-interactive
+  use. Sources on this machine are given as `host.docker.internal`. lea's
+  uid goes in `allowed_uids` when lea is found (`lox add` takes it). It does
+  not run the launchers' `doctor --fix`, which gives `.locksql/` or
+  `.lockmq/` to the console account and makes `lox up` refuse the profile
+  ([docs/lox-init.md](docs/lox-init.md)). New e2e job: a compose project
+  (PostgreSQL, RabbitMQ) set up by `lox init --yes`, a host agent's query
+  and read approved, then a re-run that adds a database and leaves the
+  other locks untouched.
 - Host agents reach `lox up`'s locks (#78): the locks' launchers
   (`locksql mcp` and the other agent commands, as `<lock> init` writes them
   in `.mcp.json`; lockmq and lockfile alike) mount the socket volume

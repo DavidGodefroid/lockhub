@@ -20,6 +20,9 @@ type AddOptions struct {
 	HubImage string
 	// Profile is the lock's profile (optional, see Lock.Profile).
 	Profile string
+	// AllowedUIDs is the lock's allowed_uids (optional, see
+	// Lock.AllowedUIDs): lox init gives lea's uid.
+	AllowedUIDs []int
 }
 
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
@@ -64,6 +67,13 @@ func Add(path string, o AddOptions) error {
 	kv("image", o.Image, "!!str")
 	if o.Profile != "" {
 		kv("profile", o.Profile, "!!str")
+	}
+	if len(o.AllowedUIDs) > 0 {
+		uids, err := UIDList(o.AllowedUIDs).MarshalYAML()
+		if err != nil {
+			return err
+		}
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "allowed_uids"}, uids.(*yaml.Node))
 	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)
