@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/DavidGodefroid/lockhub/internal/loxinit"
@@ -70,6 +71,16 @@ func (f *Form) Run(lock string, fields []Field, given Answers) (Answers, error) 
 			return nil, err
 		}
 		answers[fd.Key] = v
+	}
+	var extra []string
+	for k := range given {
+		if !done[k] {
+			extra = append(extra, k)
+		}
+	}
+	if len(extra) > 0 {
+		slices.Sort(extra)
+		return nil, fmt.Errorf("--%s: not a question of lox add %s with these answers", extra[0], lock)
 	}
 	return answers, nil
 }

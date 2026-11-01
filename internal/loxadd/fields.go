@@ -181,8 +181,19 @@ func safe(key, v string) string {
 	return key + ": it holds a control character"
 }
 
+// text checks a plain-text value. A colon is how a password gets typed
+// after a name (name:secret, name:secret@host), and no plain-text key has a
+// use for one.
 func text(key string) func(string, Answers) string {
-	return func(v string, _ Answers) string { return safe(key, v) }
+	return func(v string, _ Answers) string {
+		if r := safe(key, v); r != "" {
+			return r
+		}
+		if strings.Contains(v, ":") {
+			return key + ": it embeds a password: type the target without it (the console asks for the password at its start)"
+		}
+		return ""
+	}
 }
 
 func checkHost(v string, _ Answers) string {

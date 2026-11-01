@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/DavidGodefroid/lockhub/internal/loxinit"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden screens")
@@ -96,9 +98,6 @@ func TestFormGolden(t *testing.T) {
 					t.Errorf("answer %s = %q, want %q", k, a[k], v)
 				}
 			}
-			if strings.Contains(out, "sekret") {
-				t.Error("leak")
-			}
 		})
 	}
 }
@@ -139,4 +138,79 @@ func TestFormEOF(t *testing.T) {
 	if err == nil || err.Error() != "no answer (end of input)" {
 		t.Fatalf("got %v", err)
 	}
+}
+
+func TestFormRefusesAPasswordInATextField(t *testing.T) {
+	const reason = "user: it embeds a password: type the target without it (the console asks for the password at its start)"
+	for _, typed := range []string{"shop:sekret", "shop:sekret@db.example.com"} {
+		var out bytes.Buffer
+		f := &Form{In: bufio.NewReader(strings.NewReader("\n\n\n" + typed + "\n\n\n\n\n\n\n\n\n")), Out: &out}
+		a, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), nil)
+		if err != nil {
+			t.Fatalf("%s: %v", typed, err)
+		}
+		if !strings.Contains(out.String(), "  "+reason+"\n") {
+			t.Errorf("%s: no re-ask with the reason:\n%s", typed, out.String())
+		}
+		for _, l := range strings.Split(out.String(), "\n") {
+			if strings.HasPrefix(l, "  ") && strings.Contains(l, "sekret") {
+				t.Errorf("reason line leaks: %q", l)
+			}
+		}
+		for k, v := range a {
+			if strings.Contains(v, "sekret") {
+				t.Errorf("answer %s keeps the secret", k)
+			}
+		}
+		_, err = (&Form{Out: io.Discard, NonInteractive: true}).Run("locksql", fieldsOf(t, "locksql", Defaults{}), Answers{"user": typed})
+		if err == nil || strings.Contains(err.Error(), "sekret") || !strings.HasPrefix(err.Error(), "--user: it embeds a password") {
+			t.Errorf("flag %s: %v", typed, err)
+		}
+	}
+	for _, key := range []string{"database", "vhost", "region"} {
+		lock := map[string]string{"database": "locksql", "vhost": "lockmq", "region": "lockfile"}[key]
+		g := Answers{key: "a:sekret@b"}
+		if key == "region" {
+			g["source"], g["bucket"], g["endpoint"] = "s3", "shop-invoices", "-"
+		}
+		_, err := (&Form{Out: io.Discard, NonInteractive: true}).Run(lock, fieldsOf(t, lock, Defaults{}), g)
+		if err == nil || strings.Contains(err.Error(), "sekret") || !strings.Contains(err.Error(), "--"+key+": it embeds a password") {
+			t.Errorf("%s: %v", key, err)
+		}
+	}
+}
+
+func TestFormFlagNotAQuestion(t *testing.T) {
+	f := &Form{Out: io.Discard, NonInteractive: true}
+	_, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), Answers{"engine": "sqlite", "path": "/tmp/shop.db", "port": "5432"})
+	want := "--port: not a question of lox add locksql with these answers"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %s", err, want)
+	}
+}
+
+func TestFormEOFPartial(t *testing.T) {
+	// A last line without a newline is an answer.
+	var out bytes.Buffer
+	f := &Form{In: bufio.NewReader(strings.NewReader("sqlite\n/tmp/shop.db")), Out: &out}
+	_, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), nil)
+	if err == nil || err.Error() != "no answer (end of input)" || !strings.Contains(out.String(), "Production?") {
+		t.Fatalf("partial: %v\n%s", err, out.String())
+	}
+	// End of input while re-asking.
+	out.Reset()
+	f = &Form{In: bufio.NewReader(strings.NewReader("oracle\n")), Out: &out}
+	_, err = f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), nil)
+	if err == nil || err.Error() != "no answer (end of input)" || strings.Count(out.String(), "Engine:") != 2 {
+		t.Fatalf("re-ask: %v\n%s", err, out.String())
+	}
+}
+
+func TestFormHintsGolden(t *testing.T) {
+	var out bytes.Buffer
+	f := &Form{In: bufio.NewReaderSize(&typist{lines: []string{"", "", "", "", "", "", "", "", ""}, out: &out}, 16), Out: &out, Hints: []loxinit.Source{shopDB}}
+	if _, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{Source: &shopDB}), nil); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "add-locksql-hints", out.String())
 }
