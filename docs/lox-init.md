@@ -68,11 +68,14 @@ Run `lea` (or `claude` + `lox approve`).
    ```
    <lock> profile add --non-interactive --json --project ROOT --profile NAME [--production] [--credentials ask|vault --vault-path P] <target flags>
    <lock> init claude
-   <lock> doctor --json
+   <lock> doctor --fix --yes --json   (lockfile: <lock> doctor --json)
    lox add <lock> NAME --profile NAME
    ```
 
-   A profile already in the lock's config (`exists`) is kept as it is. A lock
+   The doctor's repairs and what still fails are shown; a failure never
+   stops `lox init` (before `lox up` the console is not running, so some
+   checks fail or warn). See [The doctor](#the-doctor) for when it runs
+   without `--fix`. A profile already in the lock's config (`exists`) is kept as it is. A lock
    whose verb fails is not declared; its error (or, with no JSON, its
    stderr) is shown and the others go on. Then `lox up` shows the change for
    your review, and each console that started (or restarted) is attached:
@@ -81,6 +84,27 @@ Run `lea` (or `claude` + `lox approve`).
 
 When lea is found, each locksql, lockmq and lockfile lock gets your uid in
 `allowed_uids` (lea's agents run as it; see [lox-up.md](lox-up.md)).
+
+## The doctor
+
+`lox init` runs each lock's `doctor --fix --yes --json` (lockkit GUIDE.md
+§14), with these exceptions, which the plan states:
+
+| Lock | `doctor --fix` | What it repairs |
+|---|---|---|
+| locksql | v0.13.1 or later, launcher and image | `.locksql/` as `lox up` reads it (yours, no group or other write); it also wires your installed agents for your account |
+| lockmq | v0.6.1 or later, launcher and image | `.lockmq/` as `lox up` copies it |
+| lockhttp | any release with the verbs (v0.7.0) | `chmod go-w` on the policy |
+| lockfile | never | its only repair wires every installed agent for your account, which `lox up` does not need: run `lockfile doctor --fix` yourself for that |
+
+locksql up to v0.13.0 and lockmq up to v0.6.0 gave the lock's directory to
+the console account in `doctor --fix`, after which `lox up` refused to copy
+the profile (it reads only your own files). `lox init` asks `<lock>
+version` once per lock type (`<lock> launcher V (image REF)`, then the
+image's `<lock> vV`): with a launcher or an image older than the fixed
+release, or versions it cannot read, it runs `<lock> doctor --json`
+instead and says to update the lock, then run `<lock> doctor --fix`. A
+launcher run from a clone (`launcher dev`) is judged by its image.
 
 ## Secrets
 
@@ -117,13 +141,6 @@ written and says to run `lox up`. `--manual` is interactive only.
 
 ## Known limitations
 
-- `lox init` runs `<lock> doctor --json` without `--fix`, as an advisory
-  check (before `lox up` the console is not running, so some checks fail or
-  warn). The launchers' `doctor --fix` (locksql v0.13.0, lockmq v0.6.0)
-  gives the lock's directory (`.locksql/`, `.lockmq/`) to the console
-  account, after which `lox up` refuses to copy the profile (it reads only
-  your own files). lockfile's `doctor --fix` also wires every installed
-  agent at user level.
 - Auto mode detects databases and RabbitMQ only: lockfile and lockhttp are
   set up in manual mode.
 - One lock per type is set up per manual run; run `lox init` again for

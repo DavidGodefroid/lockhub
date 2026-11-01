@@ -70,11 +70,14 @@ Environment of these locks: dev or prod? [dev] Passwords: asked by each console 
 Plan (nothing is written before your yes)
   locksql orders
     locksql profile add --profile orders --production --credentials ask --engine postgres --host host.docker.internal --port 55432 --user shop --database shop --tls require
-    then locksql init claude, locksql doctor, lox add locksql orders --profile orders
+    then locksql init claude, locksql doctor --fix, lox add locksql orders --profile orders
+    doctor --fix: it also wires your installed agents for your account
+    doctor --fix needs locksql v0.13.1 or later (launcher and image); with an older one, doctor without --fix
     allowed_uids [1000]: lea's agents run as uid 1000
   lockfile files
     lockfile profile add --profile files --production --source local --path /srv/shared
     then lockfile init claude, lockfile doctor, lox add lockfile files --profile files
+    doctor without --fix: its only repair wires every installed agent for your account
     allowed_uids [1000]: lea's agents run as uid 1000
   remove: web (lockhttp) from lockfamily.yaml; its profile stays in .lockhttp/
 Then lox up shows the whole change for your review: nothing starts without your yes there.
@@ -82,16 +85,16 @@ Go on? [y/N]
 locksql orders
   profile add: profile orders written to /project/.locksql/config.toml (credentials ask)
   init claude: the agent's files written
-  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
-    project: owned by you (doctor --fix)
-    lox init does not run locksql doctor --fix: it gives .locksql/ to the console account, and lox up copies a profile only from your own files
+  doctor --fix: fixed chmod go-w .locksql/config.toml
+  doctor --fix: 1 ok, 2 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (chown)
   lox add: lock orders declared
 lockfile files
   profile add: profile files written to /project/.lockfile/config.toml
   init claude: the agent's files written
-  doctor: 1 ok, 1 warning(s), 1 failed (advisory before lox up)
-    project: owned by you (doctor --fix)
-    lox init does not run lockfile doctor --fix: it gives .lockfile/ to the console account, and lox up copies a profile only from your own files
+  doctor: 1 ok, 2 warning(s), 1 failed (advisory before lox up)
+    project: owned by you (chown)
+    lox init does not run lockfile doctor --fix: its only repair wires every installed agent for your account (run it yourself if you want that)
   lox add: lock files declared
 removed web from lockfamily.yaml
 
