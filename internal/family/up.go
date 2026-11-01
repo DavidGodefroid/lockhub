@@ -74,6 +74,9 @@ type Up struct {
 	// Rotate names the keys lox up --rotate replaces: "hub", lock
 	// instances, "all".
 	Rotate []string
+	// Review (lox up --review) shows everything and asks, even for a hub
+	// with no lock that nothing was applied for before.
+	Review bool
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 }
@@ -487,10 +490,18 @@ func (u *Up) Do(ctx context.Context) error {
 			fmt.Fprintln(u.Out, "dry run: nothing applied")
 			return nil
 		}
-		fmt.Fprint(u.Out, "Apply? [y/N] ")
-		a, _ := u.In.ReadString('\n')
-		if strings.ToLower(strings.TrimSpace(a)) != "y" {
-			return ErrNotConfirmed
+		if len(c.Locks) == 0 && countLocks(prev.Summary) == 0 && !u.Review {
+			fmt.Fprintln(u.Out, "Hub only, no lock: nothing can reach a credential yet; applied without a question (--review shows everything and asks)")
+		} else {
+			fmt.Fprint(u.Out, "Apply? [y/N] ")
+			a, err := readAnswer(ctx, u.In)
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			_ = err // end of input without a "y" is a no
+			if strings.ToLower(strings.TrimSpace(a)) != "y" {
+				return ErrNotConfirmed
+			}
 		}
 	}
 	if u.DryRun {
@@ -668,6 +679,40 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintf(u.Out, "  lox attach %s\n", n)
 	}
 	return nil
+}
+
+var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)
+
+// countLocks counts the locks of an applied summary.
+func countLocks(summary []string) int {
+	n := 0
+	for _, l := range summary {
+		if lockLine.MatchString(l) {
+			n++
+		}
+	}
+	return n
+}
+
+// readAnswer reads one line of in, or returns ctx.Err() as soon as ctx is
+// done (Ctrl-C at the review). The read goroutine stays blocked on in
+// until the process ends.
+func readAnswer(ctx context.Context, in *bufio.Reader) (string, error) {
+	type res struct {
+		s   string
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		s, err := in.ReadString('\n')
+		ch <- res{s, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.s, r.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 // privateDir creates d (0700) if needed and refuses it unless it is a
