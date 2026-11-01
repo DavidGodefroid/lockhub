@@ -55,8 +55,8 @@ func TestUIDsFor(t *testing.T) {
 		{"locksql", true, 0, nil},
 		{"locksql", true, 65534, nil},
 	} {
-		if got := uidsFor(c.lock, c.lea, c.uid); !slices.Equal(got, c.want) {
-			t.Errorf("uidsFor(%s, %v, %d) = %v, want %v", c.lock, c.lea, c.uid, got, c.want)
+		if got := UIDsFor(c.lock, c.lea, c.uid); !slices.Equal(got, c.want) {
+			t.Errorf("UIDsFor(%s, %v, %d) = %v, want %v", c.lock, c.lea, c.uid, got, c.want)
 		}
 	}
 }

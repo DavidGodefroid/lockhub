@@ -49,9 +49,15 @@ Usage:
                                           (repeatable) replaces the hub's or a lock's key; -v shows cosign's and
                                           docker's own output (default: only when a step fails); --review shows
                                           everything (every profile line) and asks, even for a hub with no lock
+  lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
+                                          one source (TYPE: locksql, lockmq, lockfile, lockhttp), guided (or
+                                          from flags alone with --non-interactive) and applied at once: profile
+                                          add, init claude, doctor, lockfamily.yaml, lox up with this lock's
+                                          review, lox attach; a failure, a "n" or Ctrl-C keeps nothing; without
+                                          a terminal it stops once the lock is declared
   lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
-                                          declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp), pinned by
-                                          digest to its latest (or the given) release, cosign-verified
+                                          only declare a lock, pinned by digest to its latest (or the given)
+                                          release, cosign-verified
   lox add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
                                           enable the Slack facade; asks for its tokens at the terminal
   lox add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
@@ -111,7 +117,7 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		if len(args) > 1 && args[1] == "telegram" {
 			return addTelegramCmd(args[2:], stdin, stdout, stderr)
 		}
-		return addCmd(args[1:], stdout, stderr)
+		return addCmd(args[1:], stdin, stdout, stderr)
 	case "import":
 		return importCmd(args[1:], stdout, stderr)
 	case "attach":
@@ -418,63 +424,6 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-func addCmd(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml, or a legacy ./lockfamily.yaml)")
-	var o family.AddOptions
-	fs.StringVar(&o.Image, "image", "", "the lock's image, ghcr.io/davidgodefroid/TYPE@sha256:<digest> (default: its latest signed release's)")
-	version := fs.String("version", "", "the lock's release to pin, vX.Y.Z (default: the latest)")
-	fs.StringVar(&o.HubImage, "hub-image", "", "the hub's image, to start a new lockfamily.yaml (default: lockhub's latest signed release's)")
-	fs.StringVar(&o.Profile, "profile", "", "the profile the console serves, from the lock's own configuration")
-	pos, err := parse(fs, args)
-	if err != nil {
-		return 2
-	}
-	if len(pos) != 2 || (o.Image != "" && *version != "") {
-		fmt.Fprintln(stderr, "usage: lox add TYPE INSTANCE [--version vX.Y.Z | --image ghcr.io/davidgodefroid/TYPE@sha256:<digest>] [--hub-image REF]")
-		return 2
-	}
-	o.Type, o.Name = pos[0], pos[1]
-	abs, err := lockFile(*file, stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, "lox add:", err)
-		return 1
-	}
-	if !slices.Contains(family.Types, o.Type) {
-		fmt.Fprintf(stderr, "lox add: unknown type %q: want one of %s\n", o.Type, strings.Join(family.Types, ", "))
-		return 2
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	rel := newReleases()
-	if o.Image == "" {
-		if o.Image, err = pinRelease(ctx, rel, o.Type, *version, stdout); err != nil {
-			fmt.Fprintln(stderr, "lox add:", err)
-			return 1
-		}
-	}
-	if _, err := os.Stat(abs); errors.Is(err, os.ErrNotExist) && o.HubImage == "" {
-		if o.HubImage, err = pinRelease(ctx, rel, "lockhub", "", stdout); err != nil {
-			fmt.Fprintln(stderr, "lox add:", err)
-			return 1
-		}
-	}
-	if err := family.Add(abs, o); err != nil {
-		fmt.Fprintln(stderr, "lox add:", err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lox up to review and start it\n", abs, o.Name, o.Type)
-	return 0
-}
-
-// newReleases finds release images (tests replace it).
-var newReleases = func() *family.Releases {
-	rel := family.DefaultReleases(family.Exec{Stderr: io.Discard})
-	rel.Token = os.Getenv("GITHUB_TOKEN")
-	return rel
-}
-
 // attachCmd attaches the terminal to a lock's console, which asks the
 // human its start-up questions there (lox up runs it with a terminal).
 func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
@@ -507,28 +456,36 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "lox attach: no lock %q in %s\n", pos[0], abs)
 		return 1
 	}
-	project := family.Project(family.Workspace(abs))
-	state := stateDir(project)
-	// The compose file lox up applied, never one from the workspace.
-	compose := func(a ...string) *exec.Cmd {
-		return exec.Command("docker", append([]string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
-			"-f", filepath.Join(state, "compose.yaml")}, a...)...)
-	}
-	// The console has no log (it would keep its screens): attaching
-	// replays nothing.
-	fmt.Fprintln(stdout, "attached to lock", pos[0], "(its pending question is not shown again: it is the policy review, \"Apply these changes? [y/N]\", on a first start; detach with Ctrl-P Ctrl-Q)")
-	cmd := compose("attach", "lock-"+pos[0])
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	if err := cmd.Run(); err != nil {
+	if err := attachConsole(abs, pos[0], stdin, stdout, stderr); err != nil {
 		fmt.Fprintln(stderr, "lox attach:", err)
 		return 1
 	}
 	return 0
 }
 
+// attachConsole attaches the terminal to the console of lock name, through
+// the compose file lox up applied (never one from the workspace).
+func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) error {
+	project := family.Project(family.Workspace(abs))
+	state := stateDir(project)
+	// The console has no log (it would keep its screens): attaching
+	// replays nothing.
+	fmt.Fprintln(stdout, "attached to lock", name, "(its pending question is not shown again: it is the policy review, \"Apply these changes? [y/N]\", on a first start; detach with Ctrl-P Ctrl-Q)")
+	cmd := exec.Command("docker", "compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
+		"-f", filepath.Join(state, "compose.yaml"), "attach", "lock-"+name)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	return cmd.Run()
+}
+
 // pinRelease is the image of repo's release tag (the latest when tag is
 // empty), by its digest, once cosign verified it.
 func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, stdout io.Writer) (string, error) {
+	return pinVariant(ctx, rel, repo, tag, "", stdout)
+}
+
+// pinVariant is pinRelease for the release's variant image ("vault"; ""
+// is the plain image).
+func pinVariant(ctx context.Context, rel *family.Releases, repo, tag, variant string, stdout io.Writer) (string, error) {
 	if tag == "" {
 		t, pre, err := rel.Latest(ctx, repo)
 		if err != nil {
@@ -539,9 +496,12 @@ func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, std
 		}
 		tag = t
 	}
-	ref, err := rel.Image(ctx, repo, tag)
+	ref, err := rel.ImageVariant(ctx, repo, tag, variant)
 	if err != nil {
 		return "", err
+	}
+	if variant != "" {
+		tag += " (" + variant + ")"
 	}
 	fmt.Fprintf(stdout, "%s %s: %s (signature verified)\n", repo, tag, ref)
 	return ref, nil

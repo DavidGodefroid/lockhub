@@ -54,9 +54,9 @@ func uniqueName(name string, taken func(string) bool) string {
 	}
 }
 
-// uidsFor are lox up's allowed_uids of a lock lea's agents reach: lea's
+// UIDsFor are lox up's allowed_uids of a lock lea's agents reach: lea's
 // uid, when it is one a console takes (not root, not nobody).
-func uidsFor(lock string, lea bool, uid int) []int {
+func UIDsFor(lock string, lea bool, uid int) []int {
 	if !lea || uid <= 0 || uid == 65534 || !slices.Contains([]string{"locksql", "lockmq", "lockfile"}, lock) {
 		return nil
 	}

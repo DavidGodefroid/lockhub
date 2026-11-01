@@ -141,6 +141,11 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 	if err := s.declare(ctx, l); err != nil {
 		return s.rollback(ctx, l, a, snaps, cfg, err)
 	}
+	// A Ctrl-C that lands after the last declare step succeeded: nothing
+	// after it would notice (no lox up without a terminal).
+	if err := ctx.Err(); err != nil {
+		return s.rollback(ctx, l, a, snaps, cfg, err)
+	}
 	if !s.Terminal {
 		s.say("lock %s declared: run lox up at a terminal to review and start it", l.Name)
 		s.dropDraft()

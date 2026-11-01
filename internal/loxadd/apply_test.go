@@ -294,6 +294,27 @@ func TestApplyInterruptedDuringPin(t *testing.T) {
 	assertInterrupted(t, w, w.steps.Apply(ctx, mustBuild(t, a), a))
 }
 
+// A Ctrl-C that lands once the last declare step succeeded, with no
+// terminal (no lox up to notice it), still rolls back as an interrupt.
+func TestApplyInterruptedAfterDeclareNoTerminal(t *testing.T) {
+	w := newApplyWorld(t)
+	w.steps.Terminal = false
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.steps.PinHub = func(context.Context) (string, error) {
+		cancel()
+		return testHubImage, nil
+	}
+	a := sqlAnswers(CredAsk)
+	assertInterrupted(t, w, w.steps.Apply(ctx, mustBuild(t, a), a))
+	if strings.Contains(w.out.String(), "run lox up at a terminal") {
+		t.Fatalf("declared after an interrupt:\n%s", w.out.String())
+	}
+	if d, err := LoadDraft(w.draft); err != nil || d["name"] != "orders" {
+		t.Fatalf("draft = %v, %v", d, err)
+	}
+}
+
 func TestApplyRestoreFailureSaysSo(t *testing.T) {
 	w := newApplyWorld(t)
 	writeTestFile(t, w.file, shopFamily)

@@ -40,6 +40,16 @@ func TestRun(t *testing.T) {
 		{[]string{"init", "--manual"}, 2, "", ""},
 		{[]string{"init", "extra"}, 2, "", "flags only"},
 		{[]string{"init", "--review"}, 1, "", "--review asks at a terminal"},
+		{[]string{"add", "locksql"}, 1, "", "stdin is not one"},
+		{[]string{"add", "locksql", "--non-interactive"}, 2, "", "--host is required"},
+		{[]string{"add", "lockdb", "--non-interactive"}, 2, "", "unknown type"},
+		{[]string{"add", "locksql", "--non-interactive", "--review"}, 2, "", "--review"},
+		{[]string{"add", "locksql", "--non-interactive", "--image", sqlImg}, 2, "", "--image"},
+		{[]string{"add", "locksql", "crm", "--host", "db.example.com"}, 2, "", "--host"},
+		{[]string{"add"}, 2, "", "usage: lox add"},
+		{[]string{"add", "lockfile", "--non-interactive", "--source", "local"}, 2, "", "usage: --dir is required"},
+		{[]string{"add", "lockfile", "--non-interactive", "--source", "local", "--path", "/srv/shop"}, 2, "", "--path: lox add lockfile takes --dir"},
+		{[]string{"add", "locksql", "--non-interactive", "--host", "db.example.com", "--dir", "/srv/shop"}, 2, "", "--dir: not a question of lox add locksql"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)
@@ -86,8 +96,8 @@ func TestAddImportDoctor(t *testing.T) {
 		code := run(args, devNull(t), &out, &errb)
 		return code, out.String(), errb.String()
 	}
-	if code, _, e := call("add", "locksql"); code != 2 || !strings.Contains(e, "usage: lox add") {
-		t.Errorf("add without instance: %d %q", code, e)
+	if code, _, e := call("add", "locksql"); code != 1 || !strings.Contains(e, "stdin is not one") {
+		t.Errorf("add without instance (the guided form) at no terminal: %d %q", code, e)
 	}
 	// Flags after the positional arguments, as people type them.
 	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lox up") {
