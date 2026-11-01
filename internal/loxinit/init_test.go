@@ -113,6 +113,40 @@ func TestInitHubOnly(t *testing.T) {
 	}
 }
 
+// The first-run project (ci/e2e/firstrun.sh): a .env contributing only
+// secret keys names no source file, so the found hint names the compose
+// file alone. A .env with a non-secret key keeps its name (the golden
+// above, TestDetectShopProject).
+func TestInitHintSecretOnlyEnv(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".env", "POSTGRES_PASSWORD="+secret+"\n")
+	write(t, root, "compose.yaml", `services:
+  db:
+    image: postgres:17
+    ports: ["55432:5432"]
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+`)
+	h := newHarness(root)
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	golden(t, "init-secret-only-env.golden", root, h.out.String())
+	out := h.out.String()
+	const hint = "found: postgres on host.docker.internal:55432 (compose.yaml) → `lox add locksql`"
+	if !strings.Contains(out, hint) {
+		t.Errorf("no hint %q in\n%s", hint, out)
+	}
+	if strings.Contains(out, ".env") {
+		t.Errorf("a secret-only .env is named as a source file:\n%s", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Error("the secret was printed")
+	}
+}
+
 // lox init asks nothing: no input, no terminal, and it still writes the
 // hub and runs lox up (whose first, zero-lock run asks nothing either).
 func TestInitAsksNothing(t *testing.T) {

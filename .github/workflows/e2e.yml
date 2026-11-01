@@ -179,11 +179,11 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
           sh ci/e2e/firstrun.sh "$RUNNER_TEMP/bin/lox"
-      # The Vault half of the first run. It needs, at the same time: a
-      # locksql release whose console asks the Vault token at start
-      # (lockkit v0.11.0 — no such release at the time of writing) and the
-      # pinned Vault image above. Allowed to fail until both land; the
-      # failure stays visible in this step. Then remove continue-on-error.
+      # The Vault half of the first run. Its console's Vault-token prompt is
+      # released (locksql v0.13.1, checked out above); what is left is the
+      # pinned Vault image above (the REPLACE_ME digest). Allowed to fail
+      # until the release process pins it; the failure stays visible in this
+      # step. Then remove continue-on-error.
       - name: first run (lox add locksql with Vault)
         continue-on-error: true
         env:
