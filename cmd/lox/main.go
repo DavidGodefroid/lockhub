@@ -39,11 +39,10 @@ var version = "dev"
 const usage = `lox: the Lock Family CLI
 
 Usage:
-  lox init [--yes] [--manual] [--prod] [--credentials ask|vault [--vault-path INSTANCE=PATH]] [--tls MODE] [--no-attach]
-           [--hub-image REF] [--file lockfamily.yaml]
-                                          set up the project's locks in one command: prerequisites, the data
-                                          sources its files name (read only, no secret), one lock per source
-                                          (auto) or a checklist (--manual), then lox add, lox up, lox attach
+  lox init [--review] [-v] [--hub-image REF] [--file lockfamily.yaml]
+                                          start the project's hub alone, without a question: prerequisites, the
+                                          data sources its files name as hints (read only, no secret; lox add
+                                          sets a lock up), lockfamily.yaml with the hub, then lox up
   lox up [--file lockfamily.yaml] [--dry-run] [-v] [--review] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
                                           review and start the hub and the workspace's locks; --pin sets
                                           the hub image by digest (a previous version restored), --rotate

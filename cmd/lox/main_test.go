@@ -35,12 +35,10 @@ func TestRun(t *testing.T) {
 		{[]string{"add", "telegram", "--chat", "42"}, 2, "", "usage: lox add telegram"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "0"}, 2, "", "telegram.chats"},
 		{[]string{"add", "telegram", "--chat", "42", "--from", "42"}, 1, "", "stdin is not one"},
-		{[]string{"help"}, 0, "lox init [--yes]", ""},
+		{[]string{"help"}, 0, "lox init [--review]", ""},
+		{[]string{"init", "--yes"}, 2, "", "flag provided but not defined"},
+		{[]string{"init", "--manual"}, 2, "", ""},
 		{[]string{"init", "extra"}, 2, "", "flags only"},
-		{[]string{"init", "--credentials", "keychain"}, 2, "", "want ask or vault"},
-		{[]string{"init", "--vault-path", "secret/data/x"}, 2, "", "want INSTANCE=PATH"},
-		{[]string{"init", "--tls", "strict"}, 2, "", "--tls: want one of"},
-		{[]string{"init", "--manual", "--yes"}, 2, "", "--manual is interactive"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(c.args, devNull(t), &out, &errb)

@@ -31,6 +31,11 @@ type Init struct {
 	// Terminal: stdin is a terminal (lox up's review of declared locks
 	// needs one).
 	Terminal bool
+	// Review is lox init --review: lox up shows everything and asks, so
+	// a re-run never skips it.
+	Review bool
+	// HubImageGiven: --hub-image was passed.
+	HubImageGiven bool
 
 	// Declared reads the locks lockfamily.yaml declares (none when it
 	// does not exist).
@@ -42,6 +47,11 @@ type Init struct {
 	Up func(ctx context.Context) error
 	// Running reports the workspace's hub running.
 	Running func(ctx context.Context) bool
+	// Unchanged reports the configuration's fingerprint equal to the
+	// last applied one.
+	Unchanged func(ctx context.Context) bool
+	// Applied is the number of locks the last lox up applied.
+	Applied func() (int, error)
 }
 
 func (in *Init) say(format string, a ...any) { fmt.Fprintf(in.Out, format+"\n", a...) }
@@ -55,8 +65,11 @@ func (in *Init) Do(ctx context.Context) error {
 	if !pre.Ready() {
 		return errors.New("prerequisites missing (above): nothing done")
 	}
-	sources, _ := Detect(in.Root)
+	sources, warnings := Detect(in.Root)
 	RenderHints(in.Out, sources)
+	for _, w := range warnings {
+		in.say("  warning: %s", w)
+	}
 	created, err := in.Hub(ctx)
 	if err != nil {
 		return err
@@ -65,7 +78,10 @@ func (in *Init) Do(ctx context.Context) error {
 		in.say("")
 		in.say("lockfamily.yaml written: the hub alone")
 	}
-	if !created && in.Running(ctx) {
+	if !created && in.HubImageGiven {
+		in.say("--hub-image: lockfamily.yaml exists, its hub image is kept (lox up --pin to change it)")
+	}
+	if !created && !in.Review && in.Running(ctx) && in.Unchanged(ctx) {
 		in.end()
 		return nil
 	}
@@ -82,6 +98,17 @@ func (in *Init) Do(ctx context.Context) error {
 		in.say("lockfamily.yaml declares locks, kept as they are: %s", strings.Join(names, ", "))
 		if !in.Terminal {
 			in.say("lockfamily.yaml declares locks: run lox up at a terminal to review and start them")
+			in.end()
+			return nil
+		}
+	} else if !in.Terminal {
+		n, err := in.Applied()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			in.say("")
+			in.say("lox up removes the locks applied before: run it at a terminal to review")
 			in.end()
 			return nil
 		}

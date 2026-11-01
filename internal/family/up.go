@@ -78,6 +78,13 @@ type Up struct {
 	// Review (lox up --review) shows everything and asks, even for a hub
 	// with no lock that nothing was applied for before.
 	Review bool
+	// Probe makes Do compute the fingerprint of the configuration it would
+	// review and compare it with the last applied one (Same), then stop:
+	// nothing is applied, no question is asked. A workspace with nothing
+	// applied yet is not Same.
+	Probe bool
+	// Same is Probe's answer.
+	Same bool
 	// Focus names the lock whose short review is shown (lox add); the
 	// changes of the others are listed under "Other changes", never hidden.
 	Focus string
@@ -267,6 +274,9 @@ func (u *Up) Do(ctx context.Context) error {
 	composePath := filepath.Join(u.State, "compose.yaml")
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	appliedPath := filepath.Join(u.State, "applied.json")
+	if _, err := os.Stat(appliedPath); u.Probe && err != nil {
+		return nil
+	}
 	// The new hub key, made before the review (lockhub keygen) and kept
 	// until it is the hub's.
 	stage := filepath.Join(hubData, "rotate")
@@ -498,6 +508,10 @@ func (u *Up) Do(ctx context.Context) error {
 		if err := json.Unmarshal(b, &prev); err != nil {
 			return fmt.Errorf("%s: %w", appliedPath, err)
 		}
+	}
+	if u.Probe {
+		u.Same = prev.Fingerprint == fp
+		return nil
 	}
 	if u.Focus != "" {
 		if _, ok := c.Locks[u.Focus]; !ok {
@@ -771,6 +785,23 @@ func (u *Up) Do(ctx context.Context) error {
 }
 
 var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)
+
+// AppliedLocks is the number of locks the last confirmed lox up of the
+// workspace state applied (0 when none ran).
+func AppliedLocks(state string) (int, error) {
+	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var a Applied
+	if err := json.Unmarshal(b, &a); err != nil {
+		return 0, err
+	}
+	return countLocks(a.Summary), nil
+}
 
 // countLocks counts the locks of an applied summary.
 func countLocks(summary []string) int {

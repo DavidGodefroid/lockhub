@@ -3,6 +3,8 @@ package family
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,5 +45,19 @@ func TestUpStepLines(t *testing.T) {
 	}
 	if strings.Contains(out, "Verification for") {
 		t.Errorf("cosign output leaked:\n%s", out)
+	}
+}
+
+func TestAppliedLocks(t *testing.T) {
+	dir := t.TempDir()
+	if n, err := AppliedLocks(dir); n != 0 || err != nil {
+		t.Fatalf("nothing applied: %d, %v", n, err)
+	}
+	body := `{"fingerprint":"sha256:x","summary":["hub image a","lock orders type locksql","lock stock type lockmq"]}`
+	if err := os.WriteFile(filepath.Join(dir, "applied.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := AppliedLocks(dir); n != 2 || err != nil {
+		t.Fatalf("got %d, %v: want 2", n, err)
 	}
 }

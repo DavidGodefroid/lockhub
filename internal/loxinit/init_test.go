@@ -52,8 +52,9 @@ type harness struct {
 	hubs int
 	ups  int
 	// created is what Hub answers; running what Running answers.
-	created, running bool
-	decl             []Declared
+	created, running, unchanged bool
+	applied                     int
+	decl                        []Declared
 }
 
 func newHarness(root string) *harness {
@@ -72,8 +73,10 @@ func newHarness(root string) *harness {
 		Declared: func() ([]Declared, error) { return h.decl, nil },
 		Hub:      func(context.Context) (bool, error) { h.hubs++; return h.created, nil },
 		// The marker shows where lox up's own lines go.
-		Up:      func(context.Context) error { h.ups++; h.out.WriteString("[lox up]\n"); return nil },
-		Running: func(context.Context) bool { return h.running },
+		Up:        func(context.Context) error { h.ups++; h.out.WriteString("[lox up]\n"); return nil },
+		Running:   func(context.Context) bool { return h.running },
+		Unchanged: func(context.Context) bool { return h.unchanged },
+		Applied:   func() (int, error) { return h.applied, nil },
 	}
 	return h
 }
@@ -132,7 +135,7 @@ func TestInitAsksNothing(t *testing.T) {
 func TestInitRerunNoop(t *testing.T) {
 	root := t.TempDir()
 	h := newHarness(root)
-	h.created, h.running = false, true
+	h.created, h.running, h.unchanged = false, true, true
 	if err := h.in.Do(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, h.out.String())
 	}
@@ -280,5 +283,96 @@ func TestInitNoSecretWritten(t *testing.T) {
 	}
 	if strings.Contains(h.out.String(), secret) {
 		t.Error("the secret was printed")
+	}
+}
+
+// A hand-edited lockfamily.yaml with the hub running: the fingerprint
+// differs from the applied one, so lox up runs.
+func TestInitRunsUpWhenConfigChanged(t *testing.T) {
+	h := newHarness(t.TempDir())
+	h.created, h.running, h.unchanged = false, true, false
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if h.ups != 1 {
+		t.Errorf("up %d with a changed configuration: want once", h.ups)
+	}
+}
+
+// --review never skips lox up, even for a running, unchanged hub.
+func TestInitReviewAlwaysRunsUp(t *testing.T) {
+	h := newHarness(t.TempDir())
+	h.created, h.running, h.unchanged = false, true, true
+	h.in.Review, h.in.Terminal = true, true
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.ups != 1 {
+		t.Errorf("up %d with --review: want once", h.ups)
+	}
+}
+
+// Detection warnings are shown after the hints, not dropped.
+func TestInitShowsDetectionWarnings(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "compose.yaml", "services: [unreadable\n")
+	h := newHarness(root)
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if !strings.Contains(h.out.String(), "  warning: compose.yaml: not a compose file lox init can read\n") {
+		t.Errorf("no warning in\n%s", h.out.String())
+	}
+}
+
+// Without a terminal, lox up would ask for the locks applied before even
+// when none is declared now: it is not run.
+func TestInitNoTerminalAppliedBefore(t *testing.T) {
+	h := newHarness(t.TempDir())
+	h.created = false
+	h.applied = 2
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, h.out.String())
+	}
+	if h.ups != 0 {
+		t.Errorf("up %d: want none", h.ups)
+	}
+	for _, w := range []string{"lox up removes the locks applied before: run it at a terminal to review", endLine} {
+		if !strings.Contains(h.out.String(), w) {
+			t.Errorf("no %q in\n%s", w, h.out.String())
+		}
+	}
+	h = newHarness(t.TempDir())
+	h.created = false
+	h.applied = 2
+	h.in.Terminal = true
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.ups != 1 {
+		t.Errorf("up %d at a terminal: want once", h.ups)
+	}
+}
+
+// --hub-image while lockfamily.yaml exists is said to be kept, not
+// ignored silently.
+func TestInitHubImageKept(t *testing.T) {
+	const msg = "--hub-image: lockfamily.yaml exists, its hub image is kept (lox up --pin to change it)"
+	h := newHarness(t.TempDir())
+	h.created = false
+	h.in.HubImageGiven = true
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(h.out.String(), msg) {
+		t.Errorf("no %q in\n%s", msg, h.out.String())
+	}
+	h = newHarness(t.TempDir())
+	h.in.HubImageGiven = true
+	if err := h.in.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(h.out.String(), "--hub-image") {
+		t.Errorf("--hub-image note on a created file:\n%s", h.out.String())
 	}
 }
