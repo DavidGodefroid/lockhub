@@ -117,3 +117,22 @@ func TestVaultRefusesABadCAFile(t *testing.T) {
 		t.Errorf("lockfamily.yaml changed:\n%s", after)
 	}
 }
+
+func TestVaultLoadErrorLeavesFileUntouched(t *testing.T) {
+	// The current vault address is one Load refuses, and the new address
+	// would make the file valid again: the kept namespace and ca_file
+	// cannot be read, and must not be silently cleared.
+	file, _ := vaultWorld(t)
+	b, _ := os.ReadFile(file)
+	before := strings.Replace(string(b), "https://old.example.com:8200", "http://localhost:8200", 1)
+	if err := os.WriteFile(file, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200"}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "lox vault set:") {
+		t.Fatalf("code %d, err %q", code, errb.String())
+	}
+	if after, _ := os.ReadFile(file); string(after) != before {
+		t.Errorf("lockfamily.yaml changed:\n%s", after)
+	}
+}

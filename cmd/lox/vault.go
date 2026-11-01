@@ -42,7 +42,12 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	if !given["namespace"] || !given["ca-file"] {
 		// An omitted flag keeps the current value; an explicit "" clears it.
-		if c, err := family.Load(abs); err == nil && c.Vault != nil {
+		c, err := family.Load(abs)
+		if err != nil {
+			fmt.Fprintln(stderr, "lox vault set:", err)
+			return 1
+		}
+		if c.Vault != nil {
 			if !given["namespace"] {
 				v.Namespace = c.Vault.Namespace
 			}

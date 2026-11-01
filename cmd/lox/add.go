@@ -257,6 +257,7 @@ func applyAdd(abs, project, state, draftPath string, l loxadd.Lock, a loxadd.Ans
 			m, err := consoles(ctx, project)
 			return err == nil && m["lock-"+name] != ""
 		},
+		LeaRunning: func(ctx context.Context) bool { return leaRunning(ctx, family.Workspace(abs)) },
 	}
 	if err := steps.Apply(ctx, l, a); err != nil {
 		// Apply showed each failing step; an interrupt it did not show as
@@ -331,4 +332,17 @@ var newReleases = func() *family.Releases {
 	rel := family.DefaultReleases(family.Exec{Stderr: io.Discard})
 	rel.Token = os.Getenv("GITHUB_TOKEN")
 	return rel
+}
+
+// leaRunning reports a lea container running for the projects directory
+// dir. lea labels its container with the physical path (symlinks
+// resolved), so dir is resolved the same way. Any docker error means not
+// running.
+func leaRunning(ctx context.Context, dir string) bool {
+	phys, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		phys = dir
+	}
+	out, err := exec.CommandContext(ctx, "docker", "ps", "--quiet", "--filter", "label=lea.projects="+phys).Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }

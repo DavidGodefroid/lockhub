@@ -510,3 +510,25 @@ func TestDraftHoldsNoSecret(t *testing.T) {
 		t.Fatalf("missing draft: %v, %v", d, err)
 	}
 }
+
+func TestApplyLeaHint(t *testing.T) {
+	const hint = "lea gets lock orders at its next start: lea stop, then lea\n"
+	a := sqlAnswers(CredAsk)
+	for name, tc := range map[string]struct {
+		running func(context.Context) bool
+		want    bool
+	}{
+		"lea running": {func(context.Context) bool { return true }, true},
+		"lea stopped": {func(context.Context) bool { return false }, false},
+		"no detector": {nil, false},
+	} {
+		w := newApplyWorld(t)
+		w.steps.LeaRunning = tc.running
+		if err := w.steps.Apply(context.Background(), mustBuild(t, a), a); err != nil {
+			t.Fatalf("%s: Apply: %v", name, err)
+		}
+		if got := strings.Contains(w.out.String(), hint); got != tc.want {
+			t.Errorf("%s: hint shown = %v, want %v\n%s", name, got, tc.want, w.out.String())
+		}
+	}
+}

@@ -44,6 +44,10 @@ type Steps struct {
 	Attach func(ctx context.Context, name string) error
 	// ConsoleAlive reports the lock's console running.
 	ConsoleAlive func(ctx context.Context, name string) bool
+	// LeaRunning reports a lea container running for this project (nil:
+	// none). Lock sockets are mounted when lea's container starts, so lea
+	// gets a new lock at its next start.
+	LeaRunning func(ctx context.Context) bool
 }
 
 // ErrNothingKept is a lock not applied: its profile and lockfamily.yaml
@@ -159,6 +163,9 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 		return s.rollback(ctx, l, a, snaps, cfg, err)
 	}
 	s.dropDraft()
+	if s.LeaRunning != nil && s.LeaRunning(context.WithoutCancel(ctx)) {
+		s.say("lea gets lock %s at its next start: lea stop, then lea", l.Name)
+	}
 	if err := s.Attach(ctx, l.Name); err != nil {
 		// Detaching (Ctrl-P Ctrl-Q) ends docker's attach with a non-zero
 		// status too: a console still running was detached from.
