@@ -3,6 +3,7 @@ package loxadd
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -186,6 +187,27 @@ func TestFormFlagNotAQuestion(t *testing.T) {
 	want := "--port: not a question of lox add locksql with these answers"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got %v, want %s", err, want)
+	}
+}
+
+// A refused flag, a missing one or one that is no question is a usage
+// error (ErrUsage), its message unchanged; an end of input is not.
+func TestFormUsageErrorsAreTyped(t *testing.T) {
+	f := &Form{Out: io.Discard, NonInteractive: true}
+	for _, g := range []Answers{{"port": "0"}, {"engine": "sqlite"}, {"engine": "sqlite", "path": "/tmp/shop.db", "port": "5432"}} {
+		_, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), g)
+		if !errors.Is(err, ErrUsage) || strings.Contains(err.Error(), "usage error") {
+			t.Errorf("%v: err = %v, want ErrUsage with the form's own message", g, err)
+		}
+	}
+	// A flag refused at a terminal is a usage error too.
+	_, err := (&Form{In: bufio.NewReader(strings.NewReader("")), Out: io.Discard}).Run("locksql", fieldsOf(t, "locksql", Defaults{}), Answers{"engine": "postgres", "host": "db.example.com", "port": "0"})
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("interactive flag: err = %v", err)
+	}
+	_, err = (&Form{In: bufio.NewReader(strings.NewReader("")), Out: io.Discard}).Run("locksql", fieldsOf(t, "locksql", Defaults{}), nil)
+	if err == nil || errors.Is(err, ErrUsage) {
+		t.Errorf("end of input: err = %v, want no ErrUsage", err)
 	}
 }
 

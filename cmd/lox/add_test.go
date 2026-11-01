@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/family"
+	"github.com/DavidGodefroid/lockhub/internal/loxadd"
 )
 
 type okRunner struct{ calls []string }
@@ -85,6 +87,7 @@ func fakeReleases(t *testing.T) (digests map[string]string, cos *okRunner) {
 		"locksql:1.2.3":       strings.Repeat("a", 64),
 		"locksql:1.2.3-vault": strings.Repeat("c", 64),
 		"lockhub:1.2.3":       strings.Repeat("b", 64),
+		"lockfile:1.2.3":      strings.Repeat("d", 64),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
@@ -233,6 +236,119 @@ func TestAddInterruptedExits130(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDir(family.Project(ws)), "add-locksql.json")); err != nil {
 		t.Fatalf("draft not kept: %v", err)
+	}
+}
+
+// lox add lockfile --non-interactive takes an sftp source from flags:
+// with a key file, or with auth password (the console asks for it at
+// start) and no --key.
+func TestAddNonInteractiveSFTP(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		extra []string
+		want  []string
+	}{
+		{"key", []string{"--key", "KEY"}, []string{"--auth", "key", "--key", "KEY"}},
+		{"password", []string{"--auth", "password"}, []string{"--auth", "password"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fakeReleases(t)
+			ws, file, verbs := addWorld(t)
+			key, known := filepath.Join(ws, "id_shop"), filepath.Join(ws, "known_hosts")
+			os.WriteFile(key, []byte("not a real key\n"), 0o600)
+			os.WriteFile(known, []byte("sftp.example.com ssh-ed25519 AAAA\n"), 0o644)
+			args := []string{"add", "lockfile", "--non-interactive", "--file", file, "--source", "sftp", "--host", "sftp.example.com",
+				"--user", "shop", "--known-hosts", known, "--base-dir", "inbox", "--name", "orders"}
+			for _, a := range c.extra {
+				args = append(args, strings.ReplaceAll(a, "KEY", key))
+			}
+			var out, errb bytes.Buffer
+			if code := run(args, devNull(t), &out, &errb); code != 0 {
+				t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
+			}
+			if !strings.HasSuffix(out.String(), "lock orders declared: run lox up at a terminal to review and start it\n") {
+				t.Fatalf("output:\n%s", out.String())
+			}
+			want := []string{"lockfile", "profile", "add", "--non-interactive", "--json", "--project", ws, "--profile", "orders",
+				"--credentials", "ask", "--source", "sftp", "--host", "sftp.example.com", "--port", "22", "--user", "shop"}
+			for _, a := range c.want {
+				want = append(want, strings.ReplaceAll(a, "KEY", key))
+			}
+			want = append(want, "--known-hosts", known, "--base-dir", "inbox")
+			if len(verbs.calls) == 0 || !slices.Equal(verbs.calls[0], want) {
+				t.Fatalf("profile add\n got %q\nwant %q", verbs.calls, want)
+			}
+		})
+	}
+}
+
+// addDefaults proposes the values of the only detected source of the
+// type; with several, they are hints only.
+func TestAddDefaultsDetection(t *testing.T) {
+	_, _, _ = addWorld(t)
+	for _, c := range []struct {
+		name, compose string
+		hints         int
+		source        bool
+	}{
+		{"one", "services:\n  orders:\n    image: postgres:17\n    ports: [\"55432:5432\"]\n  mq:\n    image: rabbitmq:4.1.8-management\n", 1, true},
+		{"several", "services:\n  orders:\n    image: postgres:17\n    ports: [\"55432:5432\"]\n  inventory:\n    image: postgres:17\n    ports: [\"55433:5432\"]\n", 2, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ws := t.TempDir()
+			os.WriteFile(filepath.Join(ws, "compose.yaml"), []byte(c.compose), 0o644)
+			file := filepath.Join(ws, ".lockfamily", "lockfamily.yaml")
+			var errb bytes.Buffer
+			d, hints, err := addDefaults(file, ws, "locksql", filepath.Join(ws, "none.json"), false, &errb)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(hints) != c.hints || (d.Source != nil) != c.source {
+				t.Fatalf("hints %d, source %+v", len(hints), d.Source)
+			}
+			if c.source && (d.Source.Service != "orders" || d.Source.Port != 55432) {
+				t.Fatalf("source = %+v", d.Source)
+			}
+			if errb.Len() != 0 {
+				t.Fatalf("stderr = %q", errb.String())
+			}
+		})
+	}
+}
+
+// --non-interactive never offers the draft of an earlier try (nor any
+// detected source); the guided form does.
+func TestAddDefaultsNonInteractiveIgnoresDraft(t *testing.T) {
+	_, _, _ = addWorld(t)
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, "compose.yaml"), []byte("services:\n  orders:\n    image: postgres:17\n"), 0o644)
+	file := filepath.Join(ws, ".lockfamily", "lockfamily.yaml")
+	draft := filepath.Join(t.TempDir(), "add-locksql.json")
+	if err := loxadd.SaveDraft(draft, loxadd.Answers{"host": "db.example.com", "name": "orders"}); err != nil {
+		t.Fatal(err)
+	}
+	d, hints, err := addDefaults(file, ws, "locksql", draft, true, io.Discard)
+	if err != nil || len(d.Draft) != 0 || d.Source != nil || len(hints) != 0 {
+		t.Fatalf("non-interactive: %+v %v %v", d, hints, err)
+	}
+	d, _, err = addDefaults(file, ws, "locksql", draft, false, io.Discard)
+	if err != nil || d.Draft["host"] != "db.example.com" || d.Source == nil {
+		t.Fatalf("guided: %+v %v", d, err)
+	}
+}
+
+// A project file detection could not read is said in one line, naming the
+// file only.
+func TestAddDefaultsDetectionWarning(t *testing.T) {
+	_, _, _ = addWorld(t)
+	ws := t.TempDir()
+	os.WriteFile(filepath.Join(ws, ".env"), bytes.Repeat([]byte("# shop\n"), 50000), 0o644)
+	var errb bytes.Buffer
+	if _, _, err := addDefaults(filepath.Join(ws, ".lockfamily", "lockfamily.yaml"), ws, "locksql", filepath.Join(ws, "none.json"), false, &errb); err != nil {
+		t.Fatal(err)
+	}
+	if errb.String() != "lox add: hints: .env: over 256 KiB, not read\n" {
+		t.Fatalf("stderr = %q", errb.String())
 	}
 }
 

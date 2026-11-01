@@ -23,6 +23,18 @@ type Form struct {
 	Hints []loxinit.Source
 }
 
+// ErrUsage is a refusal of how lox add was called: a flag refused, a
+// required one missing (--non-interactive), one that is no question.
+// Such errors keep their own message and wrap ErrUsage.
+var ErrUsage = errors.New("usage error")
+
+type usageError struct{ msg string }
+
+func (e usageError) Error() string { return e.msg }
+func (e usageError) Unwrap() error { return ErrUsage }
+
+func usagef(format string, a ...any) error { return usageError{fmt.Sprintf(format, a...)} }
+
 var lockKinds = map[string]string{
 	"locksql":  "database",
 	"lockmq":   "broker",
@@ -50,18 +62,18 @@ func (f *Form) Run(lock string, fields []Field, given Answers) (Answers, error) 
 		if typed, ok := given[fd.Key]; ok {
 			v, reason := Answer(fd, typed, answers)
 			if reason != "" {
-				return nil, errors.New(flagReason(fd.Key, reason))
+				return nil, usagef("%s", flagReason(fd.Key, reason))
 			}
 			answers[fd.Key] = v
 			continue
 		}
 		if f.NonInteractive {
 			if fd.Empty == "" && fd.Default == "" {
-				return nil, fmt.Errorf("usage: --%s is required (lox add %s --non-interactive)", fd.Key, lock)
+				return nil, usagef("usage: --%s is required (lox add %s --non-interactive)", fd.Key, lock)
 			}
 			v, reason := Answer(fd, "", answers)
 			if reason != "" {
-				return nil, errors.New(flagReason(fd.Key, reason))
+				return nil, usagef("%s", flagReason(fd.Key, reason))
 			}
 			answers[fd.Key] = v
 			continue
@@ -80,7 +92,7 @@ func (f *Form) Run(lock string, fields []Field, given Answers) (Answers, error) 
 	}
 	if len(extra) > 0 {
 		slices.Sort(extra)
-		return nil, fmt.Errorf("--%s: not a question of lox add %s with these answers", extra[0], lock)
+		return nil, usagef("--%s: not a question of lox add %s with these answers", extra[0], lock)
 	}
 	return answers, nil
 }

@@ -27,12 +27,13 @@ const exitInterrupted = 130
 
 // answerFlags are the answers lox add TYPE takes as flags; each is the
 // form's key of the same name, except --dir (lockfile's directory, key
-// path) and --vault-ca-file (key vault-ca).
+// path) and --vault-ca-file (key vault-ca). There is never a password
+// flag: the console asks for it at start.
 var answerFlags = []struct{ name, usage string }{
 	{"engine", "locksql: postgres, mysql, mariadb or sqlite"},
-	{"host", "locksql: the database's host (no port, no scheme)"},
-	{"port", "locksql: the database's port"},
-	{"user", "the user (empty: the console asks for it at start with the password)"},
+	{"host", "locksql, lockfile sftp: the server's host (no port, no scheme)"},
+	{"port", "locksql, lockfile sftp: the server's port"},
+	{"user", "the user (locksql, lockmq: empty = the console asks for it at start with the password; lockfile sftp: required)"},
 	{"database", "locksql: the database (empty: the server's default)"},
 	{"tls", "locksql: disable, prefer, require, verify-ca or verify-full"},
 	{"path", "locksql: the sqlite file, an absolute path"},
@@ -44,6 +45,10 @@ var answerFlags = []struct{ name, usage string }{
 	{"endpoint", "lockfile: the S3 endpoint, a URL with its scheme (empty: AWS)"},
 	{"region", "lockfile: the S3 region"},
 	{"dir", "lockfile: the local directory, an absolute path"},
+	{"auth", "lockfile sftp: key or password (password: the console asks for it at start)"},
+	{"key", "lockfile sftp: the private key file, an absolute path"},
+	{"known-hosts", "lockfile sftp: the known hosts file"},
+	{"base-dir", "lockfile sftp: the base directory (empty: the login directory)"},
 	{"credentials", "ask (typed, masked, at the console's start) or vault"},
 	{"vault-path", "the Vault path of the lock's credentials"},
 	{"vault-address", "the Vault address, for the first lock with vault (the vault block)"},
@@ -175,9 +180,10 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			return applyAdd(abs, project, state, draftPath, l, a, *version, *review, *verbose, terminal && !*nonInteractive, in, stdin, stdout, stderr)
 		}
 	}
-	msg := flagNames(typ, err.Error())
-	fmt.Fprintln(stderr, "lox add:", msg)
-	if *nonInteractive || strings.HasPrefix(msg, "--") || strings.HasPrefix(msg, "usage:") {
+	fmt.Fprintln(stderr, "lox add:", flagNames(typ, err.Error()))
+	// A flag refused (or, without questions, a value missing) is a usage
+	// error; an answer that could not be read is not.
+	if *nonInteractive || errors.Is(err, loxadd.ErrUsage) {
 		return 2
 	}
 	return 1
@@ -206,7 +212,11 @@ func addDefaults(abs, ws, typ, draftPath string, nonInteractive bool, stderr io.
 	}
 	d.Draft = draft
 	var hints []loxinit.Source
-	sources, _ := loxinit.Detect(ws)
+	sources, warnings := loxinit.Detect(ws)
+	if len(warnings) > 0 {
+		// The warnings name files, never values.
+		fmt.Fprintln(stderr, "lox add: hints:", strings.Join(warnings, "; "))
+	}
 	for _, s := range sources {
 		if s.Lock() == typ {
 			hints = append(hints, s)
