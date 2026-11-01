@@ -75,7 +75,7 @@ func (v *Vault) validate() error {
 	}
 	if v.CAFile != "" {
 		bad := !filepath.IsAbs(v.CAFile)
-		if fi, err := os.Stat(v.CAFile); err == nil && fi.Size() > maxCAFile {
+		if fi, err := os.Stat(v.CAFile); err == nil && (!fi.Mode().IsRegular() || fi.Size() > maxCAFile) {
 			bad = true
 		}
 		if bad {

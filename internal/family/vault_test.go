@@ -79,6 +79,73 @@ func TestVaultAddressRefusesLoopback(t *testing.T) {
 	if err := v.validate(); err == nil || err.Error() != caMsg {
 		t.Errorf("big ca_file: %v", err)
 	}
+	v = Vault{Address: "https://vault.example.com", CAFile: t.TempDir()}
+	if err := v.validate(); err == nil || err.Error() != caMsg {
+		t.Errorf("directory ca_file: %v", err)
+	}
+	v = Vault{Address: "https://vault.example.com/"}
+	if err := v.validate(); err == nil || err.Error() != shape {
+		t.Errorf("trailing slash: %v", err)
+	}
+}
+
+func TestAddVaultRefusedOnLockhttp(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(w.file)
+	err := Add(w.file, AddOptions{Type: "lockhttp", Name: "web", Image: lockHTTPImg, Vault: true})
+	if err == nil || !strings.Contains(err.Error(), "locks.web.vault: a lockhttp lock reads no secret") {
+		t.Errorf("got %v", err)
+	}
+	if after, _ := os.ReadFile(w.file); string(after) != string(before) {
+		t.Error("file changed on refusal")
+	}
+}
+
+func TestSetVaultKeepsOtherKeysAndComments(t *testing.T) {
+	conf := `# top comment
+version: 1
+hub:
+  image: ` + hubImg + `  # hub pin
+  facades: [tty, deck]
+vault:
+  address: https://old.example.com # old vault
+  namespace: old
+locks:
+  # the shop lock
+  shop:
+    type: locksql
+    image: ` + sqlImg + `
+    profile: main # its profile
+    vault: true
+  # the queue
+  events:
+    type: lockmq
+    image: ` + mqImg + `
+`
+	w := newWS(t, conf)
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", CAFile: "/etc/ssl/shop-ca.pem"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(w.file)
+	s := string(b)
+	for _, want := range []string{"# top comment", "# hub pin", "# the shop lock", "# its profile", "# the queue", "facades: [tty, deck]", "profile: main", "vault: true", "type: lockmq"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("lost %q:\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "\nvault:") != 1 || strings.Contains(s, "old.example.com") || strings.Contains(s, "namespace") {
+		t.Errorf("vault block not replaced once:\n%s", s)
+	}
+	c, err := Load(w.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Vault.Address != "https://vault.example.com" || c.Vault.CAFile != "/etc/ssl/shop-ca.pem" || c.Locks["shop"].Profile != "main" || !c.Locks["shop"].Vault || c.Locks["events"].Vault {
+		t.Errorf("config %+v %+v", c.Vault, c.Locks)
+	}
 }
 
 func TestVaultLockNeedsBlock(t *testing.T) {
