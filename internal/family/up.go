@@ -78,6 +78,9 @@ type Up struct {
 	// Review (lox up --review) shows everything and asks, even for a hub
 	// with no lock that nothing was applied for before.
 	Review bool
+	// Focus names the lock whose short review is shown (lox add); the
+	// changes of the others are listed under "Other changes", never hidden.
+	Focus string
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 }
@@ -484,13 +487,11 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lox attach).")
 	}
 	var prev Applied
+	first := false
 	b, err := os.ReadFile(appliedPath)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
-		for _, l := range sum {
-			fmt.Fprintln(u.Out, "  "+l)
-		}
+		first = true
 	case err != nil:
 		return err
 	default:
@@ -501,11 +502,60 @@ func (u *Up) Do(ctx context.Context) error {
 	if prev.Fingerprint == fp {
 		fmt.Fprintln(u.Out, "configuration unchanged since the last lox up")
 	} else {
-		if prev.Fingerprint != "" {
-			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
-			for _, l := range diff(prev.Summary, sum) {
+		if u.Focus != "" {
+			if _, ok := c.Locks[u.Focus]; !ok {
+				return fmt.Errorf("no lock %s in %s", u.Focus, u.File)
+			}
+		}
+		d := diff(prev.Summary, sum)
+		switch {
+		case u.Review && first:
+			// --review: the whole configuration, the profiles line by line.
+			fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
+			for _, l := range sum {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
+		case u.Review:
+			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+			for _, l := range d {
+				fmt.Fprintln(u.Out, "  "+l)
+			}
+			for _, t := range types(c) {
+				fmt.Fprintf(u.Out, "profile %s %s:\n", t, profiles[t].Fingerprint)
+				for _, l := range profiles[t].Lines {
+					fmt.Fprintln(u.Out, "  "+l)
+				}
+			}
+		default:
+			// The short review: a block per lock, then every summary line
+			// no block renders. The fingerprint is over the full summary.
+			facts, shown := map[string]Facts{}, map[string][]string{}
+			for _, n := range c.Instances() {
+				l := c.Locks[n]
+				facts[n], shown[n] = readFacts(profiles[l.Type], l.Type, lockProfile(l))
+			}
+			var changed []string
+			cov := shortCovered(c, u.Focus, ws, profiles, shown)
+			if first {
+				fmt.Fprintln(u.Out, "First lox up of this workspace. Review:")
+				changed = uncovered(sum, cov)
+			} else {
+				fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+				// Only an added line can be rendered by a block: a removed
+				// line is always shown.
+				for _, l := range d {
+					if rest, ok := strings.CutPrefix(l, "+ "); !ok || !cov[rest] {
+						changed = append(changed, l)
+					}
+				}
+				if caChanged(d) {
+					changed = append(changed, vaultCANote)
+				}
+			}
+			renderShort(u.Out, c, u.Focus, facts, true, changed)
+		}
+		if u.Review && !first && caChanged(d) {
+			fmt.Fprintln(u.Out, vaultCANote)
 		}
 		if u.DryRun {
 			fmt.Fprintln(u.Out, "dry run: nothing applied")

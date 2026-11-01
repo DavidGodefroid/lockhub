@@ -44,11 +44,12 @@ Usage:
                                           set up the project's locks in one command: prerequisites, the data
                                           sources its files name (read only, no secret), one lock per source
                                           (auto) or a checklist (--manual), then lox add, lox up, lox attach
-  lox up [--file lockfamily.yaml] [--dry-run] [-v] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
+  lox up [--file lockfamily.yaml] [--dry-run] [-v] [--review] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
                                           review and start the hub and the workspace's locks; --pin sets
                                           the hub image by digest (a previous version restored), --rotate
                                           (repeatable) replaces the hub's or a lock's key; -v shows cosign's and
-                                          docker's own output (default: only when a step fails)
+                                          docker's own output (default: only when a step fails); --review shows
+                                          everything (every profile line) and asks, even for a hub with no lock
   lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
                                           declare a lock (TYPE: locksql, lockmq, lockfile, lockhttp), pinned by
                                           digest to its latest (or the given) release, cosign-verified
@@ -333,6 +334,7 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	dry := fs.Bool("dry-run", false, "show the review, apply nothing")
 	pin := fs.String("pin", "", "the hub image by digest (sha256:…, or the whole ghcr.io/davidgodefroid/lockhub@sha256:… reference): lockfamily.yaml takes it once applied")
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
+	review := fs.Bool("review", false, "show everything, the profiles line by line, and ask (even for a hub with no lock)")
 	var rotate stringsFlag
 	fs.Var(&rotate, "rotate", "replace a key: hub, a lock instance, or all (repeatable, or comma-separated)")
 	if err := fs.Parse(args); err != nil {
@@ -356,7 +358,7 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	r := family.QuietExec{Verbose: *verbose, Stderr: stderr}
 	u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
-		Pin: *pin, Rotate: rotate}
+		Pin: *pin, Rotate: rotate, Review: *review}
 	if err := u.Do(ctx); err != nil {
 		fmt.Fprintln(stderr, "lox up:", err)
 		return 1

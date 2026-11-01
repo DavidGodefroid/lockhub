@@ -313,7 +313,7 @@ func TestVaultCAChangeIsReviewed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"lock crm-prod vault VAULT_ADDR=https://vault.example.com:8200", "vault ca_file " + ca + " sha256:" + hex.EncodeToString(sum[:])} {
+	for _, want := range []string{"environment  VAULT_ADDR=https://vault.example.com:8200", "vault ca_file " + ca + " sha256:" + hex.EncodeToString(sum[:])} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
 		}

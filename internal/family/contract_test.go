@@ -277,7 +277,7 @@ func TestProfileReviewedAndCopied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "profile locksql "+filepath.Join(ws, ".locksql")+" "+pr.Fingerprint) {
+	if !strings.Contains(out, "profile      .locksql/ "+pr.Fingerprint) {
 		t.Errorf("review lacks the profile:\n%s", out)
 	}
 	copied := false
