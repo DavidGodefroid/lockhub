@@ -36,12 +36,9 @@ func Add(path string, o AddOptions) error {
 		if o.HubImage == "" {
 			return fmt.Errorf("%s does not exist: give --hub-image ghcr.io/davidgodefroid/lockhub@sha256:<digest> to start it", path)
 		}
-		// Checked before it is written in: nothing typed in --hub-image
-		// makes other keys, an alias or a tag.
-		if m := digestRef.FindStringSubmatch(o.HubImage); m == nil || m[1] != "lockhub" {
-			return errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
+		if b, err = hubOnlyYAML(o.HubImage); err != nil {
+			return err
 		}
-		b = []byte("version: 1\nhub:\n  image: " + o.HubImage + "\n")
 	} else if err != nil {
 		return err
 	}
@@ -90,6 +87,39 @@ func Add(path string, o AddOptions) error {
 		}
 	}
 	return writeFile(path, out)
+}
+
+// InitHub starts a lockfamily.yaml at path with the hub alone, when there
+// is none (created true). An existing file is kept as it is (created
+// false). hubImage is checked before anything is written; .lockfamily is
+// made only on success.
+func InitHub(path, hubImage string) (created bool, err error) {
+	if _, err := os.Lstat(path); err == nil {
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	b, err := hubOnlyYAML(hubImage)
+	if err != nil {
+		return false, err
+	}
+	if err := ensureDir(path); err != nil {
+		return false, err
+	}
+	if err := writeFile(path, b); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// hubOnlyYAML is a lockfamily.yaml that declares the hub and no lock. The
+// digest is checked before it is written in: nothing typed in --hub-image
+// makes other keys, an alias or a tag.
+func hubOnlyYAML(hubImage string) ([]byte, error) {
+	if m := digestRef.FindStringSubmatch(hubImage); m == nil || m[1] != "lockhub" {
+		return nil, errors.New("--hub-image: want ghcr.io/davidgodefroid/lockhub@sha256:<digest>")
+	}
+	return []byte("version: 1\nhub:\n  image: " + hubImage + "\n"), nil
 }
 
 // child is the value of key in mapping m, created (as a flow-free
