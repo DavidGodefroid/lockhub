@@ -211,6 +211,10 @@ func TestChecks(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bigCA := filepath.Join(filepath.Dir(file), "big.pem")
+	if err := os.WriteFile(bigCA, make([]byte, 65<<10), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	mq := fieldsOf(t, "lockmq", Defaults{})
 	fl := fieldsOf(t, "lockfile", Defaults{})
 	for _, c := range []struct {
@@ -251,10 +255,15 @@ func TestChecks(t *testing.T) {
 		{mq, "amqp-url", nil, "amqp://u:hunter2pw@mq.example.com:5672", "amqp-url: it embeds a password"},
 		{mq, "amqp-url", nil, "http://mq.example.com", "amqp-url:"},
 		{mq, "vault-address", Answers{"credentials": "vault"}, "https://vault.example.com:8200", ""},
-		{mq, "vault-address", Answers{"credentials": "vault"}, "vault.example.com", "vault-address:"},
+		{mq, "vault-address", Answers{"credentials": "vault"}, "vault.example.com", "vault.address: want http(s)://host[:port]"},
+		{mq, "vault-address", Answers{"credentials": "vault"}, "https://localhost:8200", "use host.docker.internal for this machine"},
+		{mq, "vault-address", Answers{"credentials": "vault"}, "http://127.0.0.1:8200", "use host.docker.internal for this machine"},
+		{mq, "vault-address", Answers{"credentials": "vault"}, "https://[::1]:8200", "use host.docker.internal for this machine"},
+		{mq, "vault-ca", Answers{"credentials": "vault"}, filepath.Join(filepath.Dir(file), "missing.pem"), "vault.ca_file:"},
+		{mq, "vault-ca", Answers{"credentials": "vault"}, bigCA, "at most 64 KiB"},
 		{mq, "vault-ca", Answers{"credentials": "vault"}, file, ""},
-		{mq, "vault-ca", Answers{"credentials": "vault"}, "ca.pem", "vault-ca:"},
-		{mq, "vault-ca", Answers{"credentials": "vault"}, filepath.Dir(file), "vault-ca:"},
+		{mq, "vault-ca", Answers{"credentials": "vault"}, "ca.pem", "vault.ca_file:"},
+		{mq, "vault-ca", Answers{"credentials": "vault"}, filepath.Dir(file), "vault.ca_file:"},
 		{fl, "bucket", Answers{"source": "s3"}, "shop-invoices", ""},
 		{fl, "bucket", Answers{"source": "s3"}, "https://s3.example.com/shop", "bucket: a bucket name, not a URL (such as shop-invoices)"},
 		{fl, "bucket", Answers{"source": "s3"}, "s3://shop", "bucket: a bucket name, not a URL (such as shop-invoices)"},

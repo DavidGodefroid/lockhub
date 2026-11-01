@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/loxinit"
 )
 
@@ -293,6 +294,21 @@ func checkFile(key string, own bool) func(string, Answers) string {
 	}
 }
 
+// checkVault runs the family's own rule for a vault: field, so lox add,
+// lox vault set and the file's load refuse the same values with the same
+// text.
+func checkVault(key string, rule func(string) error) func(string, Answers) string {
+	return func(v string, _ Answers) string {
+		if r := safe(key, v); r != "" {
+			return r
+		}
+		if err := rule(v); err != nil {
+			return err.Error()
+		}
+		return ""
+	}
+}
+
 func checkYesNo(v string, _ Answers) string {
 	switch strings.ToLower(v) {
 	case "y", "yes", "n", "no":
@@ -342,9 +358,9 @@ func vaultFields(d Defaults, pathDefault string, when func(Answers) bool) []Fiel
 		return fs
 	}
 	return append(fs,
-		Field{Key: "vault-address", Label: "Vault address, such as https://vault.example.com:8200", Check: checkURL("vault-address", "a URL with its scheme, such as https://vault.example.com:8200", "https", "http"), When: w},
+		Field{Key: "vault-address", Label: "Vault address, such as https://vault.example.com:8200", Check: checkVault("vault-address", family.ValidateVaultAddress), When: w},
 		Field{Key: "vault-namespace", Label: "Vault namespace", Empty: "the root namespace", Check: text("vault-namespace"), When: w},
-		Field{Key: "vault-ca", Label: "Vault CA file", Empty: "the system's CA certificates", Check: checkFile("vault-ca", false), When: w},
+		Field{Key: "vault-ca", Label: "Vault CA file", Empty: "the system's CA certificates", Check: checkVault("vault-ca", family.ValidateVaultCAFile), When: w},
 	)
 }
 

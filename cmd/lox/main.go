@@ -67,7 +67,8 @@ Usage:
                                           review; its profile stays in the lock's config.toml unless --purge;
                                           a "n", a failure or Ctrl-C keeps the lock
   lox vault set --address URL [--namespace NS] [--ca-file PATH] [--file lockfamily.yaml]
-                                          write the shared vault: block; lox up reviews and applies it
+                                          write the shared vault: block; lox up reviews and applies it;
+                                          an omitted --namespace / --ca-file keeps the current value, "" clears it
   lox import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing

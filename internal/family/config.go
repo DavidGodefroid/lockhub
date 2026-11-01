@@ -65,22 +65,47 @@ type Vault struct {
 const maxCAFile = 64 << 10
 
 func (v *Vault) validate() error {
-	u, err := url.Parse(v.Address)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || strings.HasSuffix(v.Address, "/") {
+	if err := ValidateVaultAddress(v.Address); err != nil {
+		return err
+	}
+	if v.CAFile != "" {
+		// A file missing at load time is tolerated (it may live on another
+		// machine); SetVault and lox add refuse it when it is written.
+		if err := ValidateVaultCAFile(v.CAFile); err != nil && !errors.Is(err, errCAMissing) {
+			return err
+		}
+	}
+	return nil
+}
+
+var errCAMissing = errors.New("vault.ca_file: the file does not exist")
+
+// ValidateVaultAddress is the rule of vault.address, shared by the file's
+// load, lox vault set and the lox add question. It never echoes the value.
+func ValidateVaultAddress(addr string) error {
+	u, err := url.Parse(addr)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || strings.HasSuffix(addr, "/") {
 		return errors.New("vault.address: want http(s)://host[:port], no path or user info")
 	}
 	h := strings.ToLower(u.Hostname())
 	if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) {
 		return errors.New("vault.address: 127.0.0.1 and localhost are the console's own container: use host.docker.internal for this machine")
 	}
-	if v.CAFile != "" {
-		bad := !filepath.IsAbs(v.CAFile)
-		if fi, err := os.Stat(v.CAFile); err == nil && (!fi.Mode().IsRegular() || fi.Size() > maxCAFile) {
-			bad = true
-		}
-		if bad {
-			return errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
-		}
+	return nil
+}
+
+// ValidateVaultCAFile is the rule of vault.ca_file: an absolute path to an
+// existing regular file of at most 64 KiB. It never reads the file.
+func ValidateVaultCAFile(path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
+	}
+	fi, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return errCAMissing
+	}
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxCAFile {
+		return errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
 	}
 	return nil
 }

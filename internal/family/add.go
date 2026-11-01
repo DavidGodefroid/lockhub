@@ -32,6 +32,11 @@ type AddOptions struct {
 // lockfamily.yaml at path, keeping its comments. What would be written is
 // validated first: a refusal leaves the file as it was.
 func SetVault(path string, v Vault) error {
+	if v.CAFile != "" {
+		if err := ValidateVaultCAFile(v.CAFile); err != nil {
+			return err
+		}
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err

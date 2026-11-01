@@ -22,8 +22,8 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml, or a legacy ./lockfamily.yaml)")
 	address := fs.String("address", "", "the Vault address, such as https://vault.example.com:8200")
-	namespace := fs.String("namespace", "", "the Vault namespace (default: the root namespace)")
-	ca := fs.String("ca-file", "", "an absolute path to the Vault CA file (default: the system's CA certificates)")
+	namespace := fs.String("namespace", "", "the Vault namespace (omitted: the current one is kept; \"\": the root namespace)")
+	ca := fs.String("ca-file", "", "an absolute path to the Vault CA file (omitted: the current one is kept; \"\": the system's CA certificates)")
 	pos, err := parse(fs, args[1:])
 	if err != nil {
 		return 2
@@ -37,7 +37,21 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox vault set:", err)
 		return 1
 	}
-	if err := family.SetVault(abs, family.Vault{Address: *address, Namespace: *namespace, CAFile: *ca}); err != nil {
+	v := family.Vault{Address: *address, Namespace: *namespace, CAFile: *ca}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if !given["namespace"] || !given["ca-file"] {
+		// An omitted flag keeps the current value; an explicit "" clears it.
+		if c, err := family.Load(abs); err == nil && c.Vault != nil {
+			if !given["namespace"] {
+				v.Namespace = c.Vault.Namespace
+			}
+			if !given["ca-file"] {
+				v.CAFile = c.Vault.CAFile
+			}
+		}
+	}
+	if err := family.SetVault(abs, v); err != nil {
 		fmt.Fprintln(stderr, "lox vault set:", err)
 		return 1
 	}

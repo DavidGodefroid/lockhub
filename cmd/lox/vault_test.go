@@ -54,3 +54,66 @@ func TestVaultSetThenReread(t *testing.T) {
 		t.Errorf("vault = %+v", c.Vault)
 	}
 }
+
+const vaultCommented = "# the shop family\nversion: 1\nhub:\n  image: " + hubImg + "\nvault:\n  address: https://old.example.com:8200\n  namespace: shop\n  ca_file: CA\nlocks: {}  # none yet\n"
+
+func vaultWorld(t *testing.T) (file, ca string) {
+	t.Helper()
+	ws, file := removeWorld(t)
+	ca = filepath.Join(ws, "ca.pem")
+	if err := os.WriteFile(ca, []byte("pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(strings.Replace(vaultCommented, "CA", ca, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return file, ca
+}
+
+func TestVaultOmittedFlagsKeepTheValues(t *testing.T) {
+	file, ca := vaultWorld(t)
+	var out, errb bytes.Buffer
+	if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200"}, &out, &errb); code != 0 {
+		t.Fatalf("code %d, %s", code, errb.String())
+	}
+	c, err := family.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Vault.Address != "https://vault.example.com:8200" || c.Vault.Namespace != "shop" || c.Vault.CAFile != ca {
+		t.Errorf("vault = %+v", c.Vault)
+	}
+	b, _ := os.ReadFile(file)
+	if !strings.Contains(string(b), "# the shop family") || !strings.Contains(string(b), "# none yet") {
+		t.Errorf("comments lost:\n%s", b)
+	}
+}
+
+func TestVaultExplicitEmptyClears(t *testing.T) {
+	file, _ := vaultWorld(t)
+	var out, errb bytes.Buffer
+	if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200", "--namespace", "", "--ca-file", ""}, &out, &errb); code != 0 {
+		t.Fatalf("code %d, %s", code, errb.String())
+	}
+	c, err := family.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Vault.Namespace != "" || c.Vault.CAFile != "" {
+		t.Errorf("vault = %+v", c.Vault)
+	}
+}
+
+func TestVaultRefusesABadCAFile(t *testing.T) {
+	file, _ := vaultWorld(t)
+	before, _ := os.ReadFile(file)
+	for name, ca := range map[string]string{"directory": filepath.Dir(file), "relative": "ca.pem", "missing": filepath.Join(filepath.Dir(file), "missing.pem")} {
+		var out, errb bytes.Buffer
+		if code := vaultCmd([]string{"set", "--file", file, "--address", "https://vault.example.com:8200", "--ca-file", ca}, &out, &errb); code != 1 || !strings.Contains(errb.String(), "vault.ca_file:") {
+			t.Errorf("%s: code %d, err %q", name, code, errb.String())
+		}
+	}
+	if after, _ := os.ReadFile(file); string(after) != string(before) {
+		t.Errorf("lockfamily.yaml changed:\n%s", after)
+	}
+}

@@ -130,8 +130,15 @@ locks:
     image: ` + mqImg + `
 `
 	w := newWS(t, conf)
-	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", CAFile: "/etc/ssl/shop-ca.pem"}); err != nil {
+	ca := filepath.Join(t.TempDir(), "shop-ca.pem")
+	if err := os.WriteFile(ca, []byte("pem"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", CAFile: ca}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetVault(w.file, Vault{Address: "https://vault.example.com", CAFile: ca + ".missing"}); err == nil || !strings.Contains(err.Error(), "vault.ca_file:") {
+		t.Errorf("a missing ca_file was accepted: %v", err)
 	}
 	b, _ := os.ReadFile(w.file)
 	s := string(b)
@@ -147,7 +154,7 @@ locks:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Vault.Address != "https://vault.example.com" || c.Vault.CAFile != "/etc/ssl/shop-ca.pem" || c.Locks["shop"].Profile != "main" || !c.Locks["shop"].Vault || c.Locks["events"].Vault {
+	if c.Vault.Address != "https://vault.example.com" || c.Vault.CAFile != ca || c.Locks["shop"].Profile != "main" || !c.Locks["shop"].Vault || c.Locks["events"].Vault {
 		t.Errorf("config %+v %+v", c.Vault, c.Locks)
 	}
 }
