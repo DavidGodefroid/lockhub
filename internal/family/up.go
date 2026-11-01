@@ -661,7 +661,9 @@ func (u *Up) Do(ctx context.Context) error {
 	for _, l := range devNotes {
 		fmt.Fprintln(u.Out, l)
 	}
-	fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	if len(c.Locks) > 0 {
+		fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
+	}
 	for _, n := range c.Instances() {
 		fmt.Fprintf(u.Out, "  lox attach %s\n", n)
 	}

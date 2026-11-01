@@ -71,6 +71,18 @@ func TestPushDecideConsume(t *testing.T) {
 	}
 }
 
+// A hub alone (no lock declared) serves; every push is an unknown lock.
+func TestHubWithoutLocks(t *testing.T) {
+	e := hubtest.New(t, 0)
+	a := hubtest.NewLock("a")
+	if _, ok := e.Hub.LockKey("a"); ok {
+		t.Error("a lock key from an empty set")
+	}
+	if _, _, err := e.Hub.Push(ctx, "a", a.Ticket("X", "read", e.Clock.T, 0)); !errors.Is(err, hub.ErrUnknownLock) {
+		t.Errorf("Push = %v, want ErrUnknownLock", err)
+	}
+}
+
 func TestPushRefusals(t *testing.T) {
 	a, b := hubtest.NewLock("a"), hubtest.NewLock("b")
 	e := hubtest.New(t, 2, a, b)

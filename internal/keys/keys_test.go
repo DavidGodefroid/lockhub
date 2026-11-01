@@ -45,8 +45,11 @@ func TestLoadLocks(t *testing.T) {
 	if err != nil || len(m) != 2 || !m["crm-prod"].Equal(k1) {
 		t.Fatalf("LoadLocks = %v, %v", m, err)
 	}
+	// A hub alone: no lock declared is a valid, empty set.
+	if m, err := LoadLocks(write(`{"locks":{}}`)); err != nil || len(m) != 0 {
+		t.Errorf("empty locks = %v, %v", m, err)
+	}
 	for name, s := range map[string]string{
-		"empty":       `{"locks":{}}`,
 		"bad name":    `{"locks":{"Bad Name":{"public_key":"` + Public(k1) + `"}}}`,
 		"bad key":     `{"locks":{"a":{"public_key":"abcd"}}}`,
 		"unknown key": `{"locks":{"a":{"public_key":"` + Public(k1) + `","x":1}}}`,

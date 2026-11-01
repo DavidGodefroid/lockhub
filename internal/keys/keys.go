@@ -183,8 +183,5 @@ func LoadLocks(path string) (map[string]ed25519.PublicKey, error) {
 		seen[string(k)] = name
 		out[name] = ed25519.PublicKey(k)
 	}
-	if len(out) == 0 {
-		return nil, errors.New(path + ": no lock instance")
-	}
 	return out, nil
 }
