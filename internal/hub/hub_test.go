@@ -2,6 +2,7 @@ package hub_test
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"os"
@@ -80,6 +81,20 @@ func TestHubWithoutLocks(t *testing.T) {
 	}
 	if _, _, err := e.Hub.Push(ctx, "a", a.Ticket("X", "read", e.Clock.T, 0)); !errors.Is(err, hub.ErrUnknownLock) {
 		t.Errorf("Push = %v, want ErrUnknownLock", err)
+	}
+}
+
+// A stored ticket whose lock is no longer declared is refused, not a panic.
+func TestDecideTicketOfRemovedLock(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	var declared map[string]ed25519.PublicKey
+	e := hubtest.NewWith(t, func(c *hub.Config) { declared = c.Locks }, a)
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "read", e.Clock.T, 24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	delete(declared, "crm-prod")
+	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: "T1"}, approve("T1")); !errors.Is(err, hub.ErrUnknownLock) {
+		t.Errorf("Decide = %v, want ErrUnknownLock", err)
 	}
 }
 
