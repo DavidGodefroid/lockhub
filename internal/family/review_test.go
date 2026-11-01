@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,10 +69,26 @@ func TestUpInterruptedAtReviewAppliesNothing(t *testing.T) {
 	pr, pw := io.Pipe()
 	defer pw.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
-	out, err := upReview(w, ctx, pr, false, f)
+	var out strings.Builder
+	var mu sync.Mutex
+	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000",
+		Run: f, In: bufio.NewReader(pr), Out: &lockedWriter{&mu, &out}}
+	// Cancel only once the review is on screen and waiting for the answer.
+	go func() {
+		for {
+			mu.Lock()
+			asked := strings.Contains(out.String(), "Apply? [y/N]")
+			mu.Unlock()
+			if asked {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	err := u.Do(ctx)
 	if !errors.Is(err, context.Canceled) {
-		t.Errorf("err %v\n%s", err, out)
+		t.Errorf("err %v", err)
 	}
 	if f.ran("up -d") {
 		t.Errorf("applied: %v", f.calls)
@@ -79,4 +96,16 @@ func TestUpInterruptedAtReviewAppliesNothing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.dir, "state", "applied.json")); err == nil {
 		t.Error("applied.json written")
 	}
+}
+
+// lockedWriter lets a test read the output while Up is still writing it.
+type lockedWriter struct {
+	mu *sync.Mutex
+	b  *strings.Builder
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
 }

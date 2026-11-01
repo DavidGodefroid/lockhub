@@ -23,6 +23,8 @@ func TestRun(t *testing.T) {
 		{[]string{"up", "--nope"}, 2, "", "flag provided but not defined"},
 		{[]string{"up"}, 1, "", "stdin is not one"},
 		{[]string{"up", "--dry-run", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"up", "-v", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"help"}, 0, "[--dry-run] [-v]", ""},
 		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lox add slack"},

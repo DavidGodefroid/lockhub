@@ -318,6 +318,10 @@ func (u *Up) Do(ctx context.Context) error {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
 	}
+	fmt.Fprintln(u.Out, "hub image verified")
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "lock %s: image verified\n", n)
+	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
 	hubPub, err := os.ReadFile(hubPubPath)
@@ -581,6 +585,9 @@ func (u *Up) Do(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	for _, n := range c.Instances() {
+		fmt.Fprintf(u.Out, "lock %s: started\n", n)
 	}
 	if err := os.WriteFile(composePath, composeYAML, 0o600); err != nil {
 		return err
