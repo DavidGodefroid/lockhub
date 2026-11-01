@@ -20,10 +20,23 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/loxinit"
 )
 
-// exitInterrupted is lox add's exit status after a Ctrl-C (or SIGTERM):
-// 128 + SIGINT, as a shell reports a command its Ctrl-C stopped. The other
-// failures exit 1, usage errors 2, as every lox command.
+// exitInterrupted is the exit status of lox add, remove, up and init after
+// a Ctrl-C (or SIGTERM): 128 + SIGINT, as a shell reports a command its
+// Ctrl-C stopped. The other failures exit 1, usage errors 2, as every lox
+// command.
 const exitInterrupted = 130
+
+// failed reports err of command cmd on stderr and returns the exit status:
+// after an interrupt, one "interrupted" line and 130, whatever the step
+// the interrupt broke said; else the error and 1.
+func failed(ctx context.Context, stderr io.Writer, cmd string, err error) int {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		fmt.Fprintf(stderr, "lox %s: interrupted\n", cmd)
+		return exitInterrupted
+	}
+	fmt.Fprintf(stderr, "lox %s: %v\n", cmd, err)
+	return 1
+}
 
 // answerFlags are the answers lox add TYPE takes as flags; each is the
 // form's key of the same name, except --dir (lockfile's directory, key

@@ -90,8 +90,7 @@ func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		Applied: func() (int, error) { return family.AppliedLocks(state) },
 	}
 	if err := ini.Do(ctx); err != nil {
-		fmt.Fprintln(stderr, "lox init:", err)
-		return 1
+		return failed(ctx, stderr, "init", err)
 	}
 	return 0
 }
@@ -131,8 +130,8 @@ func consoles(ctx context.Context, project string) (map[string]string, error) {
 	return m, nil
 }
 
-// indentWriter indents what lox add prints under the lock lox init sets
-// up.
+// indentWriter indents what pinning the hub's release prints under lox
+// init's own line.
 type indentWriter struct{ w io.Writer }
 
 func (i indentWriter) Write(b []byte) (int, error) {

@@ -89,8 +89,8 @@ Usage:
   lox help                               show this help
 
 lockfamily.yaml lives in the workspace's .lockfamily/ (lea's agents only read it there); a legacy
-./lockfamily.yaml is still read, with a warning. lox add and lox import only edit it: the next
-lox up reviews the change with you.
+./lockfamily.yaml is still read, with a warning. lox add TYPE INSTANCE, lox vault set and lox import
+only edit it: the next lox up reviews the change with you.
 `
 
 func main() {
@@ -376,8 +376,7 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
 		Pin: *pin, Rotate: rotate, Review: *review}
 	if err := u.Do(ctx); err != nil {
-		fmt.Fprintln(stderr, "lox up:", err)
-		return 1
+		return failed(ctx, stderr, "up", err)
 	}
 	return 0
 }

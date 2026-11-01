@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -276,10 +277,43 @@ func checkProfileEdit(orig, out []byte, profile string) error {
 	if p, ok := after["profiles"].(map[string]any); ok && len(p) == 0 {
 		delete(after, "profiles")
 	}
-	if !reflect.DeepEqual(before, after) {
+	if !reflect.DeepEqual(sameNaN(before), sameNaN(after)) {
 		return errors.New("the result differs from the file less the profile")
 	}
 	return nil
+}
+
+// tomlNaN stands for a nan float: NaN is not equal to itself, so a file
+// holding one would never compare equal to its unchanged self.
+type tomlNaN struct{}
+
+// sameNaN is v with every nan float replaced by tomlNaN{}.
+func sameNaN(v any) any {
+	switch x := v.(type) {
+	case float64:
+		if math.IsNaN(x) {
+			return tomlNaN{}
+		}
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = sameNaN(e)
+		}
+		return m
+	case []map[string]any:
+		s := make([]any, len(x))
+		for i, e := range x {
+			s[i] = sameNaN(e)
+		}
+		return s
+	case []any:
+		s := make([]any, len(x))
+		for i, e := range x {
+			s[i] = sameNaN(e)
+		}
+		return s
+	}
+	return v
 }
 
 // cutComment is line without its trailing comment: a # inside a string

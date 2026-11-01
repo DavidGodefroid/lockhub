@@ -173,7 +173,10 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 			s.say("detached from %s", l.Name)
 			return nil
 		}
-		return fmt.Errorf("lock %s is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox up); else lox up, then lox attach %s", l.Name, l.Name)
+		if l.Credentials == CredVault {
+			return fmt.Errorf("lock %s is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox up); else lox up, then lox attach %s", l.Name, l.Name)
+		}
+		return fmt.Errorf("lock %s is declared and its console stopped (above): lox up, then lox attach %s", l.Name, l.Name)
 	}
 	return nil
 }

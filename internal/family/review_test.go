@@ -275,6 +275,36 @@ func TestReviewFlagPrintsProfile(t *testing.T) {
 	}
 }
 
+// lox add --review prints the profile of the lock it adds, not every
+// type's.
+func TestReviewFocusPrintsOnlyItsProfile(t *testing.T) {
+	w := newWS(t, shortConf)
+	proj := filepath.Join(w.dir, "projects")
+	os.WriteFile(filepath.Join(proj, ".locksql", "config.toml"), []byte("[profiles.orders]\nengine = \"postgres\"\n"), 0o644)
+	f := newFake()
+	f.keys["orders"], f.keys["events"] = pubKey(), pubKey()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	os.MkdirAll(filepath.Join(proj, ".lockmq"), 0o755)
+	os.WriteFile(filepath.Join(proj, ".lockmq", "config.toml"), []byte("[profiles.events]\nurl = \"http://mq.example.com:15672\"\n"), 0o644)
+	if err := Add(w.file, AddOptions{Type: "lockmq", Name: "events", Image: mqImg}); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000",
+		Run: &fake{keys: f.keys}, In: bufio.NewReader(strings.NewReader("n\n")), Out: &out, Review: true, Focus: "events"}
+	if err := u.Do(context.Background()); !errors.Is(err, ErrNotConfirmed) {
+		t.Fatalf("Do = %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "profile lockmq ") || !strings.Contains(out.String(), "config.toml:2 url = \"http://mq.example.com:15672\"") {
+		t.Errorf("the focus lock's profile is not printed:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "profile locksql ") || strings.Contains(out.String(), "engine = \"postgres\"") {
+		t.Errorf("another type's profile printed:\n%s", out.String())
+	}
+}
+
 func TestVaultCAChangeNote(t *testing.T) {
 	w := newWS(t, shortConf)
 	f := newFake()

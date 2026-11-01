@@ -21,7 +21,7 @@ type AddOptions struct {
 	// Profile is the lock's profile (optional, see Lock.Profile).
 	Profile string
 	// AllowedUIDs is the lock's allowed_uids (optional, see
-	// Lock.AllowedUIDs): lox init gives lea's uid.
+	// Lock.AllowedUIDs): lox add gives lea's uid.
 	AllowedUIDs []int
 	// Vault writes vault: true (the lock reads its credentials from the
 	// vault: block).

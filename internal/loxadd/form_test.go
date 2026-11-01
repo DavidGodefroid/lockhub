@@ -80,13 +80,15 @@ func TestFormGolden(t *testing.T) {
 		{"add-locksql-ask", "locksql", Defaults{}, []string{"", "", "", "", "", "", "", "", ""},
 			Answers{"engine": "postgres", "host": "host.docker.internal", "port": "5432", "tls": "disable", "credentials": "ask", "name": "db"}},
 		{"add-locksql-vault-first", "locksql", Defaults{}, []string{"mariadb", "db.example.com", "", "shop", "orders", "y", "", "vault", "", "https://vault.example.com:8200", "", "", "orders"},
-			Answers{"engine": "mariadb", "port": "3306", "production": "y", "tls": "verify-full", "credentials": "vault", "vault-address": "https://vault.example.com:8200", "name": "orders"}},
+			Answers{"engine": "mariadb", "port": "3306", "production": "y", "tls": "verify-full", "credentials": "vault", "vault-path": "database/creds/orders", "vault-address": "https://vault.example.com:8200", "name": "orders"}},
 		{"add-locksql-vault-second", "locksql", Defaults{VaultSet: true, Declared: []string{"db"}}, []string{"", "", "", "", "", "", "", "vault", "", ""},
 			Answers{"credentials": "vault", "vault-path": "database/creds/db-2", "name": "db-2"}},
 		{"add-locksql-reask", "locksql", Defaults{}, []string{"oracle", "", "db.example.com:5432", "host.docker.internal", "0", "70000", "5432", "", "", "maybe", "n", "", "", ""},
 			Answers{"engine": "postgres", "port": "5432", "production": "n"}},
 		{"add-lockmq", "lockmq", Defaults{Source: &shopMQ}, []string{"", "", "-", "", "", "", ""},
 			Answers{"url": "http://host.docker.internal:55672", "user": "orders", "vhost": "", "credentials": "ask", "name": "mq"}},
+		{"add-lockmq-amqp-default", "lockmq", Defaults{}, []string{"https://mq.example.com:15671", "", "", "", "", "", ""},
+			Answers{"url": "https://mq.example.com:15671", "amqp-url": "amqps://mq.example.com:5671", "credentials": "ask", "name": "mq"}},
 		{"add-lockfile-s3", "lockfile", Defaults{}, []string{"", "shop-invoices", "", "eu-west-1", "", "", "", ""},
 			Answers{"source": "s3", "bucket": "shop-invoices", "region": "eu-west-1", "credentials": "ask", "name": "files"}},
 		{"add-lockhttp", "lockhttp", Defaults{}, []string{""}, Answers{"name": "web"}},
@@ -100,6 +102,51 @@ func TestFormGolden(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The Vault path's default follows the name, which is asked last: --name,
+// or the name typed after Enter kept the path's default. A path typed or
+// given stays as it is.
+func TestVaultPathFollowsTheName(t *testing.T) {
+	f := &Form{Out: io.Discard, NonInteractive: true}
+	vault := Answers{"credentials": "vault", "vault-address": "https://vault.example.com:8200", "name": "orders"}
+	a, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), vault)
+	if err != nil || a["vault-path"] != "database/creds/orders" {
+		t.Fatalf("--name: %q %v", a["vault-path"], err)
+	}
+	vault["vault-path"] = "database/creds/shop"
+	if a, err = f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), vault); err != nil || a["vault-path"] != "database/creds/shop" {
+		t.Fatalf("--vault-path: %q %v", a["vault-path"], err)
+	}
+	_, a = session(t, "lockmq", Defaults{}, nil, "", "", "", "", "", "vault", "secret/mq", "https://vault.example.com:8200", "", "", "events")
+	if a["vault-path"] != "secret/mq" || a["name"] != "events" {
+		t.Fatalf("typed path: %v", a)
+	}
+	_, a = session(t, "lockfile", Defaults{}, nil, "", "shop-invoices", "", "eu-west-1", "", "vault", "", "https://vault.example.com:8200", "", "", "invoices")
+	if a["vault-path"] != "secret/data/lockfile/invoices" {
+		t.Fatalf("Enter on the path: %v", a)
+	}
+}
+
+// Without detection, the AMQP URL proposes the management URL's host:
+// amqp on 5672, amqps on 5671 for an https management URL; - keeps no
+// stream reads.
+func TestAMQPDefaultFromTheManagementURL(t *testing.T) {
+	f := &Form{Out: io.Discard, NonInteractive: true}
+	for url, want := range map[string]string{
+		"http://mq.example.com:15672":  "amqp://mq.example.com:5672",
+		"https://mq.example.com:15671": "amqps://mq.example.com:5671",
+		"http://[2001:db8::1]:15672":   "amqp://[2001:db8::1]:5672",
+	} {
+		a, err := f.Run("lockmq", fieldsOf(t, "lockmq", Defaults{}), Answers{"url": url})
+		if err != nil || a["amqp-url"] != want {
+			t.Errorf("%s: %q %v, want %q", url, a["amqp-url"], err, want)
+		}
+	}
+	a, err := f.Run("lockmq", fieldsOf(t, "lockmq", Defaults{}), Answers{"url": "http://mq.example.com:15672", "amqp-url": "-"})
+	if err != nil || a["amqp-url"] != "" {
+		t.Errorf("-: %q %v", a["amqp-url"], err)
 	}
 }
 

@@ -81,7 +81,7 @@ func (ExecRunner) Verb(ctx context.Context, dir, name string, args ...string) ([
 	return out.Bytes(), errb.Bytes(), 0, nil
 }
 
-// Outcome is what lox init makes of one verb run.
+// Outcome is what lox add makes of one verb run.
 type Outcome struct {
 	// Code: "" on success, else a VerbError code (CodeFailed for a run
 	// with no JSON).

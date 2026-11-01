@@ -348,7 +348,7 @@ func TestVaultCAChangeIsReviewed(t *testing.T) {
 
 	// A missing ca_file is refused before anything is applied.
 	f := newFake()
-	if _, err := w.up("y\n", f); err == nil || !strings.Contains(err.Error(), "vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB") || strings.Contains(err.Error(), ca) {
+	if _, err := w.up("y\n", f); err == nil || !strings.Contains(err.Error(), "vault.ca_file: the file does not exist (lox vault set --ca-file PATH, or --ca-file \"\")") || strings.Contains(err.Error(), ca) {
 		t.Fatalf("missing ca_file: %v", err)
 	}
 	if f.ran("up -d") {
@@ -407,7 +407,11 @@ func TestReadCARefusals(t *testing.T) {
 	if b, sum, err := readCA(good); err != nil || string(b) != caPEM || len(sum) != 64 {
 		t.Fatalf("good: %v %q", err, sum)
 	}
-	for name, p := range map[string]string{"missing": filepath.Join(dir, "none.pem"), "big": big, "dir": dir, "symlink": link, "fifo": fifo, "relative": "ca.pem"} {
+	const missing = `vault.ca_file: the file does not exist (lox vault set --ca-file PATH, or --ca-file "")`
+	if _, _, err := readCA(filepath.Join(dir, "none.pem")); err == nil || err.Error() != missing {
+		t.Errorf("missing: %v", err)
+	}
+	for name, p := range map[string]string{"big": big, "dir": dir, "symlink": link, "fifo": fifo, "relative": "ca.pem"} {
 		_, _, err := readCA(p)
 		if err == nil || err.Error() != "vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB" {
 			t.Errorf("%s: %v", name, err)

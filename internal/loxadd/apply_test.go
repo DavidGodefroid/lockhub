@@ -452,6 +452,17 @@ func TestApplyConsoleStoppedAfterVaultSaysHow(t *testing.T) {
 		t.Fatal("lock or profile undone")
 	}
 
+	// An ask lock gets no Vault hint.
+	w3 := newApplyWorld(t)
+	w3.steps.Attach = w.steps.Attach
+	w3.steps.ConsoleAlive = w.steps.ConsoleAlive
+	ask := sqlAnswers(CredAsk)
+	err = w3.steps.Apply(context.Background(), mustBuild(t, ask), ask)
+	const askMsg = "lock orders is declared and its console stopped (above): lox up, then lox attach orders"
+	if err == nil || err.Error() != askMsg {
+		t.Fatalf("ask: err = %v\nwant %s", err, askMsg)
+	}
+
 	// A console still running was detached from: no error.
 	w2 := newApplyWorld(t)
 	w2.steps.Attach = func(context.Context, string) error { return errors.New("read escape sequence") }

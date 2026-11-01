@@ -109,7 +109,7 @@ are listed above the questions as `found: ...` hints.
 | `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
 | `TLS: disable, prefer, require, verify-ca or verify-full (required) [verify-full]: ` | not sqlite; one of three variants is asked: for production the default is `verify-full`; for a host on this machine `disable`; for any other host `verify-full`. A TLS mode the project's files name is the default except in production. `--tls` |
 | `Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: ` | not sqlite; `--credentials` |
-| `Vault path (required) [database/creds/<name>]: ` | vault only; `--vault-path` |
+| `Vault path (required) [database/creds/<name>]: ` | vault only; `<name>` is the suggested name, since Name is asked last: Enter keeps the path following the name you then type (or `--name`); `--vault-path` |
 | `Vault address, such as https://vault.example.com:8200 (required): ` | vault, when `lockfamily.yaml` has no vault block yet; `--vault-address` |
 | `Vault namespace (optional: empty = the root namespace): ` | same condition; names of letters, digits, `_ . -` separated by `/`; `--vault-namespace` |
 | `Vault CA file (optional: empty = the system's CA certificates): ` | same condition; `--vault-ca-file` |
@@ -122,7 +122,7 @@ are listed above the questions as `found: ...` hints.
 | `Management URL (required) [http://host.docker.internal:15672]: ` | an http or https URL; `--url` |
 | `User (optional: empty = the console asks for it at start with the password): ` | `--user` |
 | `Vhost (optional: empty = all vhosts the user can see): ` | `--vhost` |
-| `AMQP URL, such as amqp://<mgmt host>:5672 (optional: empty = no stream reads): ` | an amqp or amqps URL; `--amqp-url` |
+| `AMQP URL, such as amqp://<mgmt host>:5672 (optional: - = no stream reads) [amqp://<mgmt host>:5672]: ` | an amqp or amqps URL; the default is the management URL's host, `amqps://<host>:5671` for an https management URL (or the AMQP port the project's files name); `-` for no stream reads; `--amqp-url` |
 | `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
 | `Credentials: ...`, then the Vault path and the vault block | as for locksql; the Vault path defaults to `rabbitmq/creds/<name>` |
 | `Name (required) [mq]: ` | `--name` |

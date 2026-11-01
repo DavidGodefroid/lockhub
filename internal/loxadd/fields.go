@@ -26,6 +26,11 @@ type Field struct {
 	Key, Label string
 	Choices    []string
 	Default    string
+	// DefaultFrom, when not nil, computes the default from the answers
+	// (and the flags given): a non-empty result replaces Default. An empty
+	// answer that took it is computed again once every field is answered,
+	// so it follows a later answer (the Vault path follows the name).
+	DefaultFrom func(a Answers) string
 	// Empty is "" for a required value, else the meaning of an empty answer.
 	Empty string
 	YesNo bool
@@ -93,7 +98,7 @@ func Fields(lock string, d Defaults) ([]Field, error) {
 	for i := range fs {
 		f := &fs[i]
 		if v := d.Draft[f.Key]; v != "" {
-			f.Default = v
+			f.Default, f.DefaultFrom = v, nil
 		}
 		check := f.Check
 		required := f.Empty == ""
@@ -350,10 +355,17 @@ func credentialsField(when func(Answers) bool) Field {
 }
 
 // vaultFields are the vault path of one lock, then the vault block when
-// the file has none yet.
-func vaultFields(d Defaults, pathDefault string, when func(Answers) bool) []Field {
+// the file has none yet. The path's default is prefix and the lock's name:
+// the suggested one until the name is answered (it is asked last).
+func vaultFields(d Defaults, prefix, suggested string, when func(Answers) bool) []Field {
 	w := and(when, eq("credentials", CredVault))
-	fs := []Field{{Key: "vault-path", Label: "Vault path", Default: pathDefault, Check: checkVaultPath, When: w}}
+	fs := []Field{{Key: "vault-path", Label: "Vault path", Default: prefix + vaultName(d, suggested), Check: checkVaultPath, When: w,
+		DefaultFrom: func(a Answers) string {
+			if n := a["name"]; n != "" {
+				return prefix + n
+			}
+			return ""
+		}}}
 	if d.VaultSet {
 		return fs
 	}
@@ -443,7 +455,7 @@ func sqlFields(d Defaults) []Field {
 		tlsField(tls, "remote"),
 		credentialsField(remote),
 	}
-	fs = append(fs, vaultFields(d, "database/creds/"+vaultName(d, suggested), remote)...)
+	fs = append(fs, vaultFields(d, "database/creds/", suggested, remote)...)
 	return append(fs, nameField(d, SuggestName(s)))
 }
 
@@ -465,8 +477,25 @@ func mqFields(d Defaults) []Field {
 		productionField(nil),
 		credentialsField(nil),
 	}
-	fs = append(fs, vaultFields(d, "rabbitmq/creds/"+vaultName(d, uniqueName(name, func(n string) bool { return slices.Contains(d.Declared, n) })), nil)...)
+	if amqp == "" {
+		fs[3].DefaultFrom = amqpFromMgmt
+	}
+	fs = append(fs, vaultFields(d, "rabbitmq/creds/", uniqueName(name, func(n string) bool { return slices.Contains(d.Declared, n) }), nil)...)
 	return append(fs, nameField(d, name))
+}
+
+// amqpFromMgmt is the AMQP URL on the management URL's host: amqp on
+// 5672, or amqps on 5671 for an https management URL ("" when the URL has
+// no host).
+func amqpFromMgmt(a Answers) string {
+	u, err := url.Parse(a["url"])
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	if u.Scheme == "https" {
+		return "amqps://" + net.JoinHostPort(u.Hostname(), "5671")
+	}
+	return "amqp://" + net.JoinHostPort(u.Hostname(), "5672")
 }
 
 func fileFields(d Defaults) []Field {
@@ -493,6 +522,6 @@ func fileFields(d Defaults) []Field {
 		productionField(nil),
 		credentialsField(src("s3", "sftp")),
 	}
-	fs = append(fs, vaultFields(d, "secret/data/lockfile/"+vaultName(d, name.Default), src("s3", "sftp"))...)
+	fs = append(fs, vaultFields(d, "secret/data/lockfile/", name.Default, src("s3", "sftp"))...)
 	return append(fs, name)
 }

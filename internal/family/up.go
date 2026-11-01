@@ -544,6 +544,11 @@ func (u *Up) Do(ctx context.Context) error {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
 			for _, t := range types(c) {
+				// With a focus (lox add, lox remove), that lock's profile
+				// only: a removed lock's is no longer applied.
+				if fl, ok := c.Locks[u.Focus]; u.Focus != "" && (!ok || fl.Type != t) {
+					continue
+				}
 				fmt.Fprintf(u.Out, "profile %s %s:\n", t, profiles[t].Fingerprint)
 				for _, l := range profiles[t].Lines {
 					fmt.Fprintln(u.Out, "  "+l)
@@ -982,6 +987,11 @@ func readCA(path string) ([]byte, string, error) {
 		return nil, "", bad
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		// The load tolerates a missing file (it may live on another
+		// machine); applying it needs the file.
+		return nil, "", errors.New(`vault.ca_file: the file does not exist (lox vault set --ca-file PATH, or --ca-file "")`)
+	}
 	if err != nil {
 		return nil, "", bad
 	}

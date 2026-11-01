@@ -13,7 +13,9 @@ Where to run it: with lea, in lea's projects directory, not a project
 inside it (lea reads `.lockfamily/up.json` only at the root of its projects
 directory); with `claude` on the host, in the project or a parent (the
 launchers walk up from the current directory to the nearest
-`.lockfamily/up.json`).
+`.lockfamily/up.json`). With lea there is nothing to run: on its first
+start, when its projects directory has no `.lockfamily/up.json`, lea runs
+`lox init` there itself.
 
 It ends with:
 

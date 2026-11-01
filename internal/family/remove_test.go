@@ -244,3 +244,16 @@ func TestCheckProfileEditOracle(t *testing.T) {
 		t.Error("an original that does not decode was accepted")
 	}
 }
+
+// A nan outside the profile is the same nan after the edit (NaN is not
+// equal to itself, but the file did not change there).
+func TestCheckProfileEditNaN(t *testing.T) {
+	rest := "[limits]\nratio = nan\nlist = [1.0, -nan]\n[[rules]]\nw = +nan\n[profiles.inventory]\nhost = \"inv\"\n"
+	orig := "[profiles.orders]\nx = 1\n" + rest
+	if err := checkProfileEdit([]byte(orig), []byte(rest), "orders"); err != nil {
+		t.Errorf("nan outside the profile refused: %v", err)
+	}
+	if err := checkProfileEdit([]byte(orig), []byte(strings.Replace(rest, "ratio = nan", "ratio = 1.0", 1)), "orders"); err == nil {
+		t.Error("a nan changed to a number was accepted")
+	}
+}
