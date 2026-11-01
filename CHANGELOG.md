@@ -14,6 +14,11 @@ digest).
   which they read. The e2e (phase 2) drives a host `locksql mcp` from plan
   to rows through a facade approval, and the refusals of a tampered
   up.json or a read-write squatter on the socket volume.
+- The e2e (phase 2) runs a lockmq lock too (#78): a RabbitMQ 4.1.8 broker
+  with a read-only user and a stream holding one message; a host
+  `lockmq mcp` (lockmq v0.5.0's launcher and image) reads it, pending,
+  then gets the message once the ticket is approved at `lox approve`.
+  lockhub's CI now runs a lockmq image under `lox up`.
 
 ## v0.3.0 (2026-10-31)
 
