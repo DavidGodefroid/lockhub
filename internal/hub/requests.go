@@ -486,7 +486,13 @@ func (h *Hub) reapprove(ctx context.Context, old store.Ref, oldInfo Info, id str
 	} else if err != nil {
 		return false, err
 	}
-	info, err := h.c.Codec.VerifyTicket(h.c.Locks[tk.Instance], tk.Raw)
+	// A lock no longer declared (lox remove): its stored renewal cannot be
+	// checked, so none is approved.
+	key, ok := h.c.Locks[tk.Instance]
+	if !ok {
+		return false, ErrUnknownLock
+	}
+	info, err := h.c.Codec.VerifyTicket(key, tk.Raw)
 	if err != nil {
 		return false, fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 	}
