@@ -287,22 +287,23 @@ func TestLockfileSFTPQuestions(t *testing.T) {
 	if got := Prompt(find(t, fs, "source", nil)); got != "Source: local, s3 or sftp (required) [s3]: " {
 		t.Errorf("source prompt %q", got)
 	}
-	a := Answers{"source": "sftp", "credentials": "ask"}
+	a := Answers{"source": "sftp", "auth": "key", "credentials": "ask"}
 	var keys []string
 	for _, f := range fs {
 		if f.When == nil || f.When(a) {
 			keys = append(keys, f.Key)
 		}
 	}
-	if got := strings.Join(keys, " "); got != "source host port user key known-hosts base-dir production credentials name" {
+	if got := strings.Join(keys, " "); got != "source host port user auth key known-hosts base-dir production credentials name" {
 		t.Errorf("sftp asks %q", got)
 	}
 	for key, want := range map[string]string{
 		"host":        "Host (required): ",
 		"port":        "Port (required) [22]: ",
 		"user":        "User (required): ",
+		"auth":        "Auth: key or password (required) [key]: ",
 		"key":         "Private key file, an absolute path (required): ",
-		"known-hosts": "known_hosts file, an absolute path (optional: empty = the console asks to confirm the host key at first start): ",
+		"known-hosts": "Known hosts file (required): ",
 		"base-dir":    "Base directory (optional: empty = the login directory): ",
 	} {
 		if got := Prompt(find(t, fs, key, a)); got != want {
@@ -323,8 +324,14 @@ func TestLockfileSFTPQuestions(t *testing.T) {
 		}
 	}
 	kh := find(t, fs, "known-hosts", a)
-	if kh.Empty == "" || kh.Check("", a) != "" {
-		t.Error("known_hosts must be optional")
+	if kh.Empty != "" || kh.Check("", a) == "" {
+		t.Error("known_hosts must be required")
+	}
+	pw := Answers{"source": "sftp", "auth": "password"}
+	for _, f := range fs {
+		if f.Key == "key" && f.When(pw) {
+			t.Error("a key file is asked for password auth")
+		}
 	}
 	if kh.Check("known_hosts", a) == "" {
 		t.Error("a relative known_hosts path was accepted")

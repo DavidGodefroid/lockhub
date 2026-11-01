@@ -23,8 +23,8 @@ func TestProfileArgs(t *testing.T) {
 			"port": "3306", "user": "app", "tls": "verify-full", "production": "y"},
 			[]string{"--profile", "shop", "--credentials", "ask", "--production", "--engine", "mysql", "--host", "db.example.com",
 				"--port", "3306", "--user", "app", "--tls", "verify-full"}, ""},
-		{"locksql sqlite", "locksql", Answers{"name": "inv", "credentials": "ask", "engine": "sqlite", "path": "data/inv.db", "production": "no"},
-			[]string{"--profile", "inv", "--credentials", "ask", "--engine", "sqlite", "--path", "data/inv.db"}, ""},
+		{"locksql sqlite", "locksql", Answers{"name": "inv", "credentials": "ask", "engine": "sqlite", "path": "data/inv.db", "production": "no", "vault-path": "x/y"},
+			[]string{"--profile", "inv", "--engine", "sqlite", "--path", "data/inv.db"}, ""},
 		{"lockmq", "lockmq", Answers{"name": "events", "credentials": "vault", "vault-path": "rabbitmq/creds/events", "url": "http://mq.example.com:15672",
 			"user": "", "vhost": "shop", "amqp-url": "amqp://mq.example.com:5672", "vault-address": "https://vault.example.com:8200", "vault-namespace": "team", "vault-ca": "/etc/ca.pem"},
 			[]string{"--profile", "events", "--credentials", "vault", "--vault-path", "rabbitmq/creds/events",
@@ -32,10 +32,10 @@ func TestProfileArgs(t *testing.T) {
 		{"lockfile s3", "lockfile", Answers{"name": "exports", "credentials": "ask", "source": "s3", "bucket": "shop-exports", "endpoint": "", "region": "eu-west-1"},
 			[]string{"--profile", "exports", "--credentials", "ask", "--source", "s3", "--bucket", "shop-exports", "--region", "eu-west-1"}, ""},
 		{"lockfile sftp", "lockfile", Answers{"name": "drop", "credentials": "ask", "source": "sftp", "host": "sftp.example.com", "port": "22", "user": "orders",
-			"key": "/home/u/.ssh/id", "known-hosts": "", "base-dir": "in"},
+			"auth": "key", "key": "/home/u/.ssh/id", "known-hosts": "/home/u/.ssh/kh", "base-dir": "in"},
 			[]string{"--profile", "drop", "--credentials", "ask", "--source", "sftp", "--host", "sftp.example.com", "--port", "22", "--user", "orders",
-				"--key", "/home/u/.ssh/id", "--base-dir", "in"}, ""},
-		{"lockfile local, no credentials", "lockfile", Answers{"name": "local", "source": "local", "path": "/srv/files"},
+				"--auth", "key", "--key", "/home/u/.ssh/id", "--known-hosts", "/home/u/.ssh/kh", "--base-dir", "in"}, ""},
+		{"lockfile local, no credentials", "lockfile", Answers{"name": "local", "source": "local", "path": "/srv/files", "credentials": "vault", "vault-path": "a/b"},
 			[]string{"--profile", "local", "--source", "local", "--path", "/srv/files"}, ""},
 		{"lockhttp", "lockhttp", Answers{"name": "web", "production": "y"},
 			[]string{"--profile", "web", "--production"}, ""},
@@ -69,6 +69,27 @@ func TestProfileArgs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestBuildRequiredKeys(t *testing.T) {
+	for _, c := range []struct {
+		lock, key string
+		a         Answers
+	}{
+		{"lockmq", "url", Answers{"name": "n"}},
+		{"lockfile", "path", Answers{"name": "n", "source": "local"}},
+		{"lockfile", "bucket", Answers{"name": "n", "source": "s3", "region": "r"}},
+		{"lockfile", "region", Answers{"name": "n", "source": "s3", "bucket": "b"}},
+		{"lockfile", "host", Answers{"name": "n", "source": "sftp", "user": "u", "auth": "password", "known-hosts": "/k"}},
+		{"lockfile", "user", Answers{"name": "n", "source": "sftp", "host": "h", "auth": "password", "known-hosts": "/k"}},
+		{"lockfile", "auth", Answers{"name": "n", "source": "sftp", "host": "h", "user": "u", "known-hosts": "/k"}},
+		{"lockfile", "known-hosts", Answers{"name": "n", "source": "sftp", "host": "h", "user": "u", "auth": "password"}},
+		{"lockfile", "key", Answers{"name": "n", "source": "sftp", "host": "h", "user": "u", "auth": "key", "known-hosts": "/k"}},
+	} {
+		if _, err := Build(c.lock, c.a); err == nil || err.Error() != c.key+": a value is needed" {
+			t.Errorf("%s %s: %v", c.lock, c.key, err)
+		}
 	}
 }
 

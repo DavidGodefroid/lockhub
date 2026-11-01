@@ -26,7 +26,7 @@ type Lock struct {
 var targetKeys = map[string][]string{
 	"locksql":  {"engine", "host", "port", "user", "database", "path", "tls"},
 	"lockmq":   {"url", "user", "vhost", "amqp-url"},
-	"lockfile": {"source", "bucket", "endpoint", "region", "path", "host", "port", "user", "key", "known-hosts", "base-dir"},
+	"lockfile": {"source", "bucket", "endpoint", "region", "path", "host", "port", "user", "auth", "key", "known-hosts", "base-dir"},
 	"lockhttp": nil,
 }
 
@@ -45,7 +45,10 @@ func Build(lock string, a Answers) (Lock, error) {
 	case "y", "yes":
 		l.Production = true
 	}
-	if lock != "lockhttp" {
+	if err := checkRequired(lock, a); err != nil {
+		return Lock{}, err
+	}
+	if takesCredentials(lock, a) {
 		l.Credentials = a["credentials"]
 		if l.Credentials == CredVault {
 			if a["vault-path"] == "" {
@@ -63,6 +66,52 @@ func Build(lock string, a Answers) (Lock, error) {
 		l.Vault = &family.Vault{Address: addr, Namespace: a["vault-namespace"], CAFile: a["vault-ca"]}
 	}
 	return l, nil
+}
+
+// takesCredentials: lockhttp, a sqlite file and a local directory hold no
+// secret, and their profile add refuses --credentials and --vault-path.
+func takesCredentials(lock string, a Answers) bool {
+	switch lock {
+	case "lockhttp":
+		return false
+	case "locksql":
+		return a["engine"] != "sqlite"
+	case "lockfile":
+		return a["source"] != "local"
+	}
+	return true
+}
+
+// checkRequired refuses a missing key the lock's profile add needs.
+func checkRequired(lock string, a Answers) error {
+	var need []string
+	switch lock {
+	case "lockmq":
+		need = []string{"url"}
+	case "lockfile":
+		switch a["source"] {
+		case "local":
+			need = []string{"path"}
+		case "s3":
+			need = []string{"bucket"}
+			if a["region"] == "" && a["endpoint"] == "" {
+				need = append(need, "region")
+			}
+		case "sftp":
+			need = []string{"host", "user", "auth", "known-hosts"}
+			if a["auth"] == "key" {
+				need = append(need, "key")
+			}
+		default:
+			need = []string{"source"}
+		}
+	}
+	for _, k := range need {
+		if a[k] == "" {
+			return fmt.Errorf("%s: a value is needed", k)
+		}
+	}
+	return nil
 }
 
 // ProfileArgs is the argument list of `<type> profile add` for the project
