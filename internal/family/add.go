@@ -23,6 +23,44 @@ type AddOptions struct {
 	// AllowedUIDs is the lock's allowed_uids (optional, see
 	// Lock.AllowedUIDs): lox init gives lea's uid.
 	AllowedUIDs []int
+	// Vault writes vault: true (the lock reads its credentials from the
+	// vault: block).
+	Vault bool
+}
+
+// SetVault writes (or replaces) the top-level vault: block of the
+// lockfamily.yaml at path, keeping its comments. What would be written is
+// validated first: a refusal leaves the file as it was.
+func SetVault(path string, v Vault) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return fmt.Errorf("%s: %w", path, scrubYAML(err, b))
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: not a lockfamily.yaml mapping", path)
+	}
+	block := child(doc.Content[0], "vault")
+	block.Content = nil
+	add := func(k, val string) {
+		block.Content = append(block.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: k},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: val, Tag: "!!str"})
+	}
+	add("address", v.Address)
+	if v.Namespace != "" {
+		add("namespace", v.Namespace)
+	}
+	if v.CAFile != "" {
+		add("ca_file", v.CAFile)
+	}
+	out, _, err := encodeValid(&doc)
+	if err != nil {
+		return fmt.Errorf("%s: not changed: %w", path, err)
+	}
+	return writeFile(path, out)
 }
 
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
@@ -71,6 +109,10 @@ func Add(path string, o AddOptions) error {
 			return err
 		}
 		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "allowed_uids"}, uids.(*yaml.Node))
+	}
+	if o.Vault {
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "vault"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"})
 	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)

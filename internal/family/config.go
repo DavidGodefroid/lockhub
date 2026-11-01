@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -43,6 +44,45 @@ type Config struct {
 	Version int             `yaml:"version"`
 	Hub     Hub             `yaml:"hub"`
 	Locks   map[string]Lock `yaml:"locks"`
+	// Vault is the one Vault the locks with vault: true read their secrets
+	// from. The token is never here: it is typed at the console's start.
+	Vault *Vault `yaml:"vault,omitempty"`
+}
+
+// Vault is the top-level vault: block.
+//
+//	vault:
+//	  address: https://vault.example.com:8200
+//	  namespace: shop                  # optional
+//	  ca_file: /etc/ssl/shop-ca.pem    # optional
+type Vault struct {
+	Address   string `yaml:"address"`
+	Namespace string `yaml:"namespace,omitempty"`
+	CAFile    string `yaml:"ca_file,omitempty"`
+}
+
+// maxCAFile is the largest ca_file accepted.
+const maxCAFile = 64 << 10
+
+func (v *Vault) validate() error {
+	u, err := url.Parse(v.Address)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || u.Opaque != "" || strings.HasSuffix(v.Address, "/") {
+		return errors.New("vault.address: want http(s)://host[:port], no path or user info")
+	}
+	h := strings.ToLower(u.Hostname())
+	if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) {
+		return errors.New("vault.address: 127.0.0.1 and localhost are the console's own container: use host.docker.internal for this machine")
+	}
+	if v.CAFile != "" {
+		bad := !filepath.IsAbs(v.CAFile)
+		if fi, err := os.Stat(v.CAFile); err == nil && fi.Size() > maxCAFile {
+			bad = true
+		}
+		if bad {
+			return errors.New("vault.ca_file: an absolute path to a PEM file of yours, at most 64 KiB")
+		}
+	}
+	return nil
 }
 
 // Hub configures the hub.
@@ -134,6 +174,9 @@ type Lock struct {
 	// Not on lockhttp: a lockhttp lock is reached by lea's gate, an
 	// account of its image.
 	AllowedUIDs UIDList `yaml:"allowed_uids,omitempty"`
+	// Vault: the lock reads its credentials from the top-level vault:
+	// block (not on lockhttp, which reads no secret).
+	Vault bool `yaml:"vault,omitempty"`
 }
 
 // UIDList is allowed_uids: a YAML list of plain decimal integers, as the
@@ -296,6 +339,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("hub.%w", err)
 		}
 	}
+	if c.Vault != nil {
+		if err := c.Vault.validate(); err != nil {
+			return err
+		}
+	}
 	for name, l := range c.Locks {
 		if !keys.ValidInstance(name) {
 			return errors.New("locks: a bad instance name (lower case, digits and -, at most 63 characters)")
@@ -314,6 +362,12 @@ func (c *Config) Validate() error {
 		}
 		if err := validAllowedUIDs(name, l); err != nil {
 			return err
+		}
+		if l.Vault && l.Type == "lockhttp" {
+			return fmt.Errorf("locks.%s.vault: a lockhttp lock reads no secret", name)
+		}
+		if l.Vault && c.Vault == nil {
+			return fmt.Errorf("locks.%s.vault: set, but lockfamily.yaml has no vault: block (lox vault set --address URL)", name)
 		}
 		if l.Devices && c.Hub.Mobile == nil {
 			return fmt.Errorf("locks.%s.devices: set, but the mobile facade is not configured (hub.mobile)", name)
