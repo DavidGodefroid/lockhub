@@ -47,8 +47,15 @@ Early development. This repository holds:
   (`lox_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
   Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
   installs into `~/.local/bin`. Each release tag also bumps the `lox` formula
-  of the [Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap)
-  (`brew install davidgodefroid/tap/lox`).
+  of the [Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap):
+
+  ```sh
+  brew trust davidgodefroid/tap
+  brew install davidgodefroid/tap/lox
+  ```
+
+  Homebrew asks you to trust a third-party tap once before it loads its
+  formulas; trusting the whole tap also covers dependencies from it.
 
 The ticket and decision formats live in
 [lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
@@ -57,9 +64,15 @@ with every Lock.
 ## Quick start: lox init
 
 ```sh
-cd ~/projects/shop
+cd ~/projects        # with lea: its projects directory; with claude: the project
 lox init
 ```
+
+Where to run it: with lea, in lea's projects directory, not a project
+inside it (lea reads `.lockfamily/up.json` only at the root of its projects
+directory); with `claude` on the host, in the project or a parent (the
+launchers walk up from the current directory to the nearest
+`.lockfamily/up.json`).
 
 `lox init` checks the prerequisites (Docker, cosign, lea, the locks'
 launchers), detects the project's data sources from its files (`.env*`,

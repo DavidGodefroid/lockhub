@@ -3,9 +3,15 @@
 `lox init` sets up the Lock Family in a project in one command:
 
 ```sh
-cd ~/projects/shop
+cd ~/projects        # with lea: its projects directory; with claude: the project
 lox init
 ```
+
+Where to run it: with lea, in lea's projects directory, not a project
+inside it (lea reads `.lockfamily/up.json` only at the root of its projects
+directory); with `claude` on the host, in the project or a parent (the
+launchers walk up from the current directory to the nearest
+`.lockfamily/up.json`).
 
 It finds what the project's files say about its data sources, proposes one
 lock per source, runs each lock's launcher to write its profile and the agent
