@@ -22,6 +22,7 @@ import (
 	"github.com/DavidGodefroid/lockkit/ticket"
 
 	"github.com/DavidGodefroid/lockhub/internal/api"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // Client talks to the facade socket.
@@ -140,6 +141,11 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 		}
 	}
 	fmt.Fprintln(&b, rule)
+	if string(t.Risk) == route.Grant {
+		// The lock's screen is the scope: approving it lets every read
+		// inside it run without a ticket each, until it ends.
+		fmt.Fprintln(&b, "GRANT: one approval for every read inside this scope, until its duration or budget runs out")
+	}
 	if t.Screen.Header != "" {
 		fmt.Fprintln(&b, clean(t.Screen.Header))
 	}
@@ -358,9 +364,13 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 		fmt.Fprintln(s.Out, "this ticket cannot be answered here")
 		return errSkip
 	}
-	prompt := "approve? [y]es / [n]o <reason> / [s]kip / [q]uit: "
+	what := "approve?"
+	if string(t.Risk) == route.Grant {
+		what = "approve this grant?"
+	}
+	prompt := what + " [y]es / [n]o <reason> / [s]kip / [q]uit: "
 	if s.FacadeKey != nil {
-		prompt = "approve? [y]es / [n]o <reason> / [o] clear values / [s]kip / [q]uit: "
+		prompt = what + " [y]es / [n]o <reason> / [o] clear values / [s]kip / [q]uit: "
 	}
 	for {
 		a, err := s.line(prompt)

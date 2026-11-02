@@ -3,6 +3,8 @@ package route
 import (
 	"slices"
 	"testing"
+
+	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
 // The table with every facade enabled; with none listed (no routing.json:
@@ -10,7 +12,7 @@ import (
 func TestDefaults(t *testing.T) {
 	all := Rules{Enabled: facades}
 	want := map[string][]string{
-		Read: {TTY, Deck, Mobile, Slack, Telegram}, ReadPII: {TTY, Deck, Mobile, Slack, Telegram},
+		Read: {TTY, Deck, Mobile, Slack, Telegram}, ReadPII: {TTY, Deck, Mobile, Slack, Telegram}, Grant: {TTY, Deck},
 		Write: {TTY, Deck, Mobile, Slack, Telegram}, ProdWrite: {TTY, Deck, Mobile},
 		PolicyLoosen: {TTY, Deck, Mobile}, Unlock: {TTY, Deck},
 	}
@@ -62,6 +64,13 @@ func TestOnlyNarrows(t *testing.T) {
 	if err := r.Allowed("crm-prod", Slack, ProdWrite); err == nil {
 		t.Error("Only widened slack to prod-write")
 	}
+	// Nor a phone or a chat to a grant.
+	r.Only["crm-prod"] = []string{Mobile, Slack, Telegram}
+	for _, f := range []string{Mobile, Slack, Telegram} {
+		if r.Allowed("crm-prod", f, Grant) == nil {
+			t.Errorf("Only widened %s to grant", f)
+		}
+	}
 	if err := r.Allowed("other", Deck, Read); err != nil {
 		t.Errorf("other instance: %v", err)
 	}
@@ -81,5 +90,20 @@ func TestEnabled(t *testing.T) {
 	}
 	if r.Allowed("i", TTY, ProdWrite) != nil {
 		t.Error("enabled facade refused")
+	}
+}
+
+// The hub knows exactly lockkit's risk classes: a class the locks may
+// sign and the hub refuses (or the other way round) is a lost ticket.
+func TestRisksAreLockkits(t *testing.T) {
+	if !ticket.Risk(Grant).Valid() {
+		t.Skip("lockkit before v0.12.0 has no grant (compat build)")
+	}
+	var want []string
+	for _, r := range ticket.Risks {
+		want = append(want, string(r))
+	}
+	if !slices.Equal(risks, want) {
+		t.Errorf("risks %v, lockkit %v", risks, want)
 	}
 }

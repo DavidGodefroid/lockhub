@@ -15,8 +15,14 @@ clear.
 
 Chat facades (Slack, Telegram) show masked screens only and answer only non-
 production reads and writes; production tickets and policy loosening are
-answered in the terminal, the deck or a paired phone, unlocks in the terminal
-or the deck (`hub.Decide`, `internal/route`). Approving a production ticket
+answered in the terminal, the deck or a paired phone, unlocks and grants in
+the terminal or the deck (`hub.Decide`, `internal/route`). A grant (risk
+`grant`) is one approval for a bounded read scope (tables, duration, read
+budget) that the lock then runs reads inside without a ticket each: `lox
+approve` marks it and shows the lock's scope lines before the prompt, the
+signed decision binds the scope's hash (`plan_hash`), and the hub's audit
+records carry `"risk":"grant"`. The lock ends a grant (`:revoke`, end of
+session, expiry); a revoke sent from the hub is not there yet. Approving a production ticket
 needs its instance name typed, in the terminal, the deck and on the phone
 alike (the hub checks it). A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
@@ -171,7 +177,7 @@ you remove `require_device` and run `lox up`. `lox mobile pair` checks the
 phone's origin against the one the last `lox up` applied.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
-secrets yet); production tickets ask for the instance name; `hub.routing`
+secrets yet) and `grant` (a wider approval than one read); production tickets ask for the instance name; `hub.routing`
 narrows it per instance.
 
 **Limits.** The web app's code comes from the hub. A hub that serves

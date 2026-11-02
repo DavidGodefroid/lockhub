@@ -3,6 +3,20 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## Unreleased
+
+- Grant tickets (lockhub#99): the hub knows lockkit v0.12.0's risk class
+  `grant`, one approval for a bounded read scope (tables, duration, read
+  budget) that the lock then runs reads inside without a ticket each. A grant
+  is queued, decided and signed like any ticket (the scope's hash is its
+  `plan_hash`) and is answered in the terminal or the deck only: never on the
+  phone or a chat facade, and `hub.routing` cannot widen that. `lox approve`
+  marks a grant and shows the lock's scope lines before asking "approve this
+  grant?"; production still needs the instance name typed. Audit records of a
+  grant carry `"risk":"grant"`. Ending a grant stays at the lock for now
+  (`:revoke`, end of session, expiry).
+- lockkit v0.12.0.
+
 ## v0.5.0 (2026-11-01)
 
 Supported locks: as v0.4.0.
