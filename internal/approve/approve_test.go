@@ -73,7 +73,7 @@ func (e env) push(t *testing.T, risk ticket.Risk, prod bool, body string) string
 	if prod {
 		// lockkit's Retype is the console's "retype values" answer, never
 		// what the human types: lox approve asks for the instance name.
-		tk.Flags = ticket.Flags{Production: true, Retype: "r"}
+		tk.Flags.Production, tk.Flags.Retype = true, "r"
 	}
 	if err := tk.Sign(e.lock); err != nil {
 		t.Fatal(err)
@@ -139,6 +139,27 @@ func TestProductionRetype(t *testing.T) {
 	}
 	if strings.Count(out, "does not match: not approved") != 3 || !strings.Contains(out, "PRODUCTION") ||
 		!strings.Contains(out, `type the instance name "crm" to approve`) {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+// A grant shows what it is and its scope (the lock's screen) before the
+// answer prompt, and a production one still needs the instance name.
+func TestGrantShowsScope(t *testing.T) {
+	grant := ticket.Risk("grant")
+	if !grant.Valid() {
+		t.Skip("lockkit before v0.12.0 has no grant (compat build)")
+	}
+	e := setup(t)
+	id := e.push(t, grant, true, "tables: orders, customers · 1h · 50 statements, 10000 rows")
+	out := e.run(t, "y\ncrm\n")
+	if e.state(t, id) != state.Approved {
+		t.Fatalf("state %s\n%s", e.state(t, id), out)
+	}
+	banner := strings.Index(out, "GRANT: one approval for every read inside this scope")
+	scope := strings.Index(out, "tables: orders, customers")
+	prompt := strings.Index(out, "approve this grant? [y]es")
+	if banner < 0 || scope < banner || prompt < scope || !strings.Contains(out, `type the instance name "crm" to approve`) {
 		t.Errorf("output:\n%s", out)
 	}
 }

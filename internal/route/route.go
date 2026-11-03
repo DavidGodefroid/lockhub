@@ -2,13 +2,16 @@
 //
 // v1 defaults:
 //
-//	facade            read  read-pii  write  prod-write  policy-loosen  unlock  reveal
-//	tty, deck          yes    yes      yes      yes          yes         yes     yes
-//	mobile             yes    yes      yes      yes          yes         no      yes
-//	slack, telegram    yes    yes      yes      no           no          no      no
+//	facade            read  read-pii  grant  write  prod-write  policy-loosen  unlock  reveal
+//	tty, deck          yes    yes      yes    yes      yes          yes         yes     yes
+//	mobile             yes    yes      no     yes      yes          yes         no      yes
+//	slack, telegram    yes    yes      no     yes      no           no          no      no
 //
 // Mobile decisions are signed by the device itself (locks verify them);
-// unlock stays off mobile until secrets can be typed there.
+// unlock stays off mobile until secrets can be typed there. A grant (one
+// approval for a bounded read scope the lock then runs many reads in) is
+// wider than any single read: it is answered where the scope is read in
+// full, never as the easiest tap on a phone or in a chat.
 //
 // A chat facade is routed only when the hub's configuration lists it
 // (Rules.Enabled): with no list (no routing.json, or one without
@@ -38,6 +41,7 @@ const (
 const (
 	Read         = "read"
 	ReadPII      = "read-pii"
+	Grant        = "grant"
 	Write        = "write"
 	ProdWrite    = "prod-write"
 	PolicyLoosen = "policy-loosen"
@@ -46,7 +50,7 @@ const (
 
 var (
 	facades = []string{TTY, Deck, Mobile, Slack, Telegram}
-	risks   = []string{Read, ReadPII, Write, ProdWrite, PolicyLoosen, Unlock}
+	risks   = []string{Read, ReadPII, Grant, Write, ProdWrite, PolicyLoosen, Unlock}
 	// local facades show clear values and accept every risk.
 	local = []string{TTY, Deck, Mobile}
 	// chatRisks are what a chat facade may answer.
