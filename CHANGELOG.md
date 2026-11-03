@@ -3,7 +3,9 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
-## Unreleased
+## v0.6.0 (2026-11-03)
+
+Supported locks: as v0.5.0.
 
 - Grant tickets (lockhub#99): the hub knows lockkit v0.12.0's risk class
   `grant`, one approval for a bounded read scope (tables, duration, read
