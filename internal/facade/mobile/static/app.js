@@ -304,8 +304,8 @@ async function answer(it, t, approve, li) {
   const reason = li.querySelector(".reason").value;
   const retype = li.querySelector(".retype").value;
   // The hub says which approvals need the instance name typed (a
-  // production ticket but a plain read); it checks it too, this only
-  // saves a passkey prompt.
+  // production ticket whose lock asks for it); it checks it too, this
+  // only saves a passkey prompt.
   if (approve && it.retype && retype !== t.source.instance) {
     status("Type the instance name (" + t.source.instance + ") to approve.");
     return;

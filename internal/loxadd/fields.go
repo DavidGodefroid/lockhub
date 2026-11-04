@@ -338,7 +338,7 @@ func nameField(d Defaults, def string) Field {
 }
 
 func productionField(when func(Answers) bool) Field {
-	return Field{Key: "production", Label: "Production? (each approval needs the profile name typed)", YesNo: true, Default: "n", Check: checkYesNo, When: when}
+	return Field{Key: "production", Label: "Production? (tickets flagged production; the profile name is typed at the console's start)", YesNo: true, Default: "n", Check: checkYesNo, When: when}
 }
 
 func credentialsField(when func(Answers) bool) Field {

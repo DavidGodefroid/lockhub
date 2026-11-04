@@ -32,11 +32,11 @@ type Info struct {
 	Created  time.Time
 	// TTL is how long the ticket may wait for a decision; 0: no limit.
 	TTL time.Duration
-	// Production tickets need the human to type the instance name to
-	// approve them, on every facade that may answer them, but a plain
-	// read (needsRetype). Retype is
-	// lockkit's flag (the console's answer that asks to retype values),
-	// kept for Flags; it is not what the human types.
+	// Production tickets are flagged on every facade and never answered
+	// on a chat facade. Retype is lockkit's flag (the console's answer
+	// that asks to retype values): when the lock sets it on a production
+	// ticket, approving needs the instance name typed (needsRetype). Its
+	// value is not what the human types.
 	Production bool
 	Retype     string
 	// Raw is the ticket as the lock signed it (set by Decide for the
@@ -497,9 +497,8 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if info.Production && !route.CanReveal(v.Facade) {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
-		// A production approval needs the instance name typed where it
-		// adds safety (#64, #105), whatever the ticket's lockkit Retype
-		// flag says.
+		// A production approval needs the instance name typed when the
+		// ticket's lock asks for it (#113).
 		if v.Approved && needsRetype(info) && (info.Instance == "" || v.Retype != info.Instance) {
 			return ErrRetype
 		}
@@ -531,17 +530,20 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	return raw, nil
 }
 
-// needsRetype: approving the ticket needs its instance name typed. Every
-// production ticket does but a plain read (risk read, not never_auto):
-// its screen keeps the production banner, and asking the name on each
-// read trains the human to type it without reading.
+// needsRetype: approving the ticket needs its instance name typed. Only
+// a production ticket whose lock asks for it does (lockkit's Retype flag
+// set, whatever its value, #113): every other production ticket keeps
+// its production flag on every facade and is approved with a plain y.
+// Asking the name on each ticket trained the human to type it without
+// reading.
 func needsRetype(info Info) bool {
-	return info.Production && (info.Risk != "read" || info.NeverAuto)
+	return info.Production && info.Retype != ""
 }
 
 // RetypeName is what a facade asks the human to type to approve the
-// stored ticket t: its instance name when Decide requires it, "" when
-// a plain y approves it. A ticket the hub cannot verify asks the name.
+// stored ticket t: its instance name when Decide requires it (the lock
+// asked for it), "" when a plain y approves it. A ticket the hub cannot
+// verify asks the name.
 func (h *Hub) RetypeName(t store.Ticket) string {
 	key, ok := h.c.Locks[t.Instance]
 	if !ok {

@@ -60,15 +60,16 @@ func TestWebAppApproves(t *testing.T) {
 	}
 }
 
-// A production ticket on the phone asks for the instance name, though
-// the ticket has no lockkit Retype flag (#64): approving without it
-// signs nothing and decides nothing; with it, the lock runs the plan.
+// A production ticket whose lock asks for the retype (lockkit's Retype
+// flag, #113) asks for the instance name on the phone, not the flag's
+// value (#64): approving without it signs nothing and decides nothing;
+// with it, the lock runs the plan.
 func TestWebAppProductionAsksTheInstanceName(t *testing.T) {
 	e := newEnv(t)
 	dev := e.confirm(e.pair("phone"))
 	l := e.lock(dev)
 	p, tk := l.newPlan(t)
-	tk.Flags = ticket.Flags{Production: true}
+	tk.Flags = ticket.Flags{Production: true, Retype: "r"}
 	masked := render.MaskScreen(render.ScreenSource{Header: "crm / shop · write", Body: []render.Line{{{Text: "UPDATE customers SET tier = 2"}}}}, render.Masking{})
 	id, err := l.c.SubmitClear(context.Background(), l.st, p.ID, l.caller, tk, masked, &ticket.Screen{Header: "crm / shop · write"})
 	if err != nil {

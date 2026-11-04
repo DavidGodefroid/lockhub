@@ -4,6 +4,6 @@ Management URL (required) [http://host.docker.internal:55672]:
 User (optional: - = the console asks for it at start with the password) [orders]: 
 Vhost (optional: - = all vhosts the user can see) [orders]: -
 AMQP URL, such as amqp://<mgmt host>:5672 (optional: - = no stream reads) [amqp://host.docker.internal:55673]: 
-Production? (each approval needs the profile name typed) [y/N] 
+Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] 
 Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
 Name (required) [mq]: 

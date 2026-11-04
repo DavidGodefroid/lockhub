@@ -286,7 +286,7 @@ func TestPairingNameAndCodeOnce(t *testing.T) {
 }
 
 // Routing on mobile: every risk but unlock; production asks for the
-// retype; an instance routed away is not shown.
+// retype when its lock asks for it; an instance routed away is not shown.
 func TestRouting(t *testing.T) {
 	e := newEnv(t, route.Rules{})
 	phone := e.phone("phone")
@@ -306,7 +306,7 @@ func TestRouting(t *testing.T) {
 	if !it.Answerable || !it.Retype {
 		t.Fatalf("production on mobile: %+v", it)
 	}
-	// The instance name, though the ticket has no lockkit Retype flag.
+	// The instance name, not the lockkit Retype flag's value.
 	for _, typed := range []string{"wrong", "r", ""} {
 		if err := phone.Answer(it, true, "", typed); status(err) != http.StatusUnprocessableEntity {
 			t.Fatalf("production with %q typed: %v", typed, err)
@@ -318,14 +318,15 @@ func TestRouting(t *testing.T) {
 	if _, _, err := l.run(t, prod); err != nil {
 		t.Fatalf("production approved on the phone: %v", err)
 	}
-	// A plain read on production: no name asked (#105).
-	_, read := l.submit(t, ticket.RiskRead, true, "prod read")
-	it = item(t, phone, read)
+	// A production write whose lock does not ask for the retype: no name
+	// asked (#113).
+	_, write := l.submitFlags(t, ticket.RiskProdWrite, ticket.Flags{Production: true}, "prod write")
+	it = item(t, phone, write)
 	if !it.Answerable || it.Retype {
-		t.Fatalf("production read on mobile: %+v", it)
+		t.Fatalf("production write without the flag on mobile: %+v", it)
 	}
 	if err := phone.Answer(it, true, "", ""); err != nil {
-		t.Fatalf("production read approved with no name: %v", err)
+		t.Fatalf("production write approved with no name: %v", err)
 	}
 
 	e2 := newEnv(t, route.Rules{Only: map[string][]string{inst: {route.TTY}}})

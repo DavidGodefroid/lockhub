@@ -121,7 +121,7 @@ func TestPromptsVerbatim(t *testing.T) {
 }
 
 func TestProductionPromptVerbatim(t *testing.T) {
-	const want = "Production? (each approval needs the profile name typed) [y/N] "
+	const want = "Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] "
 	for _, lock := range []string{"locksql", "lockmq", "lockfile"} {
 		if got := Prompt(find(t, fieldsOf(t, lock, Defaults{}), "production", nil)); got != want {
 			t.Errorf("%s: %q, want %q", lock, got, want)
