@@ -19,6 +19,25 @@ between `lox up` and both.
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox up` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lox approve`, lea's deck |
 
+`$XDG_RUNTIME_DIR/lockhub` is on a tmpfs wiped at logout and reboot. Every
+`lox up` (and `lox init`, `lox add`, `lox remove`, which run it) makes it
+before starting anything, yours, mode `0700`, and repairs it: one of yours
+with another mode is closed, an empty one of another account (a Docker
+engine that restarted the hub while it was missing made it as root, `0755`)
+is removed and made again, and the hub starts again on it. Anything else (a
+link, a file, another account's directory that holds something or that lox
+cannot remove) is left as it is, and `lox up` prints the commands to run.
+The hub mounts it with `create_host_path: false`: when it is missing, the
+engine no longer makes it, the hub stays stopped until `lox up`.
+`create_host_path` is a Compose Specification option (Docker Compose v2
+honours it); a compose implementation that ignores it makes the missing
+directory as before (as root under a rootful engine), the hub refuses it
+and its error names the fix, and the next `lox up` repairs it.
+
+When `XDG_RUNTIME_DIR` is unset, the runtime directory is
+`$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox up` makes it (0700) and refuses one that is
+not yours, is a link, or that group or others can write.
+
 `lox up` refuses a `.lockfamily/` that is a link, not the user's, or
 writable by group or others, and keeps its own copy of up.json in its state
 directory. It writes up.json through a fresh file renamed into place (a

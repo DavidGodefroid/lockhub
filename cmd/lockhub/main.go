@@ -534,6 +534,29 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 	return r, nil
 }
 
+// facadeDirError says why the facade socket's directory is refused and
+// how to fix it. Under lox up it is the host's $XDG_RUNTIME_DIR/lockhub,
+// bind-mounted: a Docker engine that restarted the hub while it was missing
+// (a tmpfs, wiped at reboot) made it as root, mode 0755 (lockhub#112).
+func facadeDirError(dir string, fi os.FileInfo, err error) error {
+	found := ""
+	switch {
+	case err != nil:
+		found = "it is missing"
+	case !fi.IsDir():
+		found = "it is not a directory"
+	default:
+		found = fmt.Sprintf("it has mode %04o", fi.Mode().Perm())
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			found += fmt.Sprintf(", owner uid %d (this hub runs as uid %d)", st.Uid, os.Getuid())
+		}
+	}
+	return fmt.Errorf("%s: want a directory of mode 0700 owned by the hub's account, and %s: make it so (it holds --facade-socket). "+
+		"When lox up runs this hub, it is the host's $XDG_RUNTIME_DIR/lockhub, which Docker makes as root when it is missing: "+
+		`on the host, remove it (rmdir "$XDG_RUNTIME_DIR/lockhub", with sudo when root owns it), then run lox up, `+
+		"which makes it yours with mode 0700 and starts the hub again", dir, found)
+}
+
 // listenFacade serves the facade API on a unix socket created with mode
 // (0600 by default: the hub's own account only; lox up maps that account
 // to the host user).
@@ -547,7 +570,7 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...fun
 	// between listen and chmod.
 	dir := filepath.Dir(path)
 	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() || fi.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("%s: want a directory of mode 0700", dir)
+		return nil, facadeDirError(dir, fi, err)
 	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {

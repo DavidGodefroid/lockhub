@@ -138,7 +138,8 @@ func TestDoctorFindsProblems(t *testing.T) {
 			os.Remove(p)
 			os.WriteFile(p, nil, 0o600)
 		}, "FAIL facade socket"},
-		"state dir open": {func(d *Doctor, a *answers) { os.Chmod(d.State, 0o755) }, "FAIL state"},
+		"state dir open":  {func(d *Doctor, a *answers) { os.Chmod(d.State, 0o755) }, "FAIL state"},
+		"facade dir open": {func(d *Doctor, a *answers) { os.Chmod(filepath.Join(d.Runtime, "lockhub"), 0o755) }, "want 0700: run lox up (it repairs it"},
 		"bad hub key": {func(d *Doctor, a *answers) {
 			os.WriteFile(filepath.Join(d.State, "hub.pub"), []byte("nope\n"), 0o644)
 		}, "FAIL hub key"},

@@ -270,19 +270,32 @@ func (u *Up) Do(ctx context.Context) error {
 	hubPubPath := filepath.Join(u.State, "hub.pub")
 	appliedPath := filepath.Join(u.State, "applied.json")
 	facadesPath := filepath.Join(u.State, FacadesFile)
+	facadeMade := false
 	if u.Probe {
 		// A probe creates nothing: whatever is missing (a directory, a
 		// key, the applied state, a lock never applied) is a change, not
 		// something to make now.
-		if !u.probeReady(c, []string{u.State, hubData, facadeDir, facadeKeys}, hubPubPath, facadesPath, facadeKeys, appliedPath) {
+		if !u.probeReady(c, []string{u.State, hubData, facadeKeys}, facadeDir, hubPubPath, facadesPath, facadeKeys, appliedPath) {
 			return nil
 		}
 	} else {
-		for _, d := range []string{u.State, hubData, facadeDir, facadeKeys} {
+		for _, d := range []string{u.State, hubData, facadeKeys} {
 			if err := privateDir(d); err != nil {
 				return err
 			}
 		}
+		// The facade directory may be gone (a tmpfs, wiped at logout and
+		// reboot) or made as root by a Docker engine that restarted the hub
+		// on its own: made or repaired here, and the hub created again on
+		// it below (an existing hub still binds the old one).
+		made, note, err := readyFacadeDir(facadeDir, ownedByMe)
+		if err != nil {
+			return err
+		}
+		if note != "" {
+			fmt.Fprintln(u.Out, note)
+		}
+		facadeMade = made
 	}
 	// The new hub key, made before the review (lockhub keygen) and kept
 	// until it is the hub's.
@@ -681,6 +694,15 @@ func (u *Up) Do(ctx context.Context) error {
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}
+	// A hub created before binds the facade directory it started with,
+	// deleted since: one made or repaired above takes a new hub (compose up
+	// leaves an unchanged one as it is, its socket never appears). On the
+	// first apply there was none.
+	if facadeMade && !first {
+		if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--no-deps", "--force-recreate", "lockhub")...); err != nil {
+			return err
+		}
+	}
 	// The consoles read their keys and the hub's at start: the ones whose
 	// keys changed start again.
 	if rot.any() {
@@ -804,11 +826,16 @@ var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)
 // creating anything: the directories, the hub key, the facade keys and the
 // facade set exist, something was applied, and every declared lock was
 // applied (so its key already exists).
-func (u *Up) probeReady(c *Config, dirs []string, hubPub, facadeSet, facadeKeys, applied string) bool {
+func (u *Up) probeReady(c *Config, dirs []string, facadeDir, hubPub, facadeSet, facadeKeys, applied string) bool {
 	for _, d := range dirs {
 		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
 			return false
 		}
+	}
+	// The facade directory ready for the hub (yours, 0700): one Docker made
+	// as root is something lox up must repair, not "unchanged".
+	if checkPrivate(facadeDir) != nil {
+		return false
 	}
 	for _, f := range []string{hubPub, facadeSet} {
 		if _, err := os.Stat(f); err != nil {

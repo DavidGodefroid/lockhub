@@ -152,6 +152,11 @@ func Compose(c *Config, p Paths) string {
 	w("      - type: bind")
 	w("        source: %s", q(p.FacadeDir))
 	w("        target: /run/lockhub-facade")
+	// Never made by the engine: it would make a missing one as root, mode
+	// 0755, which the hub refuses (lockhub#112). Missing, the hub does not
+	// start until lox up makes it, the user's, mode 0700.
+	w("        bind:")
+	w("          create_host_path: false")
 	// The hub has no route out, unless a chat facade must reach its
 	// service or the mobile facade the push services: then through its own
 	// network, never a lock's. Its own networks: that route out, the
