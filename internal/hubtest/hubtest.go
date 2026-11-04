@@ -37,6 +37,7 @@ type Ticket struct {
 	Unchanged  bool   `json:"unchanged,omitempty"`
 	Production bool   `json:"production,omitempty"`
 	Retype     string `json:"retype,omitempty"`
+	NeverAuto  bool   `json:"never_auto,omitempty"`
 	Sig        string `json:"sig,omitempty"`
 }
 
@@ -90,7 +91,8 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 	}
 	info := hub.Info{ID: t.ID, Instance: t.Instance, KeyID: t.KeyID, Risk: t.Risk, PlanHash: t.PlanHash,
 		Created: time.Unix(t.Created, 0), TTL: time.Duration(t.TTL) * time.Second,
-		Production: t.Production, Retype: t.Retype, Flags: fmt.Sprintf("%v|%q", t.Production, t.Retype)}
+		Production: t.Production, Retype: t.Retype, NeverAuto: t.NeverAuto,
+		Flags: fmt.Sprintf("%v|%q|%v", t.Production, t.Retype, t.NeverAuto)}
 	if t.RenewsOf != "" {
 		info.Renews = &hub.Renewal{Of: t.RenewsOf, Unchanged: t.Unchanged}
 	}

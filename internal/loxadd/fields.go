@@ -34,6 +34,9 @@ type Field struct {
 	// Empty is "" for a required value, else the meaning of an empty answer.
 	Empty string
 	YesNo bool
+	// Silent: never asked. A flag answers it, else it takes Default as is
+	// ("" when there is none).
+	Silent bool
 	// Check says why v is refused ("" when it is fine); a is what was
 	// answered so far. The reason names the key, never the value. An empty
 	// answer takes Default before Check; Check("") means the empty answer
@@ -138,17 +141,6 @@ func Answer(f Field, typed string, a Answers) (value, reason string) {
 		}
 	}
 	return typed, ""
-}
-
-// hostIsLocal: host names this machine (loopback, localhost, or the name a
-// console gives the host).
-func hostIsLocal(host string) bool {
-	h := strings.ToLower(strings.Trim(host, "[]"))
-	if h == "localhost" || h == loxinit.DockerHost {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
 }
 
 func eq(key, val string) func(Answers) bool { return func(a Answers) bool { return a[key] == val } }
@@ -376,36 +368,14 @@ func vaultFields(d Defaults, prefix, suggested string, when func(Answers) bool) 
 	)
 }
 
-// tlsField is one of the three TLS questions, exactly one of which is asked:
-// production (default verify-full, even over a detected mode), a database on
-// this machine (default disable) or another (default verify-full). A detected
-// mode beats the host rule but not production; a draft beats all.
-func tlsField(detected string, variant string) Field {
-	def := "verify-full"
-	switch variant {
-	case "local":
-		def = "disable"
-		fallthrough
-	case "remote":
-		if detected != "" {
-			def = detected
-		}
-	}
-	return Field{Key: "tls", Label: "TLS: disable, prefer, require, verify-ca or verify-full", Choices: TLSModes, Default: def,
+// tlsField is never asked: transport security is the driver's, whose
+// default (prefer) applies when the profile has no tls. --tls, a mode the
+// project's files name (detected) or a draft is written as is.
+func tlsField(detected string) Field {
+	return Field{Key: "tls", Label: "TLS: disable, prefer, require, verify-ca or verify-full", Choices: TLSModes, Default: detected,
+		Empty: "the driver's default (prefer)", Silent: true,
 		Check: oneOf("tls", "want disable, prefer, require, verify-ca or verify-full", TLSModes...),
-		When: func(a Answers) bool {
-			if a["engine"] == "sqlite" {
-				return false
-			}
-			prod := strings.HasPrefix(strings.ToLower(a["production"]), "y")
-			switch variant {
-			case "prod":
-				return prod
-			case "local":
-				return !prod && hostIsLocal(a["host"])
-			}
-			return !prod && !hostIsLocal(a["host"])
-		}}
+		When:  not(eq("engine", "sqlite"))}
 }
 
 func vaultName(d Defaults, suggested string) string {
@@ -418,7 +388,7 @@ func vaultName(d Defaults, suggested string) string {
 func sqlFields(d Defaults) []Field {
 	engines := []string{loxinit.KindPostgres, loxinit.KindMySQL, loxinit.KindMariaDB, "sqlite"}
 	engine, host, user, database := loxinit.KindPostgres, loxinit.DockerHost, "", ""
-	var tls string // a detected TLS mode, which beats the host rule
+	var tls string // a detected TLS mode, written as is
 	var s loxinit.Source
 	if d.Source != nil {
 		s = *d.Source
@@ -450,9 +420,7 @@ func sqlFields(d Defaults) []Field {
 		{Key: "user", Label: "User", Empty: "the console asks for it at start with the password", Default: user, Check: text("user"), When: remote},
 		{Key: "database", Label: "Database", Empty: "the server's default database", Default: database, Check: text("database"), When: remote},
 		productionField(nil),
-		tlsField(tls, "prod"),
-		tlsField(tls, "local"),
-		tlsField(tls, "remote"),
+		tlsField(tls),
 		credentialsField(remote),
 	}
 	fs = append(fs, vaultFields(d, "database/creds/", suggested, remote)...)

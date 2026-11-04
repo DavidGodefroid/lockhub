@@ -24,7 +24,12 @@ signed decision binds the scope's hash (`plan_hash`), and the hub's audit
 records carry `"risk":"grant"`. The lock ends a grant (`:revoke`, end of
 session, expiry); a revoke sent from the hub is not there yet. Approving a production ticket
 needs its instance name typed, in the terminal, the deck and on the phone
-alike (the hub checks it). A
+alike (the hub checks it), except a plain read (risk `read`, not
+`never_auto`): `y` approves it and its screen keeps the production banner.
+The queue's `retype` field gives the name to type, empty when none is
+needed, so every facade applies the hub's rule. To approve many reads at
+once, approve a grant: one decision for a read scope and a time window,
+then the reads inside it need no ticket. A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
 In `lox approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
@@ -177,7 +182,7 @@ you remove `require_device` and run `lox up`. `lox mobile pair` checks the
 phone's origin against the one the last `lox up` applied.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
-secrets yet) and `grant` (a wider approval than one read); production tickets ask for the instance name; `hub.routing`
+secrets yet) and `grant` (a wider approval than one read); production tickets but a plain read ask for the instance name; `hub.routing`
 narrows it per instance.
 
 **Limits.** The web app's code comes from the hub. A hub that serves

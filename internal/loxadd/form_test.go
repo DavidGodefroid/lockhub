@@ -77,13 +77,13 @@ func TestFormGolden(t *testing.T) {
 		typed      []string
 		want       Answers
 	}{
-		{"add-locksql-ask", "locksql", Defaults{}, []string{"", "", "", "", "", "", "", "", ""},
-			Answers{"engine": "postgres", "host": "host.docker.internal", "port": "5432", "tls": "disable", "credentials": "ask", "name": "db"}},
-		{"add-locksql-vault-first", "locksql", Defaults{}, []string{"mariadb", "db.example.com", "", "shop", "orders", "y", "", "vault", "", "https://vault.example.com:8200", "", "", "orders"},
-			Answers{"engine": "mariadb", "port": "3306", "production": "y", "tls": "verify-full", "credentials": "vault", "vault-path": "database/creds/orders", "vault-address": "https://vault.example.com:8200", "name": "orders"}},
-		{"add-locksql-vault-second", "locksql", Defaults{VaultSet: true, Declared: []string{"db"}}, []string{"", "", "", "", "", "", "", "vault", "", ""},
+		{"add-locksql-ask", "locksql", Defaults{}, []string{"", "", "", "", "", "", "", ""},
+			Answers{"engine": "postgres", "host": "host.docker.internal", "port": "5432", "tls": "", "credentials": "ask", "name": "db"}},
+		{"add-locksql-vault-first", "locksql", Defaults{}, []string{"mariadb", "db.example.com", "", "shop", "orders", "y", "vault", "", "https://vault.example.com:8200", "", "", "orders"},
+			Answers{"engine": "mariadb", "port": "3306", "production": "y", "tls": "", "credentials": "vault", "vault-path": "database/creds/orders", "vault-address": "https://vault.example.com:8200", "name": "orders"}},
+		{"add-locksql-vault-second", "locksql", Defaults{VaultSet: true, Declared: []string{"db"}}, []string{"", "", "", "", "", "", "vault", "", ""},
 			Answers{"credentials": "vault", "vault-path": "database/creds/db-2", "name": "db-2"}},
-		{"add-locksql-reask", "locksql", Defaults{}, []string{"oracle", "", "db.example.com:5432", "host.docker.internal", "0", "70000", "5432", "", "", "maybe", "n", "", "", ""},
+		{"add-locksql-reask", "locksql", Defaults{}, []string{"oracle", "", "db.example.com:5432", "host.docker.internal", "0", "70000", "5432", "", "", "maybe", "n", "", ""},
 			Answers{"engine": "postgres", "port": "5432", "production": "n"}},
 		{"add-lockmq", "lockmq", Defaults{Source: &shopMQ}, []string{"", "", "-", "", "", "", ""},
 			Answers{"url": "http://host.docker.internal:55672", "user": "orders", "vhost": "", "credentials": "ask", "name": "mq"}},
@@ -277,7 +277,7 @@ func TestFormEOFPartial(t *testing.T) {
 
 func TestFormHintsGolden(t *testing.T) {
 	var out bytes.Buffer
-	f := &Form{In: bufio.NewReaderSize(&typist{lines: []string{"", "", "", "", "", "", "", "", ""}, out: &out}, 16), Out: &out, Hints: []loxinit.Source{shopDB}}
+	f := &Form{In: bufio.NewReaderSize(&typist{lines: []string{"", "", "", "", "", "", "", ""}, out: &out}, 16), Out: &out, Hints: []loxinit.Source{shopDB}}
 	if _, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{Source: &shopDB}), nil); err != nil {
 		t.Fatal(err)
 	}

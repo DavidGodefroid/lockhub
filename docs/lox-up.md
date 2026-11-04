@@ -264,9 +264,14 @@ each console with a terminal (`tty: true`, `stdin_open: true`) as its
 image's console account, and prints `lox attach <instance>` for each; that
 command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
 Docker log (`logging: none`, as with their own launchers: the log would keep
-every screen), so attaching does not replay the pending question; on a
-first start it is the policy review, `Apply these changes? [y/N]`. A console
-that restarts asks again: attach again. Locks are pending (agents get no
+every screen), so attaching does not replay the pending question, and lox
+cannot tell which one it is: the policy review, `Apply these changes?
+[y/N]`, on a first start or after a loosening; for a production profile,
+`Type the profile name "<instance>" to continue:` (on every start, so on a
+restart whose policy is already approved it is this one, not the review);
+or a password its profile does not take from Vault. A detach ends lox
+attach with status 0: the console keeps running. A console that restarts
+asks again: attach again. Locks are pending (agents get no
 answer) until answered. Memory and process limits are the ones each lock's
 own launcher sets.
 

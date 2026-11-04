@@ -308,6 +308,49 @@ func TestProductionNeedsTheInstanceName(t *testing.T) {
 	}
 }
 
+// A plain read on a production lock is approved without the instance
+// name (#105): the name is asked where it adds safety, on every other
+// risk and on a never_auto read. RetypeName says which, for facades.
+func TestProductionPlainReadNeedsNoName(t *testing.T) {
+	a := hubtest.NewLock("crm-prod")
+	e := hubtest.New(t, 0, a)
+	cases := []struct {
+		id, risk  string
+		neverAuto bool
+		name      string
+	}{
+		{"R", "read", false, ""},
+		{"RN", "read", true, "crm-prod"},
+		{"RP", "read-pii", false, "crm-prod"},
+		{"W", "write", false, "crm-prod"},
+		{"PW", "prod-write", false, "crm-prod"},
+		{"G", "grant", true, "crm-prod"},
+		{"L", "policy-loosen", false, "crm-prod"},
+		{"U", "unlock", false, "crm-prod"},
+	}
+	for _, c := range cases {
+		prod := func(t *hubtest.Ticket) { t.Production, t.NeverAuto = true, c.neverAuto }
+		raw := a.TicketWith(c.id, c.risk, e.Clock.T, time.Hour, prod)
+		if _, _, err := e.Hub.Push(ctx, "crm-prod", raw); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.Hub.RetypeName(store.Ticket{Instance: "crm-prod", ID: c.id, Raw: raw}); got != c.name {
+			t.Errorf("%s: RetypeName %q, want %q", c.id, got, c.name)
+		}
+		_, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: c.id}, hub.Verdict{Approved: true, ApproverID: "host:david", Facade: "tty"})
+		if c.name == "" && err != nil {
+			t.Errorf("%s with no name typed: %v", c.id, err)
+		}
+		if c.name != "" && !errors.Is(err, hub.ErrRetype) {
+			t.Errorf("%s approved with no name typed: %v", c.id, err)
+		}
+	}
+	plain := a.Ticket("NP", "write", e.Clock.T, time.Hour)
+	if got := e.Hub.RetypeName(store.Ticket{Instance: "crm-prod", ID: "NP", Raw: plain}); got != "" {
+		t.Errorf("not production: RetypeName %q", got)
+	}
+}
+
 // A hub with no routing (no routing.json, #61) decides nothing from a chat
 // facade, whatever the risk.
 func TestNoRoutingNoChat(t *testing.T) {
