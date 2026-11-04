@@ -283,12 +283,23 @@ each console with a terminal (`tty: true`, `stdin_open: true`) as its
 image's console account, and prints `lox attach <instance>` for each; that
 command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
 Docker log (`logging: none`, as with their own launchers: the log would keep
-every screen), so attaching does not replay the pending question, and lox
-cannot tell which one it is: the policy review, `Apply these changes?
-[y/N]`, on a first start or after a loosening; for a production profile,
-`Type the profile name "<instance>" to continue:` (on every start, so on a
-restart whose policy is already approved it is this one, not the review);
-or a password its profile does not take from Vault. A detach ends lox
+every screen), so attaching does not replay the pending question. A
+console that records it (lockkit's question file next to its socket,
+`/run/<type>/<project key>-<profile>.question`: locksql and the
+lockkit-based locks from their releases after DavidGodefroid/lockkit#127)
+is asked for it first. A console that listens on its socket serves: lox
+attach prints `it serves and asks nothing now`, whatever file is left.
+Otherwise it reads that console's own file only (a regular file of the
+console's account, mode 0600; with no profile named, the only
+`<project key>-*.question`), at most 200 characters, escaped for the
+terminal, and prints `attached to lock NAME: the console asks "<question>"`
+(after a restart of an approved production profile, typically the Vault
+token or the password, not the profile name). With an older
+console lox cannot tell which question it is, and lists what it may be: the
+policy review, `Apply these changes? [y/N]`, on a first start or after a
+loosening; for a production profile whose policy was not confirmed yet, its
+profile name; or a credential its profile does not take from Vault, the
+Vault token included. A detach ends lox
 attach with status 0: the console keeps running. A console that restarts
 asks again: attach again. Locks are pending (agents get no
 answer) until answered. Memory and process limits are the ones each lock's
