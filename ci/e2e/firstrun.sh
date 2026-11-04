@@ -133,8 +133,8 @@ block() { awk -v n="  $1:" '$0 == n { on = 1; print; next } on && /^  [^ ]/ { on
 
 say "lox add locksql for orders: the form, the review, the console's questions"
 # The form's defaults are the found source's (postgres on
-# host.docker.internal:55432, user and database shop, TLS disable); the
-# typed answers name the lock orders. The console asks its policy, the
+# host.docker.internal:55432, user and database shop; its TLS disable is
+# written unasked); the typed answers name the lock orders. The console asks its policy, the
 # password, the privilege audit and the PII proposal; detaching leaves it
 # running.
 # shellcheck disable=SC2086
@@ -145,7 +145,6 @@ python3 "$here/expect.py" 900 \
 	'User (optional:' 'shop\n' \
 	'Database (optional:' 'shop\n' \
 	'Production? (each approval' '\n' \
-	'TLS: disable, prefer' '\n' \
 	'Credentials: ask' '\n' \
 	'Name (required)' 'orders\n' \
 	'Apply? [y/N]' 'y\n' \
@@ -218,7 +217,6 @@ if [ "$vault" = 1 ]; then
 		'User (optional:' 'shop\n' \
 		'Database (optional:' 'inventory\n' \
 		'Production? (each approval' '\n' \
-		'TLS: disable, prefer' '\n' \
 		'Credentials: ask' 'vault\n' \
 		'Vault path (required)' 'secret/data/shop/inventory\n' \
 		'Vault address, such as' 'http://host.docker.internal:58200\n' \
