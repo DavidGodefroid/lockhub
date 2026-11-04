@@ -3,10 +3,22 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
-## Unreleased
+## v0.8.0 (2026-11-04)
+
+Supported locks: as v0.7.0.
 
 Upgrade notes (behaviour changes):
 
+- The hub no longer crash-loops after a logout or a reboot (lockhub#112).
+  `lox up` (and `lox init`, `lox add`, `lox remove`) makes the facade
+  directory `$XDG_RUNTIME_DIR/lockhub` before starting anything, owned by
+  you, mode 0700, and repairs one Docker made as root (an empty one is
+  removed and made again, with a note). The hub's compose file mounts it
+  with `create_host_path: false`, so Docker never makes it again: a hub
+  restarted while it is missing stays stopped until the next `lox up`, which
+  makes it and recreates the hub. A parent directory that is not yours, or
+  is writable by others, is refused. The first `lox up` after the upgrade
+  recreates the hub once.
 - Approving a production ticket no longer needs a typed name
   (lockhub#113): `y` in `lox approve`, the approve button on the phone or
   the lea deck approves it, whatever its risk. No current Lock (locksql,
