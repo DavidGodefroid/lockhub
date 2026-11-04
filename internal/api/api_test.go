@@ -2,9 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/DavidGodefroid/lockhub/internal/hub"
 )
 
 func TestHello(t *testing.T) {
@@ -49,5 +52,21 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 		if resp.StatusCode != c.want {
 			t.Errorf("%s %s: status %d, want %d", c.method, c.path, resp.StatusCode, c.want)
 		}
+	}
+}
+
+// A ticket of a lock no longer declared is gone (410 lock_removed), not
+// an authentication failure: 401 stays for the signed lock API.
+func TestLockRemovedIs410(t *testing.T) {
+	rec := httptest.NewRecorder()
+	fail(rec, fmt.Errorf("decide: %w", hub.ErrLockRemoved))
+	var e Error
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); rec.Code != http.StatusGone || err != nil || e.Error != "lock_removed" {
+		t.Errorf("fail(ErrLockRemoved) = %d %s", rec.Code, rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	fail(rec, hub.ErrUnknownLock)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("fail(ErrUnknownLock) = %d", rec.Code)
 	}
 }

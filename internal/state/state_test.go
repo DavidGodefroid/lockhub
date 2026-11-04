@@ -6,14 +6,15 @@ import (
 )
 
 func TestNext(t *testing.T) {
-	states := []State{Pending, Approved, Denied, Withdrawn, Expired, Consumed}
-	events := []Event{Approve, Deny, Withdraw, Expire, Consume}
+	states := []State{Pending, Approved, Denied, Withdrawn, Expired, Consumed, LockRemoved}
+	events := []Event{Approve, Deny, Withdraw, Expire, Consume, RemoveLock}
 	allowed := map[[2]string]State{
-		{"pending", "approve"}:  Approved,
-		{"pending", "deny"}:     Denied,
-		{"pending", "withdraw"}: Withdrawn,
-		{"pending", "expire"}:   Expired,
-		{"approved", "consume"}: Consumed,
+		{"pending", "approve"}:     Approved,
+		{"pending", "deny"}:        Denied,
+		{"pending", "withdraw"}:    Withdrawn,
+		{"pending", "expire"}:      Expired,
+		{"pending", "remove_lock"}: LockRemoved,
+		{"approved", "consume"}:    Consumed,
 	}
 	for _, s := range states {
 		for _, e := range events {
@@ -31,7 +32,7 @@ func TestNext(t *testing.T) {
 }
 
 func TestFinal(t *testing.T) {
-	for s, want := range map[State]bool{Pending: false, Approved: false, Denied: true, Withdrawn: true, Expired: true, Consumed: true} {
+	for s, want := range map[State]bool{Pending: false, Approved: false, Denied: true, Withdrawn: true, Expired: true, Consumed: true, LockRemoved: true} {
 		if Final(s) != want {
 			t.Errorf("Final(%s) = %v", s, !want)
 		}
@@ -50,7 +51,7 @@ func TestRenewed(t *testing.T) {
 	if _, err := Next(Approved, Expire); err == nil {
 		t.Error("Expire ends an approved ticket")
 	}
-	for s, want := range map[State]State{Pending: Expired, Approved: Expired, Denied: Denied, Consumed: Consumed, Withdrawn: Withdrawn, Expired: Expired} {
+	for s, want := range map[State]State{Pending: Expired, Approved: Expired, Denied: Denied, Consumed: Consumed, Withdrawn: Withdrawn, Expired: Expired, LockRemoved: LockRemoved} {
 		got, ok := Renewed(s)
 		if got != want || ok != (s == Pending || s == Approved) {
 			t.Errorf("Renewed(%s) = %s, %v", s, got, ok)

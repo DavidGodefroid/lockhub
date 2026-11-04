@@ -118,6 +118,10 @@ var (
 	ErrBadRequest  = errors.New("bad request")
 	ErrRetype      = errors.New("approving this production ticket needs its instance name typed exactly")
 	ErrDevice      = errors.New("device refused")
+	// ErrLockRemoved: the ticket's lock is no longer declared (lox
+	// remove), so the ticket cannot be checked nor decided. Not
+	// ErrUnknownLock, which is a lock API caller's authentication.
+	ErrLockRemoved = errors.New("the ticket's lock is no longer declared")
 )
 
 // DefaultMaxPending is the hub's cap on an instance's pending tickets.
@@ -396,7 +400,18 @@ func (h *Hub) Queue(ctx context.Context, since uint64, wait time.Duration) ([]st
 	ver = h.queueVer
 	h.mu.Unlock()
 	tks, err := h.c.Store.Tickets(ctx, state.Pending)
-	return tks, ver, err
+	if err != nil {
+		return nil, ver, err
+	}
+	// A ticket of a lock no longer declared cannot be decided: never
+	// listed, even before the sweep closes it.
+	out := tks[:0]
+	for _, tk := range tks {
+		if _, ok := h.c.Locks[tk.Instance]; ok {
+			out = append(out, tk)
+		}
+	}
+	return out, ver, nil
 }
 
 // Withdraw is a lock taking back one of its pending tickets.
@@ -435,6 +450,12 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if err != nil {
 			return err
 		}
+		// A lock no longer declared (lox remove): its stored tickets
+		// cannot be checked, so none is decided.
+		key, ok := h.c.Locks[tk.Instance]
+		if !ok || tk.State == state.LockRemoved {
+			return ErrLockRemoved
+		}
 		ev := state.Deny
 		if v.Approved {
 			ev = state.Approve
@@ -449,12 +470,6 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		now := h.c.Now()
 		if !tk.Expires.IsZero() && !tk.Expires.After(now) {
 			return ErrExpired
-		}
-		// A lock no longer declared (lox remove): its stored tickets
-		// cannot be checked, so none is decided.
-		key, ok := h.c.Locks[tk.Instance]
-		if !ok {
-			return ErrUnknownLock
 		}
 		info, err := h.c.Codec.VerifyTicket(key, tk.Raw)
 		if err != nil {
@@ -588,8 +603,9 @@ func (h *Hub) Poll(ctx context.Context, instance string, since int64, wait time.
 	}
 }
 
-// Sweep expires pending tickets past their TTL and drops old request
-// nonces and hub requests. Run it periodically.
+// Sweep expires pending tickets past their TTL, ends lock_removed the
+// pending tickets of locks no longer declared, and drops old request
+// nonces and hub requests. Run it at start, then periodically.
 func (h *Hub) Sweep(ctx context.Context) error {
 	// Records of committed changes a failed flush left in the outbox; while
 	// they cannot be logged, expiries are refused like any change (Decide
@@ -610,12 +626,35 @@ func (h *Hub) Sweep(ctx context.Context) error {
 				break
 			}
 		}
+		errs = append(errs, h.closeRemoved(ctx))
 	} else {
 		errs = append(errs, ferr)
 	}
 	h.purgeRequests(now)
 	errs = append(errs, h.c.Store.PurgeNonces(ctx, now.Add(-2*RequestWindow)))
 	return errors.Join(errs...)
+}
+
+// closeRemoved ends lock_removed the pending tickets of the locks no
+// longer declared (lox remove, or a lock dropped from lockfamily.yaml by
+// hand): their signatures cannot be checked, so no facade can decide
+// them.
+func (h *Hub) closeRemoved(ctx context.Context) error {
+	tks, err := h.c.Store.Tickets(ctx, state.Pending)
+	if err != nil {
+		return err
+	}
+	for _, tk := range tks {
+		if _, ok := h.c.Locks[tk.Instance]; ok {
+			continue
+		}
+		err := h.change(ctx, store.Ref{Instance: tk.Instance, ID: tk.ID}, state.RemoveLock, audit.Record{Reason: "lock no longer declared"})
+		var te state.ErrTransition
+		if err != nil && !errors.As(err, &te) && !errors.Is(err, store.ErrStale) {
+			return err
+		}
+	}
+	return nil
 }
 
 // Field limits: what a lock or a facade sends is bounded before it

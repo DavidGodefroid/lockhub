@@ -265,6 +265,8 @@ func fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusServiceUnavailable, "audit_down", "the hub's audit log is not writable: retry later")
 	case errors.Is(err, hub.ErrExpired):
 		writeErr(w, http.StatusGone, "expired", err.Error())
+	case errors.Is(err, hub.ErrLockRemoved):
+		writeErr(w, http.StatusGone, "lock_removed", err.Error())
 	case errors.Is(err, hub.ErrBadAnswer):
 		writeErr(w, http.StatusBadRequest, "bad_answer", err.Error())
 	case errors.Is(err, hub.ErrNotRouted):
