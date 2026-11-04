@@ -479,12 +479,42 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 	project := family.Project(family.Workspace(abs))
 	state := stateDir(project)
 	// The console has no log (it would keep its screens): attaching
-	// replays nothing.
-	fmt.Fprintln(stdout, "attached to lock", name, "(its pending question is not shown again: it is the policy review, \"Apply these changes? [y/N]\", on a first start; detach with Ctrl-P Ctrl-Q)")
+	// replays nothing, and lox cannot tell which question it waits for.
+	fmt.Fprintf(stdout, "attached to lock %s (its pending question is not shown again: the policy review, \"Apply these changes? [y/N]\", on a first start or after a loosening; for a production profile, \"Type the profile name %q to continue:\"; or a password its profile does not take from Vault; detach with Ctrl-P Ctrl-Q)\n", name, name)
 	cmd := exec.Command("docker", "compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
 		"-f", filepath.Join(state, "compose.yaml"), "attach", "lock-"+name)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	return cmd.Run()
+	detach := &escapeWatch{w: stderr}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, detach
+	err := cmd.Run()
+	// Detaching (Ctrl-P Ctrl-Q) ends docker's attach with status 1 and
+	// "read escape sequence": the console keeps running.
+	if err != nil && detach.seen {
+		fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
+		return nil
+	}
+	return err
+}
+
+// escapeSequence is docker's message when the terminal detaches.
+const escapeSequence = "read escape sequence"
+
+// escapeWatch passes docker's stderr through and notes whether it said
+// escapeSequence.
+type escapeWatch struct {
+	w    io.Writer
+	tail string
+	seen bool
+}
+
+func (e *escapeWatch) Write(p []byte) (int, error) {
+	if !e.seen {
+		e.tail += string(p)
+		e.seen = strings.Contains(e.tail, escapeSequence)
+		if n := len(escapeSequence) - 1; len(e.tail) > n {
+			e.tail = e.tail[len(e.tail)-n:]
+		}
+	}
+	return e.w.Write(p)
 }
 
 // pinRelease is the image of repo's release tag (the latest when tag is
