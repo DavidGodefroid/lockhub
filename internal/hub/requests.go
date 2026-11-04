@@ -356,7 +356,7 @@ func (h *Hub) requestable(ctx context.Context, ref store.Ref, a Asker, st state.
 	}
 	key, ok := h.c.Locks[tk.Instance]
 	if !ok {
-		return tk, Info{}, ErrUnknownLock
+		return tk, Info{}, ErrLockRemoved
 	}
 	info, err := h.c.Codec.VerifyTicket(key, tk.Raw)
 	if err != nil {
@@ -490,7 +490,7 @@ func (h *Hub) reapprove(ctx context.Context, old store.Ref, oldInfo Info, id str
 	// checked, so none is approved.
 	key, ok := h.c.Locks[tk.Instance]
 	if !ok {
-		return false, ErrUnknownLock
+		return false, ErrLockRemoved
 	}
 	info, err := h.c.Codec.VerifyTicket(key, tk.Raw)
 	if err != nil {

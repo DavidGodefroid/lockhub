@@ -679,7 +679,7 @@ func TestRenewOfRemovedLockRefused(t *testing.T) {
 		delete(declared, "crm")
 		return `{"ticket":"NEW"}`
 	})
-	if _, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "OLD"}, tty); !errors.Is(err, hub.ErrUnknownLock) {
-		t.Errorf("Renew = %v, want ErrUnknownLock", err)
+	if _, err := e.Hub.Renew(ctx, store.Ref{Instance: "crm", ID: "OLD"}, tty); !errors.Is(err, hub.ErrLockRemoved) {
+		t.Errorf("Renew = %v, want ErrLockRemoved", err)
 	}
 }

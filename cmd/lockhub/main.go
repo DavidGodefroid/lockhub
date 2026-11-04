@@ -574,18 +574,19 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...fun
 	return srv, nil
 }
 
-// sweep expires tickets past their TTL every 30 s.
+// sweep runs the hub's sweep at start (tickets of a lock lox remove took
+// out end at once), then every 30 s.
 func sweep(ctx context.Context, h *hub.Hub, stderr io.Writer) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
+		if err := h.Sweep(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintln(stderr, "lockhub: sweep:", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := h.Sweep(ctx); err != nil && ctx.Err() == nil {
-				fmt.Fprintln(stderr, "lockhub: sweep:", err)
-			}
 		}
 	}
 }

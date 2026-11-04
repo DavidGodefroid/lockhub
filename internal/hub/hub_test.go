@@ -84,17 +84,43 @@ func TestHubWithoutLocks(t *testing.T) {
 	}
 }
 
-// A stored ticket whose lock is no longer declared is refused, not a panic.
-func TestDecideTicketOfRemovedLock(t *testing.T) {
-	a := hubtest.NewLock("crm-prod")
+// A stored ticket whose lock is no longer declared is refused as
+// lock_removed (not as an unknown lock, which the API answers 401), is
+// never listed in the queue, and the sweep closes it, audited.
+func TestTicketOfRemovedLock(t *testing.T) {
+	a, b := hubtest.NewLock("crm-prod"), hubtest.NewLock("other")
 	var declared map[string]ed25519.PublicKey
-	e := hubtest.NewWith(t, func(c *hub.Config) { declared = c.Locks }, a)
-	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "read", e.Clock.T, 24*time.Hour)); err != nil {
+	e := hubtest.NewWith(t, func(c *hub.Config) { declared = c.Locks }, a, b)
+	if _, _, err := e.Hub.Push(ctx, "crm-prod", a.Ticket("T1", "read", e.Clock.T, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.Hub.Push(ctx, "other", b.Ticket("K", "read", e.Clock.T, 0)); err != nil {
 		t.Fatal(err)
 	}
 	delete(declared, "crm-prod")
-	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: "T1"}, approve("T1")); !errors.Is(err, hub.ErrUnknownLock) {
-		t.Errorf("Decide = %v, want ErrUnknownLock", err)
+	ref := store.Ref{Instance: "crm-prod", ID: "T1"}
+	if _, err := e.Hub.Decide(ctx, ref, approve("T1")); !errors.Is(err, hub.ErrLockRemoved) {
+		t.Errorf("Decide = %v, want ErrLockRemoved", err)
+	}
+	if tks, _, err := e.Hub.Queue(ctx, 0, 0); err != nil || len(tks) != 1 || tks[0].ID != "K" {
+		t.Errorf("Queue = %v, %v: want only the declared lock's ticket", tks, err)
+	}
+
+	if err := e.Hub.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ps, _ := e.Store.Tickets(ctx, state.LockRemoved); len(ps) != 1 || ps[0].ID != "T1" {
+		t.Errorf("lock_removed = %v", ps)
+	}
+	if ps, _ := e.Store.Tickets(ctx, state.Pending); len(ps) != 1 || ps[0].ID != "K" {
+		t.Errorf("pending = %v", ps)
+	}
+	if _, err := e.Hub.Decide(ctx, ref, approve("T1")); !errors.Is(err, hub.ErrLockRemoved) {
+		t.Errorf("Decide after the sweep = %v, want ErrLockRemoved", err)
+	}
+	b2, _ := os.ReadFile(e.Audit)
+	if !strings.Contains(string(b2), `"event":"remove_lock"`) || !strings.Contains(string(b2), `"state":"lock_removed"`) {
+		t.Errorf("audit has no remove_lock record:\n%s", b2)
 	}
 }
 

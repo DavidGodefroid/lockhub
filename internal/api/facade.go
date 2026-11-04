@@ -269,7 +269,7 @@ func (f *facades) renew(w http.ResponseWriter, r *http.Request) {
 }
 
 // TicketState answers GET /v1/tickets/{instance}/{id}: the ticket's state
-// (pending, approved, denied, withdrawn, expired, consumed).
+// (pending, approved, denied, withdrawn, expired, consumed, lock_removed).
 type TicketState struct {
 	ID       string     `json:"id"`
 	Instance string     `json:"instance"`

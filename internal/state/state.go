@@ -3,14 +3,17 @@
 //	pending ──approve──► approved ──consume──► consumed
 //	   ├────deny─────► denied        └──renewed──► expired
 //	   ├────withdraw─► withdrawn
-//	   └────expire───► expired
+//	   ├────expire───► expired
+//	   └─remove_lock─► lock_removed
 //
 // Every state but pending and approved is final. A ticket gets at most one
-// decision. An approved ticket expires only when the lock asks again for
-// it (its approval aged past its risk class's TTL before the run, decision
-// H1, and the lock pushed a renewal): Renewed, not Next, since no event
-// of the table (a sweep's Expire) may end an approval. An expired ticket
-// is asked again by a new ticket, never reopened.
+// decision. A pending ticket of a lock no longer declared (lox remove)
+// cannot be checked any more: the hub ends it lock_removed. An approved
+// ticket expires only when the lock asks again for it (its approval aged
+// past its risk class's TTL before the run, decision H1, and the lock
+// pushed a renewal): Renewed, not Next, since no event of the table (a
+// sweep's Expire) may end an approval. An expired ticket is asked again
+// by a new ticket, never reopened.
 package state
 
 import "fmt"
@@ -25,6 +28,8 @@ const (
 	Withdrawn State = "withdrawn"
 	Expired   State = "expired"
 	Consumed  State = "consumed"
+	// LockRemoved: its lock is no longer declared.
+	LockRemoved State = "lock_removed"
 )
 
 // Event moves a ticket from one state to another.
@@ -36,10 +41,12 @@ const (
 	Withdraw Event = "withdraw"
 	Expire   Event = "expire"
 	Consume  Event = "consume"
+	// RemoveLock ends a pending ticket whose lock is no longer declared.
+	RemoveLock Event = "remove_lock"
 )
 
 var next = map[State]map[Event]State{
-	Pending:  {Approve: Approved, Deny: Denied, Withdraw: Withdrawn, Expire: Expired},
+	Pending:  {Approve: Approved, Deny: Denied, Withdraw: Withdrawn, Expire: Expired, RemoveLock: LockRemoved},
 	Approved: {Consume: Consumed},
 }
 
@@ -77,7 +84,7 @@ func Final(s State) bool { return len(next[s]) == 0 }
 // Valid reports whether s is a known state.
 func Valid(s State) bool {
 	switch s {
-	case Pending, Approved, Denied, Withdrawn, Expired, Consumed:
+	case Pending, Approved, Denied, Withdrawn, Expired, Consumed, LockRemoved:
 		return true
 	}
 	return false
