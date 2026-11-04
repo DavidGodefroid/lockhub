@@ -143,6 +143,33 @@ func TestProductionRetype(t *testing.T) {
 	}
 }
 
+// A plain read on production is approved with y (#105): the screen
+// keeps its PRODUCTION banner, the name is not asked. The queue says so
+// (retype empty) for every facade; a read-pii ticket still asks it.
+func TestProductionPlainReadNoRetype(t *testing.T) {
+	e := setup(t)
+	r := e.push(t, ticket.RiskRead, true, "SELECT id FROM customers LIMIT 1")
+	p := e.push(t, ticket.RiskReadPII, true, "SELECT email FROM customers LIMIT 1")
+	items, _, err := approve.Dial(e.sock).Queue(context.Background(), 0, 0)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("queue %v %v", items, err)
+	}
+	if items[0].ID != r || items[0].Retype != "" || items[1].ID != p || items[1].Retype != "crm" {
+		t.Errorf("queue retype: %q=%q %q=%q", items[0].ID, items[0].Retype, items[1].ID, items[1].Retype)
+	}
+	out := e.run(t, "y\n")
+	if e.state(t, r) != state.Approved {
+		t.Fatalf("state %s\n%s", e.state(t, r), out)
+	}
+	if !strings.Contains(out, "PRODUCTION") || strings.Contains(out, "type the instance name") {
+		t.Errorf("output:\n%s", out)
+	}
+	out = e.run(t, "y\ncrm\n")
+	if e.state(t, p) != state.Approved || !strings.Contains(out, `type the instance name "crm" to approve`) {
+		t.Errorf("read-pii: state %s\n%s", e.state(t, p), out)
+	}
+}
+
 // A grant shows what it is and its scope (the lock's screen) before the
 // answer prompt, and a production one still needs the instance name.
 func TestGrantShowsScope(t *testing.T) {

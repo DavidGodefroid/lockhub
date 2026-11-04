@@ -780,11 +780,9 @@ func (s *Service) queue(w http.ResponseWriter, r *http.Request) {
 			e := t.Expires
 			it.Expires = &e
 		}
-		var tk ticket.Ticket
-		if err := json.Unmarshal(t.Raw, &tk); err == nil {
-			// Every production ticket asks for its instance name.
-			it.Retype = tk.Flags.Production
-		}
+		// The hub's rule: a production ticket asks for its instance name,
+		// but a plain read (#105).
+		it.Retype = s.c.Hub.RetypeName(t) != ""
 		if err := rules.Allowed(t.Instance, route.Mobile, t.Risk); err != nil {
 			it.Why = err.Error()
 		} else {

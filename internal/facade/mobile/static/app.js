@@ -271,7 +271,7 @@ async function render(items) {
       if (clear) { lines(q(".clear-body"), [clear.header, clear.note, ...clear.body, ...clear.warnings].filter(Boolean)); q(".clear").hidden = false; }
     } catch (e) { q(".why").textContent = "The clear values did not open on this phone."; }
     if (!it.answerable) { q(".answer").hidden = true; q(".why").textContent = it.why; }
-    if (t.flags.production) q(".retype-l").hidden = false;
+    if (it.retype) q(".retype-l").hidden = false;
     q(".approve").onclick = () => answer(it, t, true, li);
     q(".deny").onclick = () => answer(it, t, false, li);
     ul.append(li);
@@ -303,9 +303,10 @@ async function answer(it, t, approve, li) {
   const dev = await getKey("device");
   const reason = li.querySelector(".reason").value;
   const retype = li.querySelector(".retype").value;
-  // Every production approval needs the instance name typed; the hub
-  // checks it too, this only saves a passkey prompt.
-  if (approve && t.flags.production && retype !== t.source.instance) {
+  // The hub says which approvals need the instance name typed (a
+  // production ticket but a plain read); it checks it too, this only
+  // saves a passkey prompt.
+  if (approve && it.retype && retype !== t.source.instance) {
     status("Type the instance name (" + t.source.instance + ") to approve.");
     return;
   }

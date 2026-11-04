@@ -3,6 +3,17 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## Unreleased
+
+- A plain read on a production lock (risk `read`, not `never_auto`) is
+  approved without typing the instance name (lockhub#105): `y` in `lox
+  approve`, the approve button on the phone. Every other production ticket
+  (`read-pii`, `write`, `prod-write`, `grant`, `policy-loosen`, `unlock`, or
+  a `never_auto` read) still needs the name typed, and the hub enforces it.
+  `GET /v1/queue` items carry `retype`: the name to type, empty when none is
+  needed, so a facade (the lea deck) reads the rule instead of copying it.
+  The phone's `retype` flag follows the same rule.
+
 ## v0.6.0 (2026-11-03)
 
 Supported locks: as v0.5.0.
