@@ -3,6 +3,19 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## Unreleased
+
+- `lox attach NAME` shows the question the console actually waits for
+  (`attached to lock NAME: the console asks "Vault token for ...:"`),
+  read in the lock's container from the question file its console keeps
+  next to its socket (DavidGodefroid/lockkit#127,
+  DavidGodefroid/locksql#182): only when the console does not listen on
+  its socket, only that console's own file (its name, owner and mode
+  0600), at most 200 characters, escaped for the terminal. A console that
+  listens serves and asks nothing now. An older console that records
+  nothing gets the former list of possible questions, which no longer
+  quotes the instance as the profile name (#119).
+
 ## v0.8.0 (2026-11-04)
 
 Supported locks: as v0.7.0.
