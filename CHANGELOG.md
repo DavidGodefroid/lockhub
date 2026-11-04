@@ -3,7 +3,12 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
-## Unreleased
+## v0.7.0 (2026-11-04)
+
+Supported locks: as v0.6.0.
+
+The lea deck needs this version for the new retype contract (`retype` on
+`GET /v1/queue` items) and for the `410 lock_removed` answer.
 
 - A plain read on a production lock (risk `read`, not `never_auto`) is
   approved without typing the instance name (lockhub#105): `y` in `lox
@@ -13,6 +18,22 @@ digest).
   `GET /v1/queue` items carry `retype`: the name to type, empty when none is
   needed, so a facade (the lea deck) reads the rule instead of copying it.
   The phone's `retype` flag follows the same rule.
+- A pending ticket of a lock no longer declared (`lox remove`, a lock
+  renamed, or dropped from `lockfamily.yaml` by hand) no longer stays in the
+  queue forever (lockhub#103). It ends in the new final state `lock_removed`,
+  audited (`"event":"remove_lock"`): `lockhub serve` sweeps once at start,
+  and `lox up` recreates the hub when the lock set changes. `GET /v1/queue`
+  never lists such a ticket, and deciding, revealing or renewing it answers
+  `410 Gone`, code `lock_removed` (it answered `401`). `401` stays for the
+  signed lock API.
+- `lox add locksql` no longer asks for TLS (lockhub#102, following
+  locksql#169): `--tls`, a TLS mode the project's files name, or a draft is
+  written as is; otherwise the profile has no `tls` key and the driver's
+  default applies.
+- `lox attach` names the three start questions a console can wait on (the
+  policy review, the production profile name, a password) instead of
+  claiming it is the policy review, and a detach (Ctrl-P Ctrl-Q) exits 0
+  with "detached from NAME" (lockhub#104).
 
 ## v0.6.0 (2026-11-03)
 
