@@ -5,7 +5,7 @@ Host (required) [host.docker.internal]:
 Port (required) [5432]: 
 User (optional: empty = the console asks for it at start with the password): 
 Database (optional: empty = the server's default database): 
-Production? (each approval needs the profile name typed) [y/N] 
+Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] 
 Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: vault
 Vault path (required) [database/creds/db-2]: 
 Name (required) [db-2]: 

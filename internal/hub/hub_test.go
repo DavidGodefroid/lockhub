@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -260,13 +261,13 @@ func TestRouting(t *testing.T) {
 	}
 }
 
-// Every production approval needs the instance name typed, on every
-// facade that may answer it (#64): lockkit's Retype flag (the
-// console's "retype values" answer) is not what the human types, and a
-// production ticket without it is no exception. Denying needs nothing;
-// a chat facade never answers production.
+// A production ticket whose lock asks for the retype (lockkit's Retype
+// flag set, whatever its value) needs the instance name typed, on every
+// facade that may answer it (#64): the flag's value (the console's
+// "retype values" answer) is not what the human types. Denying needs
+// nothing; a chat facade never answers production.
 func TestProductionNeedsTheInstanceName(t *testing.T) {
-	for name, flag := range map[string]string{"no retype flag": "", "lockkit retype flag": "r", "flag is the name": "crm-prod"} {
+	for name, flag := range map[string]string{"lockkit retype flag": "r", "flag is the name": "crm-prod"} {
 		t.Run(name, func(t *testing.T) {
 			a := hubtest.NewLock("crm-prod")
 			e := hubtest.New(t, 0, a)
@@ -308,46 +309,59 @@ func TestProductionNeedsTheInstanceName(t *testing.T) {
 	}
 }
 
-// A plain read on a production lock is approved without the instance
-// name (#105): the name is asked where it adds safety, on every other
-// risk and on a never_auto read. RetypeName says which, for facades.
-func TestProductionPlainReadNeedsNoName(t *testing.T) {
+// The instance name is asked only when the ticket's lock asks for it
+// (lockkit's Retype flag, #113), whatever the risk: a production ticket
+// without the flag is approved with no name typed, from the terminal,
+// the deck and the phone, and still never on a chat facade. A
+// non-production ticket never asks it. RetypeName says which, for
+// facades.
+func TestRetypeOnlyWhenTheLockAsks(t *testing.T) {
 	a := hubtest.NewLock("crm-prod")
 	e := hubtest.New(t, 0, a)
-	cases := []struct {
-		id, risk  string
+	risks := []struct {
+		risk      string
 		neverAuto bool
-		name      string
 	}{
-		{"R", "read", false, ""},
-		{"RN", "read", true, "crm-prod"},
-		{"RP", "read-pii", false, "crm-prod"},
-		{"W", "write", false, "crm-prod"},
-		{"PW", "prod-write", false, "crm-prod"},
-		{"G", "grant", true, "crm-prod"},
-		{"L", "policy-loosen", false, "crm-prod"},
-		{"U", "unlock", false, "crm-prod"},
+		{"read", false}, {"read", true}, {"read-pii", false}, {"write", false},
+		{"prod-write", false}, {"grant", true}, {"policy-loosen", false}, {"unlock", false},
 	}
-	for _, c := range cases {
-		prod := func(t *hubtest.Ticket) { t.Production, t.NeverAuto = true, c.neverAuto }
-		raw := a.TicketWith(c.id, c.risk, e.Clock.T, time.Hour, prod)
-		if _, _, err := e.Hub.Push(ctx, "crm-prod", raw); err != nil {
-			t.Fatal(err)
+	n := 0
+	for _, r := range risks {
+		for _, c := range []struct {
+			production bool
+			flag, name string
+		}{
+			{true, "r", "crm-prod"},
+			{true, "", ""},
+			{false, "r", ""},
+			{false, "", ""},
+		} {
+			n++
+			id := fmt.Sprintf("T%d", n)
+			raw := a.TicketWith(id, r.risk, e.Clock.T, time.Hour, func(t *hubtest.Ticket) {
+				t.Production, t.Retype, t.NeverAuto = c.production, c.flag, r.neverAuto
+			})
+			if _, _, err := e.Hub.Push(ctx, "crm-prod", raw); err != nil {
+				t.Fatal(err)
+			}
+			what := fmt.Sprintf("%s never_auto=%v production=%v retype=%q", r.risk, r.neverAuto, c.production, c.flag)
+			if got := e.Hub.RetypeName(store.Ticket{Instance: "crm-prod", ID: id, Raw: raw}); got != c.name {
+				t.Errorf("%s: RetypeName %q, want %q", what, got, c.name)
+			}
+			if c.production && c.flag == "" {
+				v := hub.Verdict{Approved: true, ApproverID: "slack:U1", Facade: "slack"}
+				if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: id}, v); !errors.Is(err, hub.ErrNotRouted) {
+					t.Errorf("%s on slack: %v", what, err)
+				}
+			}
+			_, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: id}, hub.Verdict{Approved: true, ApproverID: "host:david", Facade: "deck"})
+			if c.name == "" && err != nil {
+				t.Errorf("%s with no name typed: %v", what, err)
+			}
+			if c.name != "" && !errors.Is(err, hub.ErrRetype) {
+				t.Errorf("%s approved with no name typed: %v", what, err)
+			}
 		}
-		if got := e.Hub.RetypeName(store.Ticket{Instance: "crm-prod", ID: c.id, Raw: raw}); got != c.name {
-			t.Errorf("%s: RetypeName %q, want %q", c.id, got, c.name)
-		}
-		_, err := e.Hub.Decide(ctx, store.Ref{Instance: "crm-prod", ID: c.id}, hub.Verdict{Approved: true, ApproverID: "host:david", Facade: "tty"})
-		if c.name == "" && err != nil {
-			t.Errorf("%s with no name typed: %v", c.id, err)
-		}
-		if c.name != "" && !errors.Is(err, hub.ErrRetype) {
-			t.Errorf("%s approved with no name typed: %v", c.id, err)
-		}
-	}
-	plain := a.Ticket("NP", "write", e.Clock.T, time.Hour)
-	if got := e.Hub.RetypeName(store.Ticket{Instance: "crm-prod", ID: "NP", Raw: plain}); got != "" {
-		t.Errorf("not production: RetypeName %q", got)
 	}
 }
 

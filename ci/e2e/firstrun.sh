@@ -144,7 +144,7 @@ python3 "$here/expect.py" 900 \
 	'Port (required)' '\n' \
 	'User (optional:' 'shop\n' \
 	'Database (optional:' 'shop\n' \
-	'Production? (each approval' '\n' \
+	'Production? (tickets flagged' '\n' \
 	'Credentials: ask' '\n' \
 	'Name (required)' 'orders\n' \
 	'Apply? [y/N]' 'y\n' \
@@ -216,7 +216,7 @@ if [ "$vault" = 1 ]; then
 		'Port (required)' '\n' \
 		'User (optional:' 'shop\n' \
 		'Database (optional:' 'inventory\n' \
-		'Production? (each approval' '\n' \
+		'Production? (tickets flagged' '\n' \
 		'Credentials: ask' 'vault\n' \
 		'Vault path (required)' 'secret/data/shop/inventory\n' \
 		'Vault address, such as' 'http://host.docker.internal:58200\n' \

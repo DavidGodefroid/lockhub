@@ -5,7 +5,7 @@ Host (required) [host.docker.internal]: db.example.com
 Port (required) [3306]: 
 User (optional: empty = the console asks for it at start with the password): shop
 Database (optional: empty = the server's default database): orders
-Production? (each approval needs the profile name typed) [y/N] y
+Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] y
 Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: vault
 Vault path (required) [database/creds/db]: 
 Vault address, such as https://vault.example.com:8200 (required): https://vault.example.com:8200

@@ -3,6 +3,24 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## Unreleased
+
+Upgrade notes (behaviour changes):
+
+- Approving a production ticket no longer needs a typed name
+  (lockhub#113): `y` in `lox approve`, the approve button on the phone or
+  the lea deck approves it, whatever its risk. No current Lock (locksql,
+  lockmq, lockfile, LockHTTP) sets lockkit's `flags.retype`, the only
+  case where the hub still asks for the instance name. Production stays
+  flagged on every facade (`PRODUCTION` in `lox approve`, red on the
+  phone) and chat facades still never answer it. `GET /v1/queue` items carry `retype` and the phone's
+  `retype` flag is set only then, so facades that read them (`lox approve`,
+  the phone, the lea deck) need no change. This replaces v0.7.0's rule
+  (every production ticket but a plain read, lockhub#105) and v0.6.0's
+  (every production ticket, #64).
+- `lox add`'s production prompt and `--production` help no longer say
+  each approval needs the profile name typed.
+
 ## v0.7.0 (2026-11-04)
 
 Supported locks: as v0.6.0.

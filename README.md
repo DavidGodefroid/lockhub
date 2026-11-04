@@ -22,12 +22,14 @@ budget) that the lock then runs reads inside without a ticket each: `lox
 approve` marks it and shows the lock's scope lines before the prompt, the
 signed decision binds the scope's hash (`plan_hash`), and the hub's audit
 records carry `"risk":"grant"`. The lock ends a grant (`:revoke`, end of
-session, expiry); a revoke sent from the hub is not there yet. Approving a production ticket
-needs its instance name typed, in the terminal, the deck and on the phone
-alike (the hub checks it), except a plain read (risk `read`, not
-`never_auto`): `y` approves it and its screen keeps the production banner.
-The queue's `retype` field gives the name to type, empty when none is
-needed, so every facade applies the hub's rule. To approve many reads at
+session, expiry); a revoke sent from the hub is not there yet. A production ticket is
+flagged on every facade (`PRODUCTION` in `lox approve`, red and `· production`
+on the phone, `flags.production` in the queue's ticket). `y` approves it: no current Lock sets
+lockkit's `flags.retype`, so approving a production ticket needs no typed name.
+The hub would ask for the instance name only on a ticket whose lock sets that
+flag, in the terminal, the deck and on the phone alike (the hub checks it). The
+queue's `retype` field gives the name to type, empty when none is needed, so
+every facade applies the hub's rule. To approve many reads at
 once, approve a grant: one decision for a read scope and a time window,
 then the reads inside it need no ticket. A
 workspace's `lockfamily.yaml` can narrow this routing, never widen it.
@@ -182,7 +184,7 @@ you remove `require_device` and run `lox up`. `lox mobile pair` checks the
 phone's origin against the one the last `lox up` applied.
 
 **Routing.** The phone answers every risk class but `unlock` (no facade types
-secrets yet) and `grant` (a wider approval than one read); production tickets but a plain read ask for the instance name; `hub.routing`
+secrets yet) and `grant` (a wider approval than one read); production tickets need no typed name (no current Lock sets `flags.retype`); `hub.routing`
 narrows it per instance.
 
 **Limits.** The web app's code comes from the hub. A hub that serves

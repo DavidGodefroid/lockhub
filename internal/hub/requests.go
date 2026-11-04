@@ -420,7 +420,8 @@ const (
 // lock compared the plan-hash inputs: none moved), not for production,
 // and routed to a's facade, the hub approves it at once in a's name: the
 // human's request is the one click of decision H1. Otherwise it waits in
-// the queue like any ticket, with its changes (production: retype).
+// the queue like any ticket, with its changes (production: the retype
+// its lock asks for).
 func (h *Hub) Renew(ctx context.Context, ref store.Ref, a Asker) (Renewed, error) {
 	tk, info, err := h.requestable(ctx, ref, a, state.Expired)
 	if err != nil {

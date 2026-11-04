@@ -389,8 +389,9 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 		case "y", "yes":
 			req.Approved = true
 			if name := it.Retype; name != "" {
-				// The hub asks the instance name where it adds safety
-				// (a production ticket but a plain read).
+				// The hub asks the instance name when the ticket's
+				// lock asks for it (a production ticket with lockkit's
+				// Retype flag).
 				typed, err := s.line(fmt.Sprintf("production: type the instance name %q to approve: ", sanitize.Terminal(name, false)))
 				if err != nil {
 					return err

@@ -193,6 +193,17 @@ func (e *env) newLock(require []ticket.Risk, devs ...ticket.Device) *lock {
 // masked screen for the hub, the clear one sealed to the devices.
 func (l *lock) submit(t *testing.T, risk ticket.Risk, production bool, sql string) (planID, ticketID string) {
 	t.Helper()
+	var f ticket.Flags
+	if production {
+		// lockkit's Retype flag: the lock asks for the instance name.
+		f = ticket.Flags{Production: true, Retype: "r"}
+	}
+	return l.submitFlags(t, risk, f, sql)
+}
+
+// submitFlags is submit with the ticket's production and retype flags.
+func (l *lock) submitFlags(t *testing.T, risk ticket.Risk, f ticket.Flags, sql string) (planID, ticketID string) {
+	t.Helper()
 	hash, _ := ticket.HashOf(sql + time.Now().String())
 	fp, _ := ticket.HashOf("policy")
 	p, err := l.st.Create(plans.Binding{UID: 1000, Agent: "dev-1", TokenHash: plans.HashToken("tok"), PolicyFP: fp, PlanHash: hash},
@@ -202,9 +213,7 @@ func (l *lock) submit(t *testing.T, risk ticket.Risk, production bool, sql strin
 	}
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql"}, risk, hash, fp, time.Now(), ticket.ClampTTL(risk, 0))
 	tk.Requester = ticket.Requester{Agent: "dev-1 <b>@here</b>", Session: "s"}
-	if production {
-		tk.Flags = ticket.Flags{Production: true} // no lockkit Retype flag: the name is still asked
-	}
+	tk.Flags.Production, tk.Flags.Retype = f.Production, f.Retype
 	masked := render.MaskScreen(render.ScreenSource{Header: "crm / shop · write",
 		Body: []render.Line{{{Text: "UPDATE customers SET email = "}, {Text: pii, Value: true, Column: "email", ColumnType: "text"}}}}, render.Masking{})
 	clear := &ticket.Screen{Header: "crm / shop · write", Body: []string{"UPDATE customers SET email = '" + pii + "'"}}

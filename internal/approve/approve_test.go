@@ -63,18 +63,26 @@ func setup(t *testing.T) env {
 	return env{h, st, priv, sock, new(int)}
 }
 
+// push pushes a ticket; a production one comes with lockkit's Retype
+// flag (its lock asks for the instance name).
 func (e env) push(t *testing.T, risk ticket.Risk, prod bool, body string) string {
+	var f ticket.Flags
+	if prod {
+		// lockkit's Retype is the console's "retype values" answer, never
+		// what the human types: lox approve asks for the instance name.
+		f = ticket.Flags{Production: true, Retype: "r"}
+	}
+	return e.pushFlags(t, risk, f, body)
+}
+
+func (e env) pushFlags(t *testing.T, risk ticket.Risk, f ticket.Flags, body string) string {
 	*e.pushed++
 	created := time.Now().Add(-time.Hour).Add(time.Duration(*e.pushed) * time.Second)
 	tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm"}, risk,
 		"sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), created, 0)
 	tk.Workspace, tk.Requester = "ws", ticket.Requester{Agent: "dev-1\x1b[31m", Session: "s"}
 	tk.Screen = ticket.Screen{Header: "query on crm", Body: []string{body}, Warnings: []string{"touches 3 rows"}}
-	if prod {
-		// lockkit's Retype is the console's "retype values" answer, never
-		// what the human types: lox approve asks for the instance name.
-		tk.Flags.Production, tk.Flags.Retype = true, "r"
-	}
+	tk.Flags.Production, tk.Flags.Retype = f.Production, f.Retype
 	if err := tk.Sign(e.lock); err != nil {
 		t.Fatal(err)
 	}
@@ -143,35 +151,37 @@ func TestProductionRetype(t *testing.T) {
 	}
 }
 
-// A plain read on production is approved with y (#105): the screen
+// A production ticket whose lock does not ask for the retype (no lockkit
+// Retype flag) is approved with y, whatever its risk (#113): the screen
 // keeps its PRODUCTION banner, the name is not asked. The queue says so
-// (retype empty) for every facade; a read-pii ticket still asks it.
-func TestProductionPlainReadNoRetype(t *testing.T) {
+// (retype empty) for every facade; a ticket with the flag still asks it.
+func TestProductionNoRetypeFlag(t *testing.T) {
 	e := setup(t)
-	r := e.push(t, ticket.RiskRead, true, "SELECT id FROM customers LIMIT 1")
-	p := e.push(t, ticket.RiskReadPII, true, "SELECT email FROM customers LIMIT 1")
+	w := e.pushFlags(t, ticket.RiskProdWrite, ticket.Flags{Production: true}, "UPDATE customers SET tier = $1")
+	p := e.push(t, ticket.RiskRead, true, "SELECT id FROM customers LIMIT 1")
 	items, _, err := approve.Dial(e.sock).Queue(context.Background(), 0, 0)
 	if err != nil || len(items) != 2 {
 		t.Fatalf("queue %v %v", items, err)
 	}
-	if items[0].ID != r || items[0].Retype != "" || items[1].ID != p || items[1].Retype != "crm" {
+	if items[0].ID != w || items[0].Retype != "" || !bytes.Contains(items[0].Ticket, []byte(`"production":true`)) || items[1].ID != p || items[1].Retype != "crm" {
 		t.Errorf("queue retype: %q=%q %q=%q", items[0].ID, items[0].Retype, items[1].ID, items[1].Retype)
 	}
 	out := e.run(t, "y\n")
-	if e.state(t, r) != state.Approved {
-		t.Fatalf("state %s\n%s", e.state(t, r), out)
+	if e.state(t, w) != state.Approved {
+		t.Fatalf("state %s\n%s", e.state(t, w), out)
 	}
 	if !strings.Contains(out, "PRODUCTION") || strings.Contains(out, "type the instance name") {
 		t.Errorf("output:\n%s", out)
 	}
 	out = e.run(t, "y\ncrm\n")
 	if e.state(t, p) != state.Approved || !strings.Contains(out, `type the instance name "crm" to approve`) {
-		t.Errorf("read-pii: state %s\n%s", e.state(t, p), out)
+		t.Errorf("read with the flag: state %s\n%s", e.state(t, p), out)
 	}
 }
 
 // A grant shows what it is and its scope (the lock's screen) before the
-// answer prompt, and a production one still needs the instance name.
+// answer prompt, and a production one whose lock asks for it needs the
+// instance name.
 func TestGrantShowsScope(t *testing.T) {
 	grant := ticket.Risk("grant")
 	if !grant.Valid() {
@@ -279,5 +289,26 @@ func TestScreenExpiredTicket(t *testing.T) {
 		if !strings.Contains(out, c.want) || strings.Contains(out, "expires in -") {
 			t.Errorf("screen lacks %q:\n%s", c.want, out)
 		}
+	}
+}
+
+// lox approve end to end: production tickets of every risk it answers,
+// none with lockkit's Retype flag (no current Lock sets it), are each
+// approved with a plain y, no name asked (#113).
+func TestProductionWithoutFlagApprovedWithY(t *testing.T) {
+	e := setup(t)
+	prod := ticket.Flags{Production: true}
+	var ids []string
+	for _, r := range []ticket.Risk{ticket.RiskRead, ticket.RiskReadPII, ticket.RiskWrite, ticket.RiskProdWrite} {
+		ids = append(ids, e.pushFlags(t, r, prod, "statement "+string(r)))
+	}
+	out := e.run(t, strings.Repeat("y\n", len(ids)))
+	for _, id := range ids {
+		if e.state(t, id) != state.Approved {
+			t.Errorf("%s is %s", id, e.state(t, id))
+		}
+	}
+	if strings.Count(out, "PRODUCTION") < len(ids) || strings.Contains(out, "type the instance name") {
+		t.Errorf("output:\n%s", out)
 	}
 }

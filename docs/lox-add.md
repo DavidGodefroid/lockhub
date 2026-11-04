@@ -106,7 +106,7 @@ are listed above the questions as `found: ...` hints.
 | `Port (required) [5432]: ` | `[3306]` for mysql and mariadb; `--port` |
 | `User (optional: empty = the console asks for it at start with the password): ` | not sqlite; `--user` |
 | `Database (optional: empty = the server's default database): ` | not sqlite; `--database` |
-| `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
+| `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
 | `Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: ` | not sqlite; `--credentials` |
 | `Vault path (required) [database/creds/<name>]: ` | vault only; `<name>` is the suggested name, since Name is asked last: Enter keeps the path following the name you then type (or `--name`); `--vault-path` |
 | `Vault address, such as https://vault.example.com:8200 (required): ` | vault, when `lockfamily.yaml` has no vault block yet; `--vault-address` |
@@ -129,7 +129,7 @@ and `tls_server_name` are set in locksql's profile file.
 | `User (optional: empty = the console asks for it at start with the password): ` | `--user` |
 | `Vhost (optional: empty = all vhosts the user can see): ` | `--vhost` |
 | `AMQP URL, such as amqp://<mgmt host>:5672 (optional: - = no stream reads) [amqp://<mgmt host>:5672]: ` | an amqp or amqps URL; the default is the management URL's host, `amqps://<host>:5671` for an https management URL (or the AMQP port the project's files name); `-` for no stream reads; `--amqp-url` |
-| `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
+| `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
 | `Credentials: ...`, then the Vault path and the vault block | as for locksql; the Vault path defaults to `rabbitmq/creds/<name>` |
 | `Name (required) [mq]: ` | `--name` |
 
@@ -149,7 +149,7 @@ and `tls_server_name` are set in locksql's profile file.
 | `Private key file, an absolute path (required): ` | sftp with `key`; a regular file that is yours; `--key` |
 | `Known hosts file (required): ` | sftp; `--known-hosts` |
 | `Base directory (optional: empty = the login directory): ` | sftp; `--base-dir` |
-| `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
+| `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
 | `Credentials: ...`, then the Vault path and the vault block | s3 and sftp only; the Vault path defaults to `secret/data/lockfile/<name>` |
 | `Name (required) [files]: ` | `--name` |
 

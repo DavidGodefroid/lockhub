@@ -780,8 +780,8 @@ func (s *Service) queue(w http.ResponseWriter, r *http.Request) {
 			e := t.Expires
 			it.Expires = &e
 		}
-		// The hub's rule: a production ticket asks for its instance name,
-		// but a plain read (#105).
+		// The hub's rule: a production ticket asks for its instance name
+		// when its lock asks for it (#113).
 		it.Retype = s.c.Hub.RetypeName(t) != ""
 		if err := rules.Allowed(t.Instance, route.Mobile, t.Risk); err != nil {
 			it.Why = err.Error()

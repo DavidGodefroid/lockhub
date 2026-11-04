@@ -91,7 +91,7 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	for _, f := range answerFlags {
 		values[f.name] = fs.String(f.name, "", f.usage)
 	}
-	production := fs.Bool("production", false, "each approval needs the profile name typed")
+	production := fs.Bool("production", false, "tickets flagged production; the profile name is typed at the console's start")
 	nonInteractive := fs.Bool("non-interactive", false, "ask nothing: the flags and the defaults answer; without a terminal, stop once the lock is declared")
 	review := fs.Bool("review", false, "lox up shows this lock's whole profile and asks (needs a terminal)")
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
