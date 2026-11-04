@@ -107,13 +107,19 @@ are listed above the questions as `found: ...` hints.
 | `User (optional: empty = the console asks for it at start with the password): ` | not sqlite; `--user` |
 | `Database (optional: empty = the server's default database): ` | not sqlite; `--database` |
 | `Production? (each approval needs the profile name typed) [y/N] ` | `--production` |
-| `TLS: disable, prefer, require, verify-ca or verify-full (required) [verify-full]: ` | not sqlite; one of three variants is asked: for production the default is `verify-full`; for a host on this machine `disable`; for any other host `verify-full`. A TLS mode the project's files name is the default except in production. `--tls` |
 | `Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: ` | not sqlite; `--credentials` |
 | `Vault path (required) [database/creds/<name>]: ` | vault only; `<name>` is the suggested name, since Name is asked last: Enter keeps the path following the name you then type (or `--name`); `--vault-path` |
 | `Vault address, such as https://vault.example.com:8200 (required): ` | vault, when `lockfamily.yaml` has no vault block yet; `--vault-address` |
 | `Vault namespace (optional: empty = the root namespace): ` | same condition; names of letters, digits, `_ . -` separated by `/` (one trailing `/`, as Vault prints it, is dropped); `--vault-namespace` |
 | `Vault CA file (optional: empty = the system's CA certificates): ` | same condition; `--vault-ca-file` |
 | `Name (required) [db]: ` | the lock's and its profile's name; the default is the compose service, database or vhost the files name, made unique; `--name` |
+
+TLS is never asked: transport security is the driver's. Without `--tls`
+(`disable`, `prefer`, `require`, `verify-ca` or `verify-full`), the profile
+has no `tls` key and the driver's default (`prefer`) applies; locksql prints a
+`warning:` at the console's start when the connection is plaintext. A TLS mode
+the project's files name is written as is. `tls_ca`, `tls_cert`, `tls_key`
+and `tls_server_name` are set in locksql's profile file.
 
 ### lockmq
 
@@ -185,7 +191,8 @@ with `--non-interactive`.
 --known-hosts --base-dir --production --credentials --vault-path
 --vault-address --vault-namespace --vault-ca-file --name` answer the question
 of the same name (`--dir` is lockfile's directory; `lox add lockfile` refuses
-`--path`). The others:
+`--path`; `--tls` answers no question, it sets locksql's TLS mode). The
+others:
 
 | Flag | Meaning |
 |---|---|

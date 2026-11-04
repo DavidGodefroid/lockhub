@@ -197,7 +197,7 @@ func TestAddNonInteractiveDeclares(t *testing.T) {
 	}
 	want := []string{"locksql", "profile", "add", "--non-interactive", "--json", "--project", ws, "--profile", "orders",
 		"--credentials", "vault", "--vault-path", "database/creds/orders",
-		"--engine", "postgres", "--host", "db.example.com", "--port", "55432", "--database", "orders", "--tls", "verify-full"}
+		"--engine", "postgres", "--host", "db.example.com", "--port", "55432", "--database", "orders"}
 	if len(verbs.calls) == 0 || !slices.Equal(verbs.calls[0], want) {
 		t.Fatalf("profile add\n got %q\nwant %q", verbs.calls, want)
 	}
