@@ -1,9 +1,9 @@
 package loxadd
 
 import (
+	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -77,7 +77,6 @@ func TestPromptsVerbatim(t *testing.T) {
 		"port":     "Port (required) [5432]: ",
 		"user":     "User (optional: empty = the console asks for it at start with the password): ",
 		"database": "Database (optional: empty = the server's default database): ",
-		"tls":      "TLS: disable, prefer, require, verify-ca or verify-full (required) [disable]: ",
 		"name":     "Name (required) [db]: ",
 	} {
 		if got := Prompt(find(t, sql, key, pg)); got != want {
@@ -365,47 +364,50 @@ func TestLockfileSFTPQuestions(t *testing.T) {
 	}
 }
 
-func TestTLSDefaultFollowsTheHost(t *testing.T) {
-	fs := fieldsOf(t, "locksql", Defaults{})
+// TLS is never asked: transport security is the driver's (locksql's default
+// is prefer, with a warning on a plaintext connection). --tls, a mode the
+// project's files name or a draft is written as is; else no tls at all.
+func TestTLSIsNeverAsked(t *testing.T) {
+	f := &Form{Out: io.Discard, NonInteractive: true}
 	for _, c := range []struct {
-		host, prod, want string
+		name  string
+		d     Defaults
+		given Answers
+		want  string
 	}{
-		{"db.example.com", "n", "verify-full"},
-		{"host.docker.internal", "n", "disable"},
-		{"localhost", "", "disable"},
-		{"127.0.0.1", "n", "disable"},
-		{"::1", "n", "disable"},
-		{"host.docker.internal", "y", "verify-full"},
-		{"db.example.com", "y", "verify-full"},
+		{"remote", Defaults{}, Answers{"host": "db.example.com"}, ""},
+		{"local", Defaults{}, Answers{"host": "localhost"}, ""},
+		{"production", Defaults{}, Answers{"host": "db.example.com", "production": "y"}, ""},
+		{"detected", Defaults{Source: &shopDB}, Answers{"production": "y"}, "disable"},
+		{"detected remote", Defaults{Source: &inventory}, nil, "verify-full"},
+		{"flag", Defaults{Source: &shopDB}, Answers{"tls": "verify-ca"}, "verify-ca"},
+		{"draft", Defaults{Draft: Answers{"tls": "require"}}, nil, "require"},
 	} {
-		a := Answers{"engine": "postgres", "host": c.host, "production": c.prod}
-		if got := find(t, fs, "tls", a).Default; got != c.want {
-			t.Errorf("tls for %s production=%q: %q, want %q", c.host, c.prod, got, c.want)
+		given := Answers{"name": "x"}
+		for k, v := range c.given {
+			given[k] = v
+		}
+		a, err := f.Run("locksql", fieldsOf(t, "locksql", c.d), given)
+		if err != nil || a["tls"] != c.want {
+			t.Errorf("%s: tls %q %v, want %q", c.name, a["tls"], err, c.want)
 		}
 	}
-	// A detected mode and a draft beat the rule.
-	fs = fieldsOf(t, "locksql", Defaults{Source: &shopDB})
-	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "disable" {
-		t.Errorf("detected tls %q", got)
+	if _, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), Answers{"name": "x", "tls": "on"}); err == nil || !strings.Contains(err.Error(), "--tls:") {
+		t.Errorf("--tls on: %v", err)
 	}
-	// Production forces verify-full even over a detected mode.
-	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com", "production": "y"}).Default; got != "verify-full" {
-		t.Errorf("production over detected tls %q", got)
+	// Not even on a terminal, whatever the host and production answers.
+	for _, typed := range [][]string{
+		{"", "db.example.com", "", "", "", "y", "", ""},
+		{"", "localhost", "", "", "", "n", "", ""},
+	} {
+		out, a := session(t, "locksql", Defaults{Source: &inventory}, nil, typed...)
+		if strings.Contains(out, "TLS") || a["tls"] != "verify-full" {
+			t.Errorf("asked TLS or lost the detected mode (%q):\n%s", a["tls"], out)
+		}
 	}
-	fs = fieldsOf(t, "locksql", Defaults{Draft: Answers{"tls": "require"}})
-	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com", "production": "y"}).Default; got != "require" {
-		t.Errorf("draft tls over production %q", got)
-	}
-	if got := find(t, fs, "tls", Answers{"engine": "postgres", "host": "db.example.com"}).Default; got != "require" {
-		t.Errorf("draft tls %q", got)
-	}
-	// Production is asked before TLS.
-	var keys []string
-	for _, f := range fieldsOf(t, "locksql", Defaults{}) {
-		keys = append(keys, f.Key)
-	}
-	if slices.Index(keys, "production") > slices.Index(keys, "tls") {
-		t.Errorf("order %v", keys)
+	// sqlite has no TLS.
+	if _, err := f.Run("locksql", fieldsOf(t, "locksql", Defaults{}), Answers{"name": "x", "engine": "sqlite", "path": "/tmp/x.db", "tls": "disable"}); err == nil {
+		t.Error("sqlite took --tls")
 	}
 }
 

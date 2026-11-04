@@ -44,7 +44,8 @@ var lockKinds = map[string]string{
 
 // Run asks each field in order. For a key, the first field whose When holds
 // (given the answers so far) is the one asked. A key in given is a flag: it
-// goes through Answer like a typed value and is never asked. The reasons
+// goes through Answer like a typed value and is never asked; a Silent
+// field without its flag takes its Default, unasked. The reasons
 // name the key or flag, never the value.
 func (f *Form) Run(lock string, fields []Field, given Answers) (Answers, error) {
 	if !f.NonInteractive {
@@ -74,6 +75,10 @@ func (f *Form) Run(lock string, fields []Field, given Answers) (Answers, error) 
 			if typed == "" && fd.DefaultFrom != nil {
 				follow = append(follow, fd)
 			}
+			continue
+		}
+		if fd.Silent {
+			answers[fd.Key] = fd.Default
 			continue
 		}
 		if f.NonInteractive {

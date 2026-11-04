@@ -8,6 +8,5 @@ Port (required) [55432]:
 User (optional: - = the console asks for it at start with the password) [shop]: 
 Database (optional: - = the server's default database) [shop]: 
 Production? (each approval needs the profile name typed) [y/N] 
-TLS: disable, prefer, require, verify-ca or verify-full (required) [disable]: 
 Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
 Name (required) [db]: 

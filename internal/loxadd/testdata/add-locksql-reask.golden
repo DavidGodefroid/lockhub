@@ -16,6 +16,5 @@ Database (optional: empty = the server's default database):
 Production? (each approval needs the profile name typed) [y/N] maybe
   production: want y or n
 Production? (each approval needs the profile name typed) [y/N] n
-TLS: disable, prefer, require, verify-ca or verify-full (required) [disable]: 
 Credentials: ask (typed, masked, at the console's start) or vault (required) [ask]: 
 Name (required) [db]: 

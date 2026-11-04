@@ -48,7 +48,7 @@ var answerFlags = []struct{ name, usage string }{
 	{"port", "locksql, lockfile sftp: the server's port"},
 	{"user", "the user (locksql, lockmq: empty = the console asks for it at start with the password; lockfile sftp: required)"},
 	{"database", "locksql: the database (empty: the server's default)"},
-	{"tls", "locksql: disable, prefer, require, verify-ca or verify-full"},
+	{"tls", "locksql: disable, prefer, require, verify-ca or verify-full (never asked; empty: the driver's default, prefer)"},
 	{"path", "locksql: the sqlite file, an absolute path"},
 	{"url", "lockmq: the management URL"},
 	{"vhost", "lockmq: the vhost (empty: all vhosts the user can see)"},
