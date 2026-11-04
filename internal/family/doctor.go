@@ -69,6 +69,10 @@ func (d *Doctor) Do(ctx context.Context) int {
 		case errors.Is(err, os.ErrNotExist):
 			upRan = false
 			fail("%s %s: missing: run lox up", dir.name, dir.path)
+		case err != nil && dir.name == "facade dir":
+			// Docker made it as root while it was missing (a tmpfs, wiped at
+			// reboot): lox up repairs it, or says what to run.
+			fail("%s: %v: run lox up (it repairs it, or says what to run)", dir.name, err)
 		case err != nil:
 			fail("%s: %v", dir.name, err)
 		default:
@@ -358,6 +362,12 @@ func images(c *Config) []string {
 
 // checkPrivate is privateDir's check, without creating anything.
 func checkPrivate(d string) error {
+	return checkPrivateAs(d, ownedByMe)
+}
+
+// checkPrivateAs is checkPrivate, mine saying whether a directory is the
+// user's.
+func checkPrivateAs(d string, mine func(os.FileInfo) bool) error {
 	fi, err := os.Lstat(d)
 	if err != nil {
 		return err
@@ -365,8 +375,8 @@ func checkPrivate(d string) error {
 	if !fi.IsDir() {
 		return fmt.Errorf("%s: not a directory (a link?)", d)
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("%s: owned by uid %d, not by you", d, st.Uid)
+	if !mine(fi) {
+		return fmt.Errorf("%s: owned by uid %d, not by you", d, owner(fi))
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%s: mode %v, want 0700", d, fi.Mode().Perm())
