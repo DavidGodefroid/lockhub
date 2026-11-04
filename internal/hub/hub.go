@@ -33,7 +33,8 @@ type Info struct {
 	// TTL is how long the ticket may wait for a decision; 0: no limit.
 	TTL time.Duration
 	// Production tickets need the human to type the instance name to
-	// approve them, on every facade that may answer them. Retype is
+	// approve them, on every facade that may answer them, but a plain
+	// read (needsRetype). Retype is
 	// lockkit's flag (the console's answer that asks to retype values),
 	// kept for Flags; it is not what the human types.
 	Production bool
@@ -481,9 +482,10 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		if info.Production && !route.CanReveal(v.Facade) {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
-		// Every production approval needs the instance name typed (#64),
-		// whatever the ticket's lockkit Retype flag says.
-		if v.Approved && info.Production && (info.Instance == "" || v.Retype != info.Instance) {
+		// A production approval needs the instance name typed where it
+		// adds safety (#64, #105), whatever the ticket's lockkit Retype
+		// flag says.
+		if v.Approved && needsRetype(info) && (info.Instance == "" || v.Retype != info.Instance) {
 			return ErrRetype
 		}
 		raw, err = h.c.Codec.SignDecision(h.c.Key, info, v, at)
@@ -512,6 +514,32 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	h.notify(instance)
 	h.notify(queueKey)
 	return raw, nil
+}
+
+// needsRetype: approving the ticket needs its instance name typed. Every
+// production ticket does but a plain read (risk read, not never_auto):
+// its screen keeps the production banner, and asking the name on each
+// read trains the human to type it without reading.
+func needsRetype(info Info) bool {
+	return info.Production && (info.Risk != "read" || info.NeverAuto)
+}
+
+// RetypeName is what a facade asks the human to type to approve the
+// stored ticket t: its instance name when Decide requires it, "" when
+// a plain y approves it. A ticket the hub cannot verify asks the name.
+func (h *Hub) RetypeName(t store.Ticket) string {
+	key, ok := h.c.Locks[t.Instance]
+	if !ok {
+		return t.Instance
+	}
+	info, err := h.c.Codec.VerifyTicket(key, t.Raw)
+	if err != nil {
+		return t.Instance
+	}
+	if !needsRetype(info) {
+		return ""
+	}
+	return info.Instance
 }
 
 func (h *Hub) notify(instance string) {

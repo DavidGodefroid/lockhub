@@ -318,6 +318,15 @@ func TestRouting(t *testing.T) {
 	if _, _, err := l.run(t, prod); err != nil {
 		t.Fatalf("production approved on the phone: %v", err)
 	}
+	// A plain read on production: no name asked (#105).
+	_, read := l.submit(t, ticket.RiskRead, true, "prod read")
+	it = item(t, phone, read)
+	if !it.Answerable || it.Retype {
+		t.Fatalf("production read on mobile: %+v", it)
+	}
+	if err := phone.Answer(it, true, "", ""); err != nil {
+		t.Fatalf("production read approved with no name: %v", err)
+	}
 
 	e2 := newEnv(t, route.Rules{Only: map[string][]string{inst: {route.TTY}}})
 	p2 := e2.phone("phone")

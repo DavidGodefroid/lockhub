@@ -49,6 +49,10 @@ type QueueItem struct {
 	Expires  *time.Time      `json:"expires,omitempty"`
 	Facades  []string        `json:"facades"`
 	Ticket   json.RawMessage `json:"ticket"`
+	// Retype is the name the human types to approve the ticket (its
+	// instance name), "" when y approves it: the hub's rule, the one
+	// decide enforces, so a facade never derives it from the ticket.
+	Retype string `json:"retype,omitempty"`
 }
 
 // QueueResult answers GET /v1/queue. Version changes with every change
@@ -103,7 +107,8 @@ func (f *facades) queue(w http.ResponseWriter, r *http.Request) {
 	}
 	res := QueueResult{Tickets: []QueueItem{}, Version: ver, Expired: []QueueItem{}}
 	item := func(t store.Ticket, facades []string) QueueItem {
-		it := QueueItem{ID: t.ID, Instance: t.Instance, Risk: t.Risk, Created: t.Created, Facades: facades, Ticket: t.Raw}
+		it := QueueItem{ID: t.ID, Instance: t.Instance, Risk: t.Risk, Created: t.Created, Facades: facades, Ticket: t.Raw,
+			Retype: f.h.RetypeName(t)}
 		if !t.Expires.IsZero() {
 			e := t.Expires
 			it.Expires = &e
