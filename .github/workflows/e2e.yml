@@ -7,7 +7,9 @@ name: e2e-lox-up
 # phase 5 (install.sh, lox add, lox up, lox import), and the first run
 # (ci/e2e/firstrun.sh: lox init, lox add locksql with ask and with Vault,
 # lox remove). Phases 2 and 5 and the first run run this commit's hub image
-# (ci/e2e/local-hub.sh), not the latest release that lox add pins.
+# (ci/e2e/local-hub.sh), not the latest release that lox add pins. The
+# upgrade (ci/e2e/upgrade.sh) runs released hubs: lox run upgrading a
+# workspace on the previous releases to the ones this lox ships with.
 on:
   push:
     branches: [main]
@@ -214,3 +216,23 @@ jobs:
           export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           sh ci/e2e/phase5.sh lockfamily/install.sh "$RUNNER_TEMP/dist" 0.0.0-e2e
+
+  upgrade:
+    name: e2e upgrade (lox run upgrades the hub and a lock to its releases, cosign-verified, fail closed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.1
+      - name: upgrade
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          sh ci/e2e/upgrade.sh "$RUNNER_TEMP/bin"

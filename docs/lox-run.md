@@ -11,7 +11,8 @@ between `lox run` and both.
 
 `lox run` is meant for a terminal of its own, outside lea and any agent: it
 first starts (or reuses) the hub and the locks (everything below: the
-review, `--review`, `-v`, `--pin`, `--rotate`), then serves the hub's
+review, `--review`, `-v`, `--pin`, `--rotate`, and the upgrade of images
+older than this lox's releases, `--no-upgrade`), then serves the hub's
 decisions in the foreground until you quit. `--no-start` only serves
 decisions (the stack runs already); `--manual` starts in manual mode;
 `--theme light|dark` overrides `COLORFGBG`. stdin must be a terminal: an
@@ -440,14 +441,60 @@ set`.
 Not yet (lockhub#45): lockfile's shipped seccomp profile (lox run uses
 Docker's default).
 
+## Upgrading the images
+
+At start, `lox run` compares the images lockfamily.yaml pins with the
+releases the installed `lox` ships with: lockhub at lox's own version (they
+are released together), and one release per lock type
+(`family.ShippedLocks`, bumped when lox is released). The release an image
+is, is read from its signature: cosign's verification of every pinned image
+names the release workflow run, so the tag, that signed it. After `brew
+upgrade lox`, an image older than the shipped release is upgraded, with no
+command to run:
+
+1. the shipped release's image is resolved by digest in ghcr.io (the
+   `-vault` variant for a lock with `vault: true`), and cosign verifies it
+   was signed by that release's own workflow run for that very tag, as
+   `lox add` does;
+2. the configuration reviewed and applied is lockfamily.yaml with the new
+   digests, and compose recreates the containers whose image changed;
+3. lockfamily.yaml takes the new digests once applied.
+
+It prints one line per upgraded image:
+
+```
+hub image upgraded: lockhub v0.7.0 → v0.8.0 (signature verified)
+lock shop-db: image upgraded: locksql v0.16.0 → v0.16.2 (vault image, signature verified)
+```
+
+Fail closed: an image that cannot be resolved or whose signature does not
+verify is not used; the old image (verified above) is kept and a line says
+why (`lock shop-db: image: not upgraded to locksql v0.16.2, keeping v0.16.0:
+…`). An image newer than the shipped release (`lox add --version`) is kept,
+and so is one whose signature names no release (it cannot be compared).
+
+The image lines are part of what the review fingerprints, but a new image
+changes nothing a human reviewed: when the upgraded images are the only
+change since the last `lox run`, it is applied without a question
+(`only the upgraded images changed since the last lox run`). Anything else
+that changed (a profile, a policy, a line of lockfamily.yaml) is reviewed as
+always, the image lines with it, and nothing is applied, nor written back,
+without the yes. A lock's console still reviews its own policy at its start
+when the new version loosens it (`lox attach`).
+
+`--no-upgrade` keeps the pinned images; `--pin` leaves the hub as pinned
+for that run. `lox up` (deprecated) never upgrades. A development build of
+lox (`lox version` says `dev`) upgrades only the locks.
+
 ## Restoring a hub version, rotating keys
 
 `lox run --pin sha256:<digest>` (or the whole
 `ghcr.io/davidgodefroid/lockhub@sha256:…` reference) runs the hub on that
 image: a previous version restored by digest. The review shows the image
 line that changes; cosign checks the image is a lockhub release as for any
-other; once applied, lockfamily.yaml takes the digest, so the next lox run
-keeps it. `hub-images.log` in the state directory lists the hub images
+other; once applied, lockfamily.yaml takes the digest. The next lox run
+upgrades it again if it is older than this lox's release (see above): run
+`lox run --no-upgrade` to keep it. `hub-images.log` in the state directory lists the hub images
 applied in the workspace, oldest first. An older hub on data a newer one
 wrote may refuse to start: the hub's data has no downgrade path. A hub
 image from before key rotation (no `lockhub rotate-key`) refuses an audit

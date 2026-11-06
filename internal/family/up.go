@@ -90,6 +90,10 @@ type Up struct {
 	Focus string
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
+	// Upgrade (lox run) replaces the pinned images older than the
+	// releases this lox ships with, once verified (upgrade.go); nil: the
+	// pins are applied as they are.
+	Upgrade *Upgrade
 }
 
 // Project is the compose project of a workspace: one per workspace.
@@ -351,15 +355,36 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	slices.SortFunc(images, func(a, b img) int { return strings.Compare(a.ref, b.ref) })
 	images = slices.Compact(images)
+	// The release each image was signed for, from its certificate.
+	tags := map[string]string{}
 	for _, im := range images {
-		if _, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref); err != nil {
+		out, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref)
+		if err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
+		tags[im.ref] = signedTag(out, im.repo)
 	}
 	fmt.Fprintln(u.Out, "hub image verified")
 	for _, n := range c.Instances() {
 		fmt.Fprintf(u.Out, "lock %s: image verified\n", n)
+	}
+	// lox run: the images older than this lox's releases are replaced by
+	// theirs, verified; the configuration reviewed and applied is the
+	// file with them, written back once applied.
+	var ups []upgraded
+	if u.Upgrade != nil && !u.Probe && !u.DryRun {
+		nraw, done, err := u.Upgrade.upgrade(ctx, u.Out, raw, c, tags, u.Pin != "")
+		if err != nil {
+			return err
+		}
+		if len(done) > 0 {
+			if c, err = decode(nraw, u.File); err != nil {
+				return err
+			}
+			raw, ups = nraw, done
+			composeYAML = []byte(Compose(c, paths))
+		}
 	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
@@ -542,8 +567,11 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if prev.Fingerprint == fp {
 		fmt.Fprintln(u.Out, "configuration unchanged since the last lox run")
+	} else if d := diff(prev.Summary, sum); !first && !u.Review && onlyUpgrades(d, ups) {
+		// The new images change nothing that was reviewed: the profiles,
+		// the policies and every other line are the ones applied before.
+		fmt.Fprintln(u.Out, "only the upgraded images changed since the last lox run: applied without a question")
 	} else {
-		d := diff(prev.Summary, sum)
 		switch {
 		case u.Review && first:
 			// --review: the whole configuration, the profiles line by line.
@@ -746,8 +774,8 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := recordHubImage(u.State, c.Hub.Image, now()); err != nil {
 		return err
 	}
-	// --pin: lockfamily.yaml says what runs.
-	if pinned {
+	// --pin, an upgrade: lockfamily.yaml says what runs.
+	if pinned || len(ups) > 0 {
 		if err := writeFile(u.File, raw); err != nil {
 			return fmt.Errorf("%s: the hub runs %s, but the file was not updated: %w", u.File, c.Hub.Image, err)
 		}
