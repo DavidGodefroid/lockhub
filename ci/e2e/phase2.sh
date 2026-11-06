@@ -499,7 +499,13 @@ if [ -n "$mq" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ]; then
 	mqimg=$(sed -n '/^  mq:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 	hostmq() { LOCKMQ_IMAGE="$mqimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKMQ_LAUNCHER" mcp; }
 	mqread='"profile":"e2e","vhost":"e2e","name":"orders","from":"first","count":1'
-	hostmq lockmq_read "{$mqread,\"intent\":\"e2e host agent\"}" >mread1.json || { cat mread1.json; die "host lockmq_read failed"; }
+	hostmq lockmq_read "{$mqread,\"intent\":\"e2e host agent\"}" >mread1.json || {
+		cat mread1.json
+		docker logs "$p-gw-mq-1" 2>&1 | tail -20
+		docker logs "$p-gwout-mq-1" 2>&1 | tail -20
+		LOCKMQ_IMAGE="$mqimg" sh -x "$LOCKMQ_LAUNCHER" status --profile e2e 2>&1 | tail -30
+		die "host lockmq_read failed"
+	}
 	cat mread1.json
 	jq -e '.data.status == "pending" and .data.lock == "lockmq" and .data.instance == "mq"' mread1.json >/dev/null ||
 		die "host agent: the read did not answer pending on the instance mq"
