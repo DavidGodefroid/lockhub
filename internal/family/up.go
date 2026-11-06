@@ -146,6 +146,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 				s = append(s, fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace))
 			}
 		}
+		if usesSeccomp(l.Type) {
+			s = append(s, fmt.Sprintf("lock %s seccomp lockfile's shipped profile sha256:%s", n, LockfileSeccompSum))
+		}
 		if len(l.AllowedUIDs) > 0 {
 			s = append(s, fmt.Sprintf("lock %s serves uids %s besides its clients group (allowed_uids)", n, l.AllowedUIDsFlag()))
 		}
@@ -680,6 +683,17 @@ func (u *Up) Do(ctx context.Context) error {
 		paths.VaultCA, paths.VaultCASum = vp, sha
 	} else {
 		os.Remove(filepath.Join(u.State, "vault-ca.pem"))
+	}
+	if c.hasSeccompLock() {
+		// 0644 whatever the umask, as the CA: compose (the human's
+		// account, or a rootless engine's) reads it to create the console.
+		sp := filepath.Join(u.State, lockfileSeccompFile)
+		if err := writeAtomic(sp, LockfileSeccomp, 0o644); err != nil {
+			return err
+		}
+		paths.Seccomp, paths.SeccompSum = sp, LockfileSeccompSum
+	} else {
+		os.Remove(filepath.Join(u.State, lockfileSeccompFile))
 	}
 	composeYAML = []byte(Compose(c, paths))
 	// The profiles go on the setup service's stdin (they can hold
