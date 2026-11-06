@@ -11,7 +11,7 @@ import (
 // lockfile's own launcher runs every console container under it and
 // refuses to start one without it. The image does not carry it, so lox run
 // carries this byte-for-byte copy (unchanged from lockfile v0.3.0 to
-// v0.7.0, every release lox add pins) and runs each lockfile lock under it
+// v0.8.0, every release lox add pins) and runs each lockfile lock under it
 // instead of Docker's default, which varies with the engine's version.
 // When lockfile changes its seccomp.json, copy it here: the test pins its
 // digest so the change is deliberate and reviewed (each lockfile lock's

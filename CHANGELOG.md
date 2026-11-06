@@ -3,6 +3,56 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## v0.9.0 (2026-11-06)
+
+Supported locks: `lox run` upgrades older images to locksql v0.17.0,
+lockmq v0.8.0, lockfile v0.8.0 and lockhttp v0.8.0 (`family.ShippedLocks`,
+lockhub#118); `lox add` still pins each lock's latest signed release.
+lockkit v0.13.0.
+
+Upgrade notes (behaviour changes):
+
+- `lox run` (lockhub#121): in a terminal of its own, outside the agent, it
+  starts the hub and the locks, then shows every ticket and decision live
+  (masked) and serves decisions in auto mode by default. Reads are auto;
+  writes and DDL are always asked; a connection is asked once per profile
+  per session (an `ask` password or an expired Vault token is typed there
+  and sealed to the lock); a new lockhttp endpoint is asked once.
+  Shift+Tab switches to manual, the bell rings only for questions, and
+  quitting fails closed. `NO_COLOR`, light/dark, ASCII and 80 columns are
+  supported. `lox up` is deprecated.
+- The hub accepts lockkit version-2 tickets (kinds), signs decisions that
+  name the deciding rule (an auto rule's id, or human), relays a connect
+  ticket's sealed secret, records the rule in its audit, and refuses a
+  rule's approval where a human is required (`needs_human`). lockkit
+  v0.13.0 (lockhub#121).
+- Each lock but lockhttp reaches only the endpoints of its reviewed
+  profile (database, broker, source, and Vault with `vault: true`), through
+  a per-lock egress gateway on an internal network: no internet, cloud
+  metadata or other host ports (lockhub#123). The review shows the
+  allowlist and `lox doctor` checks it.
+- `lox run` upgrades the hub and lock images older than the releases the
+  installed lox ships with, at start (lockhub#118). Each new image is
+  resolved by digest and cosign-verified for its release tag, and
+  lockfamily.yaml is rewritten; one line is printed per upgraded image. If
+  verification fails it keeps the old image and says why. It asks only if
+  something besides the images changed. `--no-upgrade` keeps the pins.
+- lockfile locks run under lockfile's shipped seccomp profile (as its own
+  launcher runs them) instead of Docker's default (lockhub#45). The review
+  shows the profile's digest; the copy is unchanged through lockfile
+  v0.8.0.
+
+Other changes:
+
+- `lox audit` lists the hub's exchanges (ticket, masked request, decision
+  with its rule or human, outcome) in `lox run`'s colours, with filters,
+  `--follow`, `--json` and a pager; `lox audit show` draws one exchange's
+  masked plan, deciding rule, timings and signatures; `a` in `lox run`
+  opens the same view (lockhub#122).
+- CI: macOS runs on main and nightly, not on pull requests (lockhub#117).
+- e2e: the host launchers are the new releases (locksql v0.17.0, lockmq
+  v0.8.0).
+
 ## v0.8.0 (2026-11-04)
 
 Supported locks: as v0.7.0.
