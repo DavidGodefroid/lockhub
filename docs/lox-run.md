@@ -460,9 +460,48 @@ declaration of an instance lists.
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
 lockhttp v0.3.0 or later.
 
-Locks resolve `host.docker.internal` to the host, as their launchers do
-(their profile wizards name a local database or broker so). A TOML file of a
-profile must be UTF-8 of at most 64 KiB: every line of it is in the review.
+A TOML file of a profile must be UTF-8 of at most 64 KiB: every line of it is
+in the review.
+
+### Egress: each lock reaches its reviewed endpoints only
+
+Every lock but lockhttp (whose egress is its own policy's job) sits on an
+internal network, `locknet-<name>`: no route out, so no internet, no cloud
+metadata (`169.254.169.254`), no other host. `lox run` reads the endpoints
+from the **reviewed copy** of the lock's profile (never from the workspace,
+which agents can write) and gives the lock a small gateway that forwards only
+those:
+
+| lock | endpoints |
+|---|---|
+| locksql | `host`:`port` (default 5432 for postgres, 3306 for mysql and mariadb); sqlite none; with an `ssh` table, the bastion only |
+| lockmq | `url`, `amqp_url`, `stream_url` (default ports of their schemes); with `ssh`, the bastion only |
+| lockfile | s3: the `endpoint`, else `<bucket>.s3.<region>.amazonaws.com:443`; sftp: `host`:`port` (22); local none |
+| any, with `vault: true` | the `vault.address` |
+
+The lock's profile names the profile it serves (`locks.<name>.profile`); when
+it names none, the endpoints of every profile of `config.toml` (the human picks
+one at the console). The gateway, `gw-<name>`, answers on the lock's network
+under the endpoints' own names (network aliases), so host names and TLS server
+names stay the profile's, `host.docker.internal` included; its back half,
+`gwout-<name>`, is the only container with a route out (`out-<name>`) and dials
+only those endpoints. Both run the hub's image (`lockhub egress-gateway`), with
+the hub's hardening. Two endpoints on one port are told apart by their TLS
+server name when both start with TLS (https, amqps, rabbitmq-stream+tls);
+otherwise `lox run` stops with an error naming both: move one to another port.
+
+The review shows the allowlist (the `egress` row of each lock; `lox run
+--review` lists the lines `lock <name> egress host:port (what)`), so a
+profile change that changes it is reviewed again. Fail closed: what the
+allowlist cannot name exactly is reached by nothing, and the review says why
+(`egress unreachable: …`): an IP address (the gateway answers for names; name
+the host, or `host.docker.internal` for this machine), a `proxy_command`, a
+value it cannot read. `lox doctor` checks each lock's effective egress: every
+network of its container is internal, and its gateway runs and forwards exactly
+what the last `lox run` reviewed. A hub image older than the gateway (pinned
+with `--pin`) cannot run it: the lock then reaches nothing until `lox run`
+upgrades the hub. The bridge a lock had before (`egress-<name>`, with a route
+out) is removed by the first `lox run` that moves the lock off it.
 
 Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
 `-vault` variant of its image (`lox add` pins it) and gets `VAULT_ADDR` (and

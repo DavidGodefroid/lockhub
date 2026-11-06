@@ -94,7 +94,8 @@ func healthy(t *testing.T) (*Doctor, *answers) {
 {"Service":"lock-crm-prod","State":"running"}
 {"Service":"lock-events","State":"running"}
 `,
-		"network inspect": "true\n",
+		"network inspect":                    "true\n",
+		"{{json .NetworkSettings.Networks}}": `{"p_lockhub":{},"p_egress":{}}`,
 	}}
 	return &Doctor{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: run, Root: root, Run: a}, a
 }

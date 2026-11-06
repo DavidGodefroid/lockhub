@@ -26,6 +26,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
+	"github.com/DavidGodefroid/lockhub/internal/egress"
 	"github.com/DavidGodefroid/lockkit/ticket"
 
 	"github.com/DavidGodefroid/lockhub/internal/facade/chat"
@@ -56,6 +57,9 @@ Usage:
   lockhub pubkey [--data DIR]                  print the public half of the hub's signing key
   lockhub rotate-key --new FILE [--data DIR]   hand the stopped hub over to the key FILE (made by keygen):
                                                logged, signed by both keys; print the new public half
+  lockhub egress-gateway --forward LISTEN=HOST:PORT[,sni=NAME] ...
+                                               a lock's egress gateway (lox run starts it): forward each
+                                               port to its endpoint only; a shared port by TLS server name
   lockhub version                              print the version
   lockhub help                    show this help
 `
@@ -84,6 +88,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return rotateKeyCmd(args[1:], stdout, stderr)
 	case "pubkey":
 		return pubkeyCmd(args[1:], stdout, stderr)
+	case "egress-gateway":
+		return egressGateway(ctx, args[1:], stderr)
 	default:
 		fmt.Fprintf(stderr, "lockhub: unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -106,6 +112,35 @@ func keygen(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintln(stdout, keys.Public(pub))
+	return 0
+}
+
+// egressGateway serves a lock's egress gateway until SIGTERM.
+func egressGateway(ctx context.Context, args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("egress-gateway", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var fwd []egress.Forward
+	fs.Func("forward", "LISTEN=HOST:PORT[,sni=NAME], repeated", func(s string) error {
+		f, err := egress.ParseForward(s)
+		if err == nil {
+			fwd = append(fwd, f)
+		}
+		return err
+	})
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: lockhub egress-gateway --forward LISTEN=HOST:PORT[,sni=NAME] ...")
+		return 2
+	}
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	g := &egress.Gateway{Forwards: fwd, Log: stderr}
+	if err := g.Serve(ctx); err != nil {
+		fmt.Fprintln(stderr, "lockhub egress-gateway:", err)
+		return 1
+	}
 	return 0
 }
 

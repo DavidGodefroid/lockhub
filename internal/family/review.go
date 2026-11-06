@@ -84,6 +84,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 			prod = "? (" + o + " in the profile)"
 		}
 		row("production", prod)
+		if f.Egress != "" {
+			row("egress", f.Egress)
+		}
 		if f.Profile != "" {
 			note := "(lox run --review prints it in full)"
 			if f.Changed {
@@ -110,6 +113,8 @@ func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 	for _, n := range shortLocks(c, focus) {
 		l := c.Locks[n]
 		pre["profile "+l.Type+" "] = true
+		// The egress row renders the lock's allowlist lines.
+		pre["lock "+n+" egress "] = true
 		cov[fmt.Sprintf("lock %s type %s", n, l.Type)] = true
 		cov[fmt.Sprintf("lock %s image %s", n, l.Image)] = true
 		if l.Profile != "" {

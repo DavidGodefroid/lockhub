@@ -103,6 +103,13 @@ columns and colours, with filters (`--agent`, `--lock`, `--profile`,
 and `--json`; `lox audit show ID` draws one exchange: its masked plan, the
 deciding rule, timings and signatures.
 
+Each lock (but lockhttp, whose egress is its own policy) reaches only the
+endpoints of its **reviewed** profile: its network is internal, and a small
+gateway forwards to its database, broker or source, and its Vault when it has
+`vault: true`, nothing else (no internet, no cloud metadata, no other host
+port). The review shows the allowlist; `lox doctor` checks it. See
+[docs/lox-run.md](docs/lox-run.md#egress-each-lock-reaches-its-reviewed-endpoints-only).
+
 `lox up` is deprecated: it prints "use lox run" and only starts the hub and
 the locks. See [docs/lox-run.md](docs/lox-run.md).
 

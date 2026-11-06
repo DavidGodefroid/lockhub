@@ -34,6 +34,11 @@ func TestRun(t *testing.T) {
 		{[]string{"help"}, 0, "lockhub serve", ""},
 		{[]string{"bogus"}, 2, "", `unknown command "bogus"`},
 		{[]string{"serve", "--nope"}, 2, "", "flag provided but not defined"},
+		{[]string{"help"}, 0, "lockhub egress-gateway --forward", ""},
+		{[]string{"egress-gateway"}, 1, "", "no --forward"},
+		{[]string{"egress-gateway", "--forward", "5432"}, 2, "", "want LISTEN=HOST:PORT"},
+		{[]string{"egress-gateway", "--forward", "443=a:1", "--forward", "443=b:2"}, 1, "", "port 443 is shared by 2 forwards"},
+		{[]string{"egress-gateway", "extra"}, 2, "", "usage: lockhub egress-gateway"},
 	} {
 		var out, errb bytes.Buffer
 		code := run(context.Background(), c.args, &out, &errb)
