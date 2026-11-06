@@ -74,8 +74,8 @@ Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
 framed card above the feed: what, who, which profile, the masked screen,
 why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
 is typed in the card. The bell rings only when a card appears. `Tab` brings
-the next card up, `a` lists the session's decisions and their rules, `?` the
-keys, `q q` or Ctrl-C quits.
+the next card up, `a` shows the hub's audit (as `lox audit` lists it, read
+again every second while open), `?` the keys, `q q` or Ctrl-C quits.
 
 **A key answers the card it was pressed for.** When the card on top changes
 (answered, decided elsewhere, withdrawn, expired, or `Tab`), the keys already
@@ -88,6 +88,41 @@ dropped until Enter or Esc, never read as keys on the next card.
 **Quitting fails closed.** Once `lox run` ends, nothing decides: pending and
 new tickets wait at the hub until the next `lox run` (or another facade), and
 the locks close their connections once idle, so the next request asks again.
+
+## lox audit
+
+`lox audit` lists the hub's exchanges: each ticket and its answer, read from
+the hub's data directory (`hub.db`, read only; `--data` for another one), in
+the same columns and colours as the feed of `lox run` (one style, package
+`internal/loxrun`). A line is the time the ticket was asked, the agent, the
+lock and instance, the profile, the kind, the lock's masked request and the
+decision: `auto` (a rule), `✔ human` (a human, on any facade), `✘ rule` or `✘
+denied`, `◆ asked` (waiting), `– none` (ended undecided), then what became of
+it (`✓` ran, `⌛` expired, `↩` withdrawn). On top, a summary: exchanges,
+auto, human, denied, waiting, writes, connections opened. Day separators and
+the `lox run` sessions (who started one, when, `── switched to MANUAL ──`)
+come from `lox run`'s journal, `runs.jsonl` in the workspace's state
+directory (unsigned: it only places the sessions).
+
+Filters: `--agent`, `--lock` (an instance or a lock: `locksql`), `--profile`,
+`--since` (`30m`, `2h`, `7d`, a date, RFC 3339), `--decision
+denied|human|auto|pending`, `--writes`; `--follow` keeps printing new
+exchanges and changed decisions; `--json` writes one object per exchange.
+`lox audit show INSTANCE/ID` (or an id, or its start) draws one exchange in a
+framed panel: its whole masked plan, the auto rule or the human and facade
+that decided, timings (asked, decided `+Δ`, ended `+Δ`), and its signatures:
+the ticket's under the pinned lock key, the decision's under the pinned hub
+keys (`✓`, `✗`, or `?` without a key). `lox audit verify` checks the whole
+chain.
+
+On a terminal the listing goes through `$PAGER` (else `less -R`, `/` to
+search) when it does not fit; piped, it is plain aligned text (`COLUMNS`, 120
+by default); `NO_COLOR`, `--theme light|dark` and 80 columns hold as in `lox
+run`. Nothing printed is ever a value in clear, a credential or a result row:
+the hub keeps none (tickets are masked by their locks), and the sealed parts
+of a ticket or a decision (a password for the lock, a clear copy for a
+device) and the agent's free-text note are never read out. The hub records no
+row or message counts: the outcome shown is the ticket's state.
 
 Extension points: the image update (lockhub#118) and the lockfile seccomp
 profile under Vault (lockhub#45) belong to the start; the engine takes

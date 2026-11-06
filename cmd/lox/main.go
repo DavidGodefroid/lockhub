@@ -89,6 +89,10 @@ Usage:
                                           pair a phone with the mobile facade (confirmed at this terminal)
   lox mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
                                           list or revoke paired phones; lox run then (un)pins them at the locks
+  lox audit [--agent A] [--lock L] [--profile P] [--since 2h] [--writes]
+            [--decision denied|human|auto|pending] [--follow] [--json]
+                                          the hub's exchanges: each ticket and its answer, masked
+  lox audit show INSTANCE/ID [--json]     one exchange: masked plan, deciding rule or human, timings, signatures
   lox audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lox version                            print the version
@@ -145,11 +149,7 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	case "doctor":
 		return doctorCmd(args[1:], stdout, stderr)
 	case "audit":
-		if len(args) < 2 || args[1] != "verify" {
-			fmt.Fprintln(stderr, "usage: lox audit verify --data DIR --hub-key-file FILE")
-			return 2
-		}
-		return auditVerify(args[2:], stdout, stderr)
+		return auditCmd(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lox: unknown command %q\n\n%s", args[0], usage)
 		return 2

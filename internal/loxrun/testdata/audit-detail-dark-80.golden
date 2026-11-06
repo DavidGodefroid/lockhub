@@ -1,0 +1,18 @@
+[1;31m ┌[0m[1m exchange [0mshop/01KWRITE [1;31;7m PRODUCTION [0m [1;31m────────────────────────────────────────[0m[1;31m┐[0m
+[1;31m │ [0m[94;1mdev-1[0m[2m asked (unverified name)[0m[2m · ◆ locksql[0m                                  [1;31m│[0m
+[1;31m │ [0m[2mon[0m         shop[2m/[0m[1;31mprod[0m[2m   kind [0m[1;33;1mwrite[0m[2m   risk [0mprod_write                        [1;31m│[0m
+[1;31m │ [0m                                                                           [1;31m│[0m
+[1;31m │ [0m[1mmasked plan[0m[2m (as the lock masked it: the hub never sees it in clear)[0m        [1;31m│[0m
+[1;31m │ [0m  [1mshop / prod · write[0m                                                      [1;31m│[0m
+[1;31m │ [0m  [1;33mUPDATE[0m customers [1;36mSET[0m email = [2;3m‹j***(20)›[0m [1;36mWHERE[0m id = [2;3m‹4***(3)›[0m             [1;31m│[0m
+[1;31m │ [0m  -- 1 row (estimated)                                                     [1;31m│[0m
+[1;31m │ [0m[31m  ! production[0m                                                             [1;31m│[0m
+[1;31m │ [0m[2;3m  personal data touched: email (masked)[0m                                    [1;31m│[0m
+[1;31m │ [0m                                                                           [1;31m│[0m
+[1;31m │ [0m[2mdecision[0m   [32m✔ human[0m[32m ✓[0m[2m  by [0m[1malice[0m[2m on the [0m[1mtelegram[0m[2m facade[0m                      [1;31m│[0m
+[1;31m │ [0m[2mtimings[0m    asked 2026-11-06 14:05:20.000 · decided +12.0s · consumed +300ms[1;31m│[0m
+[1;31m │ [0m[2mstate[0m      consumed                                                        [1;31m│[0m
+[1;31m │ [0m[2msignature[0m  [32;1m✓ [0mticket signed by its lock's pinned key                        [1;31m│[0m
+[1;31m │ [0m           [32;1m✓ [0mdecision signed by the hub key                                [1;31m│[0m
+[1;31m │ [0m[2mthe whole chain, and the lock's own log: lox audit verify[0m                  [1;31m│[0m
+[1;31m └────────────────────────────────────────────────────────────────────────────┘[0m

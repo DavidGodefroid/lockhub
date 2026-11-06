@@ -101,6 +101,10 @@ type Session struct {
 	// typed are dropped too. Default 400ms; negative turns both off
 	// (tests that answer as soon as a question comes).
 	KeyArm time.Duration
+	// Audit, if set, reads the hub's audit (lox audit's exchanges and
+	// sessions): the a key shows it, read again every second while it is
+	// open. Unset, a shows this session's decisions only.
+	Audit func() ([]Exchange, []RunEvent, error)
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
@@ -145,6 +149,7 @@ type state struct {
 	hubOK    bool
 	hubErr   string
 	overlay  string
+	audit    auditView
 	flash    string
 	flashTo  time.Time
 	quitting bool

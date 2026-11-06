@@ -16,7 +16,7 @@
    y / n        approve / deny the question on top
    d            the question's whole masked screen
    x            forget the profile on top (none up: all): asked again, password…
-   a            this session's decisions and the rule that took each
+   a            the hub's audit (lox audit): each exchange and the rule or huma…
    ?            this help; Esc or ? again to close
    q q, Ctrl-C  quit: decisions stop, tickets wait (fail closed)
 

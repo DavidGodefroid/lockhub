@@ -18,6 +18,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 )
 
@@ -102,12 +103,29 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	s := &loxrun.Session{Hub: approve.Dial(*sock), Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
 		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode}
+	// The a key: the hub's audit, as lox audit lists it. The session
+	// journal places this session (who, when, its mode switches) in it.
+	state := stateDir(family.Project(family.Workspace(abs)))
+	src := auditSource(auditDirs{data: filepath.Join(state, "hub"), state: state}, "", *keysDir)
+	src.Limit = 500
+	s.Audit = func() ([]loxrun.Exchange, []loxrun.RunEvent, error) { return loxaudit.Load(ctx, src) }
+	journal := func(e loxrun.RunEvent) {
+		e.User, e.Workspace = s.Display, s.Workspace
+		_ = loxaudit.AppendRun(src.Runs, e) // a place in the listing only: never in the way
+	}
+	journal(loxrun.RunEvent{Event: loxrun.RunStart, Mode: mode.String()})
+	s.Observe = func(e loxrun.Event) {
+		if e.Kind == loxrun.EvMode {
+			journal(loxrun.RunEvent{Event: loxrun.RunMode, Mode: e.Mode.String()})
+		}
+	}
 	if tm.Full {
 		s.Size = tm.Size
 	} else {
 		s.Style.Color = false // a pipe or a log: no escapes
 	}
 	err = s.Run(ctx)
+	journal(loxrun.RunEvent{Event: loxrun.RunStop})
 	tm.Close()
 	if err != nil {
 		fmt.Fprintln(stderr, "lox run:", err)

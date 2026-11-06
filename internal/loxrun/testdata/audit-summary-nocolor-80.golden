@@ -1,0 +1,15 @@
+ 9 exchanges · 3 auto · 2 human · 2 denied · 1 waiting · 4 writes · 1 connectio…
+ ┌ exchange shop/01K000O  PRODUCTION  ─────────────────────────────────────────┐
+ │ dev-1 asked (unverified name) · ◆ locksql                                  │
+ │ on         shop/prod!   kind read   risk read_pii                          │
+ │                                                                            │
+ │ masked plan (as the lock masked it: the hub never sees it in clear)        │
+ │   SELECT id, total FROM orders WHERE customer = ‹c***(8)›                  │
+ │                                                                            │
+ │ decision   auto ✓  by the auto rule default:read                           │
+ │ timings    asked 2026-11-06 14:02:14.000 · decided +40ms · consumed +860ms │
+ │ state      consumed                                                        │
+ │ signature  ✓ ticket signed by its lock's pinned key                        │
+ │            ✓ decision signed by the hub key                                │
+ │ the whole chain, and the lock's own log: lox audit verify                  │
+ └────────────────────────────────────────────────────────────────────────────┘

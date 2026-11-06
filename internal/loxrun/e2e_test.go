@@ -27,6 +27,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
+	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
 	"github.com/DavidGodefroid/lockhub/internal/route"
@@ -168,7 +169,13 @@ func newWorldArm(t *testing.T, arm time.Duration) *world {
 		Style: loxrun.Style{Color: true, Unicode: true}, Workspace: "~/e2e", Locks: 1, Display: "david",
 		LockKeys:  map[string]ed25519.PublicKey{inst: lockPub},
 		QueueWait: 2 * time.Second, StatePoll: 50 * time.Millisecond, KeyArm: arm,
-		Observe: func(e loxrun.Event) { w.events <- e }}
+		Observe: func(e loxrun.Event) { w.events <- e },
+		// The a key: the hub's audit, read from its data directory as
+		// lox run reads it.
+		Audit: func() ([]loxrun.Exchange, []loxrun.RunEvent, error) {
+			return loxaudit.Load(context.Background(), loxaudit.Source{Data: dir, HubKeys: []ed25519.PublicKey{hubPub},
+				LockKeys: map[string]ed25519.PublicKey{inst: lockPub}})
+		}}
 	go func() { w.runDone <- s.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-w.runDone })
 	return w
@@ -465,5 +472,88 @@ func TestRunE2EKeyGuard(t *testing.T) {
 	}
 	if d := w.decision(upd2); d.Decision != ticket.Denied {
 		t.Error("the hub signed an approval of the second UPDATE")
+	}
+}
+
+// From the agent's tickets to the audit listing: a connection approved
+// with a password typed in lox run, an auto SELECT, an UPDATE approved
+// and one denied; lox audit lists each with its decision and the rule or
+// human behind it, filters them, shows the deciding rule in the detail,
+// and never a clear value nor the password; lox run's a key shows the
+// same listing without leaving the session.
+func TestAuditE2E(t *testing.T) {
+	w := newWorld(t)
+	done := w.acquire("A")
+	conn := w.wait(loxrun.EvQuestion, "").ID
+	w.press(loxrun.R('y'))
+	w.press(typed(password)...)
+	w.wait(loxrun.EvDecided, conn)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	w.wait(loxrun.EvResult, conn)
+	sel := w.submit(ticket.KindRead, ticket.RiskRead, "A", "SELECT id FROM customers WHERE email = ")
+	w.wait(loxrun.EvDecided, sel)
+	upd := w.submit(ticket.KindWrite, ticket.RiskWrite, "A", "UPDATE customers SET email = ")
+	w.wait(loxrun.EvQuestion, upd)
+	w.press(loxrun.R('y'))
+	w.wait(loxrun.EvDecided, upd)
+	del := w.submit(ticket.KindWrite, ticket.RiskWrite, "A", "DELETE FROM customers WHERE email = ")
+	w.wait(loxrun.EvQuestion, del)
+	w.press(loxrun.R('n'))
+	w.wait(loxrun.EvDecided, del)
+
+	src := loxaudit.Source{Data: w.dir, HubKeys: []ed25519.PublicKey{w.hubPub}}
+	xs, _, err := loxaudit.Load(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(xs) != 4 {
+		t.Fatalf("%d exchanges, want 4", len(xs))
+	}
+	want := map[string]struct{ decision, rule, facade string }{
+		conn: {"human", "", "tty"}, sel: {"auto", "default:read", ""}, upd: {"human", "", "tty"}, del: {"denied", "", "tty"},
+	}
+	for _, x := range xs {
+		wx, ok := want[x.ID]
+		if !ok || x.Decision() != wx.decision || x.Rule != wx.rule || x.Facade != wx.facade || x.Agent != "dev-1" || x.Profile != "A" ||
+			x.Sig != loxrun.SigOK {
+			t.Errorf("%s: %s rule %q facade %q agent %q profile %q sig %v (%s)", x.ID, x.Decision(), x.Rule, x.Facade, x.Agent, x.Profile, x.Sig, x.SigNote)
+		}
+	}
+	if w := (loxaudit.Filter{Writes: true}).Apply(xs); len(w) != 2 {
+		t.Errorf("--writes: %d", len(w))
+	}
+	if d := (loxaudit.Filter{Decision: "denied"}).Apply(xs); len(d) != 1 || d[0].ID != del {
+		t.Errorf("--decision denied: %v", d)
+	}
+	st := loxrun.Style{Color: true, Unicode: true}
+	listing := strings.Join(loxrun.AuditListing(xs, nil, time.Local, 120, st), "\n")
+	x, _ := loxaudit.Find(xs, inst+"/"+sel)
+	detail := strings.Join(loxrun.AuditDetail(x, time.Local, 100, st), "\n")
+	if !strings.Contains(detail, "default:read") || !strings.Contains(detail, "decision signed by the hub key") {
+		t.Errorf("detail lacks the deciding rule or the signature:\n%s", detail)
+	}
+	for _, out := range []string{listing, detail} {
+		if strings.Contains(out, password) || strings.Contains(out, "jane.doe@example.com") {
+			t.Errorf("clear value printed:\n%s", out)
+		}
+	}
+	if !strings.Contains(listing, "4 exchanges") || !strings.Contains(listing, "‹j***(20)›") {
+		t.Errorf("listing:\n%s", listing)
+	}
+
+	// Inside lox run: a opens the hub's audit.
+	w.press(loxrun.R('a'))
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(w.out.String(), "the hub's audit") {
+		if time.Now().After(deadline) {
+			t.Fatalf("a did not open the hub's audit:\n%s", w.out.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if screen := w.out.String(); !strings.Contains(screen, "4 exchanges") || strings.Contains(screen, password) {
+		t.Errorf("lox run's audit view")
 	}
 }
