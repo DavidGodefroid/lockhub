@@ -10,7 +10,7 @@ import (
 // target, environment, credentials, production, profile sha256). It is
 // display only: the fingerprint stays over the full summary, and every
 // summary line the short form does not render is listed under "Other
-// changes since the last lox up:", so no change escapes the review.
+// changes since the last lox run:", so no change escapes the review.
 
 // shortLocks are the locks the short review shows: the focus alone, or all.
 func shortLocks(c *Config, focus string) []string {
@@ -26,7 +26,7 @@ func shortLocks(c *Config, focus string) []string {
 // renderShort writes one block per lock (the focus lock, or all of them),
 // then the changes the blocks do not render.
 func renderShort(w io.Writer, c *Config, focus string, facts map[string]Facts, imagesOK bool, changed []string) {
-	renderShortAs(w, c, focus, facts, imagesOK, changed, "Other changes since the last lox up:")
+	renderShortAs(w, c, focus, facts, imagesOK, changed, "Other changes since the last lox run:")
 }
 
 // renderShortAs is renderShort with the heading of the lines no block renders.
@@ -85,9 +85,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 		}
 		row("production", prod)
 		if f.Profile != "" {
-			note := "(lox up --review prints it in full)"
+			note := "(lox run --review prints it in full)"
 			if f.Changed {
-				note = "(changed since the last lox up; lox up --review shows the lines)"
+				note = "(changed since the last lox run; lox run --review shows the lines)"
 			}
 			row("profile", f.Profile+"  "+note)
 		}
@@ -103,7 +103,7 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 // shortCovered are the summary lines the short blocks of the shown locks
 // render (see Summary and the profile lines in Up.Do). A block's profile
 // line stands for every line of its type's profile: the sha256 covers
-// every byte of it, and lox up --review shows the lines.
+// every byte of it, and lox run --review shows the lines.
 func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 	cov := map[string]bool{}
 	pre := map[string]bool{}

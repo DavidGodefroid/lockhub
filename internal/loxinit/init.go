@@ -79,7 +79,7 @@ func (in *Init) Do(ctx context.Context) error {
 		in.say("lockfamily.yaml written: the hub alone")
 	}
 	if !created && in.HubImageGiven {
-		in.say("--hub-image: lockfamily.yaml exists, its hub image is kept (lox up --pin to change it)")
+		in.say("--hub-image: lockfamily.yaml exists, its hub image is kept (lox run --pin to change it)")
 	}
 	// Only a hub that already runs, from a file that was already there,
 	// can be left alone; --review always runs lox up.
@@ -96,7 +96,7 @@ func (in *Init) Do(ctx context.Context) error {
 		in.say("")
 		in.say("lockfamily.yaml declares locks, kept as they are: %s", strings.Join(names, ", "))
 		if !in.Terminal {
-			in.say("lockfamily.yaml declares locks: run lox up at a terminal to review and start them")
+			in.say("lockfamily.yaml declares locks: run lox run at a terminal to review and start them")
 			in.end()
 			return nil
 		}
@@ -107,7 +107,7 @@ func (in *Init) Do(ctx context.Context) error {
 		}
 		if n > 0 {
 			in.say("")
-			in.say("lox up removes the locks applied before: run it at a terminal to review")
+			in.say("lox run removes the locks applied before: run it at a terminal to review")
 			in.end()
 			return nil
 		}

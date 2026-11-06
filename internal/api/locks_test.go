@@ -268,8 +268,8 @@ func TestHelloNamesVersionsAndHubKey(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(h.TicketVersions, []int{1}) || h.HubKeyID != (hubtest.Codec{}).KeyID(e.Pub) {
-		t.Errorf("hello %+v, want versions [1] and key %s", h, (hubtest.Codec{}).KeyID(e.Pub))
+	if !slices.Equal(h.TicketVersions, []int{1, 2}) || h.HubKeyID != (hubtest.Codec{}).KeyID(e.Pub) {
+		t.Errorf("hello %+v, want versions [1 2] and key %s", h, (hubtest.Codec{}).KeyID(e.Pub))
 	}
 	if (hub.New(hub.Config{})).KeyID() != "" {
 		t.Error("a hub without a key names one")

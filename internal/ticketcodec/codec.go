@@ -23,9 +23,10 @@ var _ hub.Codec = Codec{}
 // KeyID names a lock key as tickets do.
 func (Codec) KeyID(k ed25519.PublicKey) string { return ticket.KeyID(k) }
 
-// TicketVersions is the one schema version lockkit's ticket package
-// verifies (it refuses any other).
-func (Codec) TicketVersions() []int { return []int{ticket.Version} }
+// TicketVersions are the schema versions lockkit's ticket package
+// verifies (it refuses any other): version 1, and the tickets that name
+// their kind (ticket.VersionKinds).
+func (Codec) TicketVersions() []int { return []int{ticket.Version, ticket.VersionKinds} }
 
 // VerifyRequest checks a Lock-Sig header value.
 func (Codec) VerifyRequest(k ed25519.PublicKey, method, pathQuery, instance string, at time.Time, nonce string, body []byte, sig string) bool {
@@ -56,6 +57,8 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 		return hub.Info{}, err
 	}
 	info.Flags = string(fl)
+	info.V, info.Kind = t.V, string(t.Kind)
+	info.AskSecret = t.Kind == ticket.KindConnect && t.Subject != nil && t.Subject.SecretTo != ""
 	if t.Renews != nil {
 		info.Renews = &hub.Renewal{Of: t.Renews.Of, Unchanged: t.Renews.Unchanged()}
 	}
@@ -113,6 +116,24 @@ func (Codec) SignDecision(k ed25519.PrivateKey, t hub.Info, v hub.Verdict, at ti
 		Approver: ticket.Approver{ID: v.ApproverID, Display: v.ApproverDisplay},
 		Facade:   v.Facade, At: at.UTC().Truncate(time.Millisecond), Nonce: nonce,
 		HubKeyID: ticket.KeyID(k.Public().(ed25519.PublicKey)),
+	}
+	switch {
+	case t.V == ticket.VersionKinds:
+		// A ticket that names its kind is answered with the deciding
+		// rule: lox run's auto rule, or the human on the facade.
+		d.V, d.Rule = ticket.VersionKinds, &ticket.Rule{By: ticket.RuleHuman}
+		if v.Rule != "" {
+			d.Rule = &ticket.Rule{By: ticket.RuleAuto, ID: v.Rule}
+		}
+	case v.Rule != "" || len(v.Secret) > 0:
+		return nil, fmt.Errorf("a version %d decision names no rule and carries no secret", t.V)
+	}
+	if len(v.Secret) > 0 {
+		var box ticket.Sealed
+		if err := strictJSON(v.Secret, &box); err != nil {
+			return nil, fmt.Errorf("secret: %v", err)
+		}
+		d.Secret = &box
 	}
 	if len(v.Device) > 0 {
 		var a ticket.DeviceAssertion

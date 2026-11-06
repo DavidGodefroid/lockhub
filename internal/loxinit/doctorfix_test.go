@@ -57,7 +57,7 @@ func TestDoctorArgsNeedsFixedLauncher(t *testing.T) {
 			if c.fix {
 				want = []string{"doctor", "--fix", "--yes", "--json"}
 			} else {
-				note = "lox add runs locksql doctor without --fix: " + c.wantNote + ", whose doctor --fix gives .locksql/ to the console account (lox up then refuses it); update locksql to v0.13.1 or later, then run locksql doctor --fix"
+				note = "lox add runs locksql doctor without --fix: " + c.wantNote + ", whose doctor --fix gives .locksql/ to the console account (lox run then refuses it); update locksql to v0.13.1 or later, then run locksql doctor --fix"
 			}
 			for range 2 {
 				args, got := DoctorArgs(context.Background(), run, "/project", "locksql", cache)

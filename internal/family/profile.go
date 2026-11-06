@@ -120,7 +120,7 @@ func (r *profileReader) walk(rel string, want os.FileInfo) error {
 	}
 	name := filepath.Join(r.dir, rel)
 	if !fi.IsDir() || !os.SameFile(fi, want) {
-		return fmt.Errorf("%s changed while lox up read it", name)
+		return fmt.Errorf("%s changed while lox run read it", name)
 	}
 	if err := ownedNotShared(name, fi); err != nil {
 		return err
@@ -141,7 +141,7 @@ func (r *profileReader) walk(rel string, want os.FileInfo) error {
 		}
 		// Names reach the human's review: printable ones only.
 		if !plainName(e.Name()) {
-			return fmt.Errorf("%s: a file name with control, invisible or bidirectional characters (%q): lox up copies none", r.dir, e.Name())
+			return fmt.Errorf("%s: a file name with control, invisible or bidirectional characters (%q): lox run copies none", r.dir, e.Name())
 		}
 		crel := filepath.Join(rel, e.Name())
 		cfi, err := r.root.Lstat(crel)
@@ -158,7 +158,7 @@ func (r *profileReader) walk(rel string, want os.FileInfo) error {
 				return err
 			}
 		default:
-			return fmt.Errorf("%s: not a regular file or a directory (a link?): lox up copies none", filepath.Join(r.dir, crel))
+			return fmt.Errorf("%s: not a regular file or a directory (a link?): lox run copies none", filepath.Join(r.dir, crel))
 		}
 	}
 	return nil
@@ -177,7 +177,7 @@ func (r *profileReader) file(rel string, want os.FileInfo) error {
 		return err
 	}
 	if !fi.Mode().IsRegular() || !os.SameFile(fi, want) {
-		return fmt.Errorf("%s changed while lox up read it", name)
+		return fmt.Errorf("%s changed while lox run read it", name)
 	}
 	if err := ownedNotShared(name, fi); err != nil {
 		return err

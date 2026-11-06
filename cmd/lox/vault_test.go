@@ -43,7 +43,7 @@ func TestVaultSetThenReread(t *testing.T) {
 	if code := vaultCmd(args, &out, &errb); code != 0 {
 		t.Fatalf("code %d, %s", code, errb.String())
 	}
-	if want := file + ": vault set; run lox up to review and apply it"; !strings.Contains(out.String(), want) {
+	if want := file + ": vault set; run lox run to review and apply it"; !strings.Contains(out.String(), want) {
 		t.Errorf("stdout %q", out.String())
 	}
 	c, err := family.Load(file)

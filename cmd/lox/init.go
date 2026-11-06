@@ -27,7 +27,7 @@ func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	file := fs.String("file", "", "the workspace's lockfamily.yaml (default: .lockfamily/lockfamily.yaml of the current directory)")
 	hubImage := fs.String("hub-image", "", "the hub's image for a new lockfamily.yaml, ghcr.io/davidgodefroid/lockhub@sha256:<digest> (default: lockhub's latest signed release's)")
-	review := fs.Bool("review", false, "lox up shows everything and asks, even for a hub with no lock (needs a terminal)")
+	review := fs.Bool("review", false, "lox run shows everything and asks, even for a hub with no lock (needs a terminal)")
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
 	if err := fs.Parse(args); err != nil {
 		return 2

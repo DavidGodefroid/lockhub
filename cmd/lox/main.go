@@ -1,6 +1,7 @@
-// Command lox is the Lock Family CLI on the host: it answers approvals
-// in a terminal (lox approve) and, with the issues that add them, sets
-// up the hub and the locks of a workspace (lox up, add, import, doctor).
+// Command lox is the Lock Family CLI on the host: lox run, in a terminal
+// of its own outside any agent, starts the hub and the locks of a
+// workspace and serves the hub's decisions (auto mode by default); lox
+// add, import, doctor and the rest set the workspace up.
 package main
 
 import (
@@ -42,17 +43,20 @@ Usage:
   lox init [--review] [-v] [--hub-image REF] [--file lockfamily.yaml]
                                           start the project's hub alone, without a question: prerequisites, the
                                           data sources its files name as hints (read only, no secret; lox add
-                                          sets a lock up), lockfamily.yaml with the hub, then lox up
-  lox up [--file lockfamily.yaml] [--dry-run] [-v] [--review] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
-                                          review and start the hub and the workspace's locks; --pin sets
-                                          the hub image by digest (a previous version restored), --rotate
-                                          (repeatable) replaces the hub's or a lock's key; -v shows cosign's and
-                                          docker's own output (default: only when a step fails); --review shows
-                                          everything (every profile line) and asks, even for a hub with no lock
+                                          sets a lock up), lockfamily.yaml with the hub, then lox run
+  lox run [--manual] [--theme light|dark] [--no-start] [--file lockfamily.yaml] [-v] [--review] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
+                                          in a terminal of its own, outside the agent: start (or reuse) the hub
+                                          and the workspace's locks, then show every ticket and decision live
+                                          (masked) and serve decisions: auto mode by default (reads auto, writes
+                                          and DDL asked, a connection asked once per profile per session), the
+                                          rest asked in a question card; Shift+Tab switches auto/manual; quitting
+                                          stops decisions (tickets wait: fail closed). --no-start only serves
+                                          decisions; --pin, --rotate, --review, -v as they were on lox up
+  lox up                                  deprecated: use lox run (it still starts the hub and the locks)
   lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
                                           one source (TYPE: locksql, lockmq, lockfile, lockhttp), guided (or
                                           from flags alone with --non-interactive) and applied at once: profile
-                                          add, init claude, doctor, lockfamily.yaml, lox up with this lock's
+                                          add, init claude, doctor, lockfamily.yaml, the start with this lock's
                                           review, lox attach; a failure, a "n" or Ctrl-C keeps nothing; without
                                           a terminal it stops once the lock is declared
   lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
@@ -67,7 +71,7 @@ Usage:
                                           review; its profile stays in the lock's config.toml unless --purge;
                                           a "n", a failure or Ctrl-C keeps the lock
   lox vault set --address URL [--namespace NS] [--ca-file PATH] [--file lockfamily.yaml]
-                                          write the shared vault: block; lox up reviews and applies it;
+                                          write the shared vault: block; lox run reviews and applies it;
                                           an omitted --namespace / --ca-file keeps the current value, "" clears it
   lox import [--file lockfamily.yaml] [SUB...]
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
@@ -82,7 +86,7 @@ Usage:
   lox mobile pair --name NAME [--file FILE] [--socket PATH]
                                           pair a phone with the mobile facade (confirmed at this terminal)
   lox mobile list|revoke NAME|ID [--file FILE] [--socket PATH]
-                                          list or revoke paired phones; lox up then (un)pins them at the locks
+                                          list or revoke paired phones; lox run then (un)pins them at the locks
   lox audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
   lox version                            print the version
@@ -90,7 +94,7 @@ Usage:
 
 lockfamily.yaml lives in the workspace's .lockfamily/ (lea's agents only read it there); a legacy
 ./lockfamily.yaml is still read, with a warning. lox add TYPE INSTANCE, lox vault set and lox import
-only edit it: the next lox up reviews the change with you.
+only edit it: the next lox run reviews the change with you.
 `
 
 func main() {
@@ -113,7 +117,10 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return approveCmd(args[1:], stdin, stdout, stderr)
 	case "mobile":
 		return mobileCmd(args[1:], stdin, stdout, stderr)
+	case "run":
+		return runCmd(args[1:], stdin, stdout, stderr)
 	case "up":
+		fmt.Fprintln(stderr, "lox up is deprecated: use lox run (it starts the hub and the locks, then serves the decisions in its terminal)")
 		return upCmd(args[1:], stdin, stdout, stderr)
 	case "init":
 		return initCmd(args[1:], stdin, stdout, stderr)
@@ -154,7 +161,7 @@ func auditVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("audit verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	data := fs.String("data", "", "the hub's data directory")
-	keyFile := fs.String("hub-key-file", "", "the hub's public keys (base64, one per line, oldest first: the current one last), as lox up pinned them (hub-keys.pub in its state directory)")
+	keyFile := fs.String("hub-key-file", "", "the hub's public keys (base64, one per line, oldest first: the current one last), as lox run pinned them (hub-keys.pub in its state directory)")
 	var lockLogs lockLogFlag
 	fs.Var(&lockLogs, "lock", "INSTANCE=PATH: also verify that lock's audit log (its audit.log, or the directory holding it); repeatable")
 	anchorsFile := fs.String("anchors", "", "file keeping each lock log's anchor between runs (host only, 0600): a log cut or stripped since is refused")
@@ -381,7 +388,7 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// defaultSocket is where lox up publishes the hub's facade socket.
+// defaultSocket is where lox run publishes the hub's facade socket.
 func defaultSocket() string { return filepath.Join(runtimeDir(), "lockhub", "facade.sock") }
 
 func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
@@ -389,7 +396,7 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	sock := fs.String("socket", defaultSocket(), "the hub's facade socket")
 	once := fs.Bool("once", false, "answer what is waiting, then exit")
-	keysDir := fs.String("facade-keys", family.FacadeKeysDir(stateHome()), "the host facades' keys and the pinned lock keys, as lox up wrote them")
+	keysDir := fs.String("facade-keys", family.FacadeKeysDir(stateHome()), "the host facades' keys and the pinned lock keys, as lox run wrote them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -409,7 +416,7 @@ func approveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		}
 	}
 	if s.FacadeKey == nil {
-		fmt.Fprintln(stderr, "lox approve: no facade key or pinned lock keys in", *keysDir, "(run lox up): clear values cannot be shown")
+		fmt.Fprintln(stderr, "lox approve: no facade key or pinned lock keys in", *keysDir, "(run lox run): clear values cannot be shown")
 	}
 	if err := s.Run(ctx); err != nil {
 		fmt.Fprintln(stderr, "lox approve:", err)
@@ -580,7 +587,7 @@ func importCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox import:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s updated; run lox up to review and apply it\n", abs)
+	fmt.Fprintf(stdout, "%s updated; run lox run to review and apply it\n", abs)
 	return 0
 }
 
@@ -659,7 +666,7 @@ func addSlackCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox add slack:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lox up to review and apply.\n", abs, strings.Join(s.Users, ", "))
+	fmt.Fprintf(stdout, "%s: slack enabled for %s; tokens stored with the hub's data, not in the workspace. Run lox run to review and apply.\n", abs, strings.Join(s.Users, ", "))
 	return 0
 }
 
@@ -746,7 +753,7 @@ func addTelegramCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "lox add telegram:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lox up to review and apply.\n", abs, len(tg.Chats))
+	fmt.Fprintf(stdout, "%s: telegram enabled for %d chat(s); the token is stored with the hub's data, not in the workspace. Run lox run to review and apply.\n", abs, len(tg.Chats))
 	return 0
 }
 

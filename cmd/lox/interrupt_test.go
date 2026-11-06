@@ -49,7 +49,8 @@ func TestUpAndInitInterruptedExit130(t *testing.T) {
 			if code != exitInterrupted {
 				t.Fatalf("code %d, want 130\n%s\n%s", code, out.String(), errb.String())
 			}
-			if want := "lox " + name + ": interrupted\n"; errb.String() != want {
+			got := strings.TrimPrefix(errb.String(), "lox up is deprecated: use lox run (it starts the hub and the locks, then serves the decisions in its terminal)\n")
+			if want := "lox " + name + ": interrupted\n"; got != want {
 				t.Fatalf("stderr = %q, want %q", errb.String(), want)
 			}
 		})

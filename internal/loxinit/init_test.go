@@ -230,7 +230,7 @@ func TestInitKeepsDeclaredLocks(t *testing.T) {
 	if h.ups != 0 {
 		t.Errorf("up %d without a terminal: want none", h.ups)
 	}
-	for _, w := range []string{"lockfamily.yaml declares locks: run lox up at a terminal to review and start them", endLine} {
+	for _, w := range []string{"lockfamily.yaml declares locks: run lox run at a terminal to review and start them", endLine} {
 		if !strings.Contains(h.out.String(), w) {
 			t.Errorf("no %q in\n%s", w, h.out.String())
 		}
@@ -371,7 +371,7 @@ func TestInitNoTerminalAppliedBefore(t *testing.T) {
 	if h.ups != 0 {
 		t.Errorf("up %d: want none", h.ups)
 	}
-	for _, w := range []string{"lox up removes the locks applied before: run it at a terminal to review", endLine} {
+	for _, w := range []string{"lox run removes the locks applied before: run it at a terminal to review", endLine} {
 		if !strings.Contains(h.out.String(), w) {
 			t.Errorf("no %q in\n%s", w, h.out.String())
 		}
@@ -391,7 +391,7 @@ func TestInitNoTerminalAppliedBefore(t *testing.T) {
 // --hub-image while lockfamily.yaml exists is said to be kept, not
 // ignored silently.
 func TestInitHubImageKept(t *testing.T) {
-	const msg = "--hub-image: lockfamily.yaml exists, its hub image is kept (lox up --pin to change it)"
+	const msg = "--hub-image: lockfamily.yaml exists, its hub image is kept (lox run --pin to change it)"
 	h := newHarness(t.TempDir())
 	h.created = false
 	h.in.HubImageGiven = true

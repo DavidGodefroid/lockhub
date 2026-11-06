@@ -17,7 +17,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 )
 
-// lox up --pin and --rotate (plan D.5): a previous hub image restored by
+// lox run --pin and --rotate (plan D.5): a previous hub image restored by
 // digest, and new hub or lock keys, both through the review.
 
 // HubKeysFile is every hub public key the workspace's hub was signed
@@ -196,7 +196,7 @@ func recordHubImage(state, img string, now time.Time) error {
 
 // stageHubKey makes the new hub key in the hub's data directory (stage,
 // /var/lib/lockhub/rotate in the hub) and returns its public half. A key
-// staged by an earlier lox up --rotate hub is reused; done reports one
+// staged by an earlier lox run --rotate hub is reused; done reports one
 // the hub took already (that lox up stopped after it), whose rotation
 // only needs finishing.
 func (u *Up) stageHubKey(ctx context.Context, composeYAML []byte, compose func(...string) []string, stage string) (string, bool, error) {
@@ -275,7 +275,7 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 			}
 			out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "rotate-key", "--data", "/var/lib/lockhub", "--new", "/var/lib/lockhub/rotate/hub.key")...)
 			if err != nil {
-				return fmt.Errorf("hub key rotation: %w (the hub stays stopped: run lox up --rotate hub again to finish it)", err)
+				return fmt.Errorf("hub key rotation: %w (the hub stays stopped: run lox run --rotate hub again to finish it)", err)
 			}
 			if strings.TrimSpace(string(out)) != hp {
 				return fmt.Errorf("hub key rotation: the hub took %q, not the reviewed key (the hub stays stopped)", strings.TrimSpace(string(out)))
@@ -293,7 +293,7 @@ func (u *Up) applyRotation(ctx context.Context, c *Config, rot rotation, compose
 	}
 	for _, n := range rot.locks {
 		if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "rotkey-"+n, "swap")...); err != nil {
-			return fmt.Errorf("key of %s: %w (its old key stays: run lox up --rotate %s again)", n, err, n)
+			return fmt.Errorf("key of %s: %w (its old key stays: run lox run --rotate %s again)", n, err, n)
 		}
 	}
 	return nil

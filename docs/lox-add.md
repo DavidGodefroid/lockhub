@@ -36,7 +36,7 @@ At a terminal, `lox add TYPE` runs these steps in order:
    lockfile when lea is on `PATH`, your uid in `allowed_uids` (lea's agents
    run as it). A `lockfamily.yaml` that does not exist yet is created with the
    hub alone.
-4. **`lox up`, with the short review of this lock**: one block with its
+4. **The start (what `lox run` does before it serves decisions), with the short review of this lock**: one block with its
    image, target, environment, credentials, production flag and profile
    sha256, then `Apply? [y/N]`. Other locks are not shown, and a change the
    block does not render is listed under it, so no change escapes the
@@ -62,10 +62,10 @@ nothing kept: .locksql/config.toml and .lockfamily/lockfamily.yaml are as before
 ```
 
 (`interrupted: ` is put in front after a Ctrl-C.) The agent's files that
-`init claude` wrote and the doctor's repairs are not undone. Once `lox up`
+`init claude` wrote and the doctor's repairs are not undone. Once `lox run`
 started the console, nothing is rolled back: if the console then stops, `lox
 add` names the lock and says to check, for Vault, the address and token (`lox
-vault set --address URL`, then `lox up`), else to run `lox up`, then `lox
+vault set --address URL`, then `lox run`), else to run `lox run`, then `lox
 attach NAME`. A detached console that still runs is not an error.
 
 Exit status: 0 on success, 1 on a failure or a decline, 2 for a usage
@@ -177,7 +177,7 @@ It never starts anything: it declares the lock (steps 2 and 3 above) and ends
 with
 
 ```
-lock shop-db declared: run lox up at a terminal to review and start it
+lock shop-db declared: run lox run at a terminal to review and start it
 ```
 
 Without `--non-interactive`, a `lox add` that has no terminal on its input
@@ -197,14 +197,14 @@ others:
 | Flag | Meaning |
 |---|---|
 | `--non-interactive` | ask nothing (above) |
-| `--review` | the review of `lox up` shows this lock's whole profile and asks |
+| `--review` | the review of `lox run` shows this lock's whole profile and asks |
 | `-v` | show cosign's and docker's own output (default: only when a step fails) |
 | `--version vX.Y.Z` | the lock's release to pin (default: the latest) |
 | `--file PATH` | the workspace's `lockfamily.yaml` |
 
 `--instance` is not a `lox add` flag: it belongs to the locks' launchers. When
 a project has two locks of one type, an agent on the host picks one with
-`<lock> mcp --instance NAME` (see [lox-up.md](lox-up.md)).
+`<lock> mcp --instance NAME` (see [lox-run.md](lox-run.md)).
 
 ## Vault, per lock
 
@@ -227,7 +227,7 @@ lox vault set --address https://vault.example.com:8200 [--namespace NS] [--ca-fi
 
 An omitted `--namespace` or `--ca-file` keeps the current value, and `""`
 clears it. The same checks as in the questions apply, and the command repairs
-a file whose vault block fails them. Nothing is started: run `lox up` to
+a file whose vault block fails them. Nothing is started: run `lox run` to
 review and apply it. A change of the CA restarts the locks with Vault.
 
 ## Removing a lock
@@ -237,7 +237,7 @@ lox remove NAME [--purge] [-v] [--file PATH]
 ```
 
 It takes the lock out of `lockfamily.yaml`, shows `remove lock NAME (TYPE): its
-console stops; ...`, and runs `lox up` with the short review of that lock
+console stops; ...`, and applies it as `lox run` starts, with the short review of that lock
 (the change is confirmed at a terminal). `lock NAME removed` says it is done.
 A `n`, a failure or Ctrl-C puts `lockfamily.yaml` back. The lock's profile
 stays in its `config.toml`; `--purge` removes it once the lock is gone (refused
@@ -252,6 +252,6 @@ lox add locksql shop-db [--version vX.Y.Z | --image ghcr.io/davidgodefroid/locks
 
 It writes the lock into `lockfamily.yaml` (pinned by digest to its latest
 signed release, or the one given), and prints `<file>: lock shop-db (locksql)
-declared; run lox up to review and start it`. No profile is written and
+declared; run lox run to review and start it`. No profile is written and
 nothing is started. `--image`, `--hub-image` and `--profile` belong to this
 form only, the question flags to the guided one.

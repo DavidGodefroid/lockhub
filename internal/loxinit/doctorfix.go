@@ -149,7 +149,7 @@ func DoctorArgs(ctx context.Context, run Runner, root, lock string, cache map[st
 		}
 		if why := fixRefusal(lock, f.Min, v); why != "" {
 			return []string{"doctor", "--json"}, fmt.Sprintf(
-				"lox add runs %s doctor without --fix: %s, whose doctor --fix gives .%s/ to the console account (lox up then refuses it); update %s to v%s or later, then run %s doctor --fix",
+				"lox add runs %s doctor without --fix: %s, whose doctor --fix gives .%s/ to the console account (lox run then refuses it); update %s to v%s or later, then run %s doctor --fix",
 				lock, why, lock, lock, f.Min, lock)
 		}
 	}

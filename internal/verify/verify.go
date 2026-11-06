@@ -40,7 +40,7 @@ func (r *Report) bad(format string, a ...any) {
 }
 
 // Hub verifies the hub data directory dir against the hub's public keys:
-// every key it was signed with, oldest first (lox up --rotate hub
+// every key it was signed with, oldest first (lox run --rotate hub
 // adds one), the current one last. It may run against a running hub: the
 // database is read as of one instant first, then the log, which by then
 // holds every record committed before that instant (or the outbox does).

@@ -110,6 +110,14 @@ func (c *Client) Renew(ctx context.Context, instance, id string, req api.RenewRe
 	return r, err
 }
 
+// State fetches a ticket's state at the hub (pending, approved,
+// consumed, expired…): never its content.
+func (c *Client) State(ctx context.Context, instance, id string) (api.TicketState, error) {
+	var r api.TicketState
+	err := c.do(ctx, "GET", "/v1/tickets/"+url.PathEscape(instance)+"/"+url.PathEscape(id), nil, &r)
+	return r, err
+}
+
 // Decide sends a decision.
 func (c *Client) Decide(ctx context.Context, instance, id string, req api.DecideRequest) error {
 	var r api.DecideResult
@@ -223,7 +231,7 @@ func RenderClear(s ticket.Screen) string {
 // lockCodes are the human words of a lock's answer codes (lockkit
 // hubclient Code*). A lock's own text never reaches the terminal.
 var lockCodes = map[string]string{
-	"facade_refused":  "the lock does not pin this terminal's facade key (run lox up)",
+	"facade_refused":  "the lock does not pin this terminal's facade key (run lox run)",
 	"not_pending":     "the ticket is no longer pending at the lock: nothing to reveal",
 	"no_clear_screen": "the lock kept no clear screen for this ticket",
 	"not_renewable":   "the lock cannot ask again for this ticket (not expired there, or gone)",
@@ -428,12 +436,12 @@ func (s *Session) answer(ctx context.Context, it api.QueueItem) error {
 // dropped once shown.
 func (s *Session) reveal(ctx context.Context, it api.QueueItem, t *ticket.Ticket) {
 	if s.FacadeKey == nil {
-		fmt.Fprintln(s.Out, "no facade key: clear values cannot be shown here (run lox up)")
+		fmt.Fprintln(s.Out, "no facade key: clear values cannot be shown here (run lox run)")
 		return
 	}
 	lockPub := s.LockKeys[it.Instance]
 	if lockPub == nil || ticket.KeyID(lockPub) != t.Source.KeyID {
-		fmt.Fprintln(s.Out, "this lock's key is not the one lox up pinned: clear values cannot be shown")
+		fmt.Fprintln(s.Out, "this lock's key is not the one lox run pinned: clear values cannot be shown")
 		return
 	}
 	rk, priv, err := ticket.NewRevealKey(s.FacadeKey, ticket.FacadeTTY, t, s.Now())

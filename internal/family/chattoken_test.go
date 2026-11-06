@@ -102,7 +102,7 @@ func TestChatTokenMissingIsALine(t *testing.T) {
 	}
 }
 
-// lox doctor warns when a token changed since the last lox up.
+// lox doctor warns when a token changed since the last lox run.
 func TestDoctorTokenRotated(t *testing.T) {
 	d, _ := healthy(t)
 	state := d.State

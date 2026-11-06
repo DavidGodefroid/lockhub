@@ -93,7 +93,7 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	production := fs.Bool("production", false, "tickets flagged production; the profile name is typed at the console's start")
 	nonInteractive := fs.Bool("non-interactive", false, "ask nothing: the flags and the defaults answer; without a terminal, stop once the lock is declared")
-	review := fs.Bool("review", false, "lox up shows this lock's whole profile and asks (needs a terminal)")
+	review := fs.Bool("review", false, "lox run shows this lock's whole profile and asks (needs a terminal)")
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
 	pos, err := parse(fs, args)
 	if err != nil {
@@ -333,7 +333,7 @@ func declareCmd(o family.AddOptions, file, version string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "lox add:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lox up to review and start it\n", abs, o.Name, o.Type)
+	fmt.Fprintf(stdout, "%s: lock %s (%s) declared; run lox run to review and start it\n", abs, o.Name, o.Type)
 	return 0
 }
 

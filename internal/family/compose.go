@@ -40,7 +40,7 @@ type Paths struct {
 	// Profiles are the fingerprints of the reviewed profile copies, by
 	// type: a lock's label, so that a new copy recreates its console.
 	Profiles map[string]string
-	// Rotate are the locks whose key lox up --rotate replaces: each gets
+	// Rotate are the locks whose key lox run --rotate replaces: each gets
 	// the setup service rotkey-<instance> (rotate.go).
 	Rotate []string
 	// VaultCA is the reviewed copy of vault.ca_file (<state>/vault-ca.pem),
@@ -346,7 +346,7 @@ func Compose(c *Config, p Paths) string {
 		if k.Gate {
 			home, vol, user = "/g", name+"-gate", gateUID+":"+gateGID
 		}
-		// rotkey-<instance> drops or applies the new key lox up --rotate
+		// rotkey-<instance> drops or applies the new key lox run --rotate
 		// made in the lock's own volume, as the key's owner.
 		w("  %s:", q("rotkey-"+name))
 		w("    image: %s", q(l.Image))

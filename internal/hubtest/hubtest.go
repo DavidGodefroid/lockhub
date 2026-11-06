@@ -38,7 +38,11 @@ type Ticket struct {
 	Production bool   `json:"production,omitempty"`
 	Retype     string `json:"retype,omitempty"`
 	NeverAuto  bool   `json:"never_auto,omitempty"`
-	Sig        string `json:"sig,omitempty"`
+	// V (0: 1), Kind and AskSecret as hub.Info has them.
+	V         int    `json:"v,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	AskSecret bool   `json:"ask_secret,omitempty"`
+	Sig       string `json:"sig,omitempty"`
 }
 
 // Request is the fake hub request.
@@ -57,6 +61,8 @@ type Decision struct {
 	Approver string `json:"approver"`
 	Facade   string `json:"facade"`
 	At       int64  `json:"at"`
+	Rule     string `json:"rule,omitempty"`
+	Secret   string `json:"secret,omitempty"`
 	Sig      string `json:"sig,omitempty"`
 }
 
@@ -65,7 +71,7 @@ type Codec struct{}
 
 const reqContext = "lockhub-request-v1\x00"
 
-func (Codec) TicketVersions() []int { return []int{1} }
+func (Codec) TicketVersions() []int { return []int{1, 2} }
 
 func (Codec) KeyID(k ed25519.PublicKey) string { return "ed25519:" + hex.EncodeToString(k[:16]) }
 
@@ -92,7 +98,8 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 	info := hub.Info{ID: t.ID, Instance: t.Instance, KeyID: t.KeyID, Risk: t.Risk, PlanHash: t.PlanHash,
 		Created: time.Unix(t.Created, 0), TTL: time.Duration(t.TTL) * time.Second,
 		Production: t.Production, Retype: t.Retype, NeverAuto: t.NeverAuto,
-		Flags: fmt.Sprintf("%v|%q|%v", t.Production, t.Retype, t.NeverAuto)}
+		Flags: fmt.Sprintf("%v|%q|%v", t.Production, t.Retype, t.NeverAuto),
+		V:     max(t.V, 1), Kind: t.Kind, AskSecret: t.AskSecret}
 	if t.RenewsOf != "" {
 		info.Renews = &hub.Renewal{Of: t.RenewsOf, Unchanged: t.Unchanged}
 	}
@@ -130,7 +137,7 @@ func (Codec) SignRequest(k ed25519.PrivateKey, q hub.Request) ([]byte, error) {
 
 func (Codec) SignDecision(k ed25519.PrivateKey, t hub.Info, v hub.Verdict, at time.Time) ([]byte, error) {
 	d := Decision{Ticket: t.ID, Instance: t.Instance, KeyID: t.KeyID, PlanHash: t.PlanHash,
-		Approved: v.Approved, Approver: v.ApproverID, Facade: v.Facade, At: at.Unix()}
+		Approved: v.Approved, Approver: v.ApproverID, Facade: v.Facade, At: at.Unix(), Rule: v.Rule, Secret: string(v.Secret)}
 	b, _ := json.Marshal(d)
 	d.Sig = base64.StdEncoding.EncodeToString(ed25519.Sign(k, b))
 	return json.Marshal(d)

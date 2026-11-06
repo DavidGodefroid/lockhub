@@ -63,7 +63,7 @@ func vaultCmd(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox vault set:", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%s: vault set; run lox up to review and apply it\n", abs)
+	fmt.Fprintf(stdout, "%s: vault set; run lox run to review and apply it\n", abs)
 	return 0
 }
 

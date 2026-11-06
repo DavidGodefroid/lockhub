@@ -139,6 +139,14 @@ type DecideRequest struct {
 	Facade string `json:"facade"`
 	// Display is the human's name for screens (the facade's $USER).
 	Display string `json:"display,omitempty"`
+	// Rule, from lox run only (facade tty), is the id of the auto rule
+	// that decided: no human answered (the decision names it). Absent:
+	// the human at the facade decided.
+	Rule string `json:"rule,omitempty"`
+	// Secret is the backend's secret sealed by lox run to the lock's
+	// one-use key (lockkit ticket.Sealed), on the approval of a connect
+	// ticket that asks for it. The hub cannot open it.
+	Secret json.RawMessage `json:"secret,omitempty"`
 }
 
 // DecideResult answers it with the signed decision.
@@ -170,8 +178,11 @@ func (f *facades) decide(w http.ResponseWriter, r *http.Request) {
 	raw, err := f.h.Decide(r.Context(), ref, hub.Verdict{
 		Approved: req.Approved, Reason: req.Reason, Retype: req.Retype,
 		ApproverID: approver, ApproverDisplay: req.Display, Facade: req.Facade,
+		Rule: req.Rule, Secret: req.Secret,
 	})
 	switch {
+	case errors.Is(err, hub.ErrNotAuto):
+		writeErr(w, http.StatusConflict, "needs_human", err.Error())
 	case errors.Is(err, hub.ErrNotRouted):
 		writeErr(w, http.StatusForbidden, "not_routed", err.Error())
 	case errors.Is(err, hub.ErrRetype):

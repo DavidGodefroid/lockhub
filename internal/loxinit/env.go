@@ -46,7 +46,7 @@ type Prereqs struct {
 }
 
 // Ready reports whether lox init can go on: Docker answers and cosign
-// (lox add and lox up verify every image) is installed.
+// (lox add and lox run verify every image) is installed.
 func (p Prereqs) Ready() bool { return p.Docker != "" && p.Cosign != "" }
 
 // CheckPrereqs looks for Docker, cosign, lea and the launchers.

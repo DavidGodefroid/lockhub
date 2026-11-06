@@ -49,6 +49,8 @@ type Record struct {
 	// event (pair, revoke), Fingerprint its record's fingerprint.
 	Device      string `json:"device,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+	// Rule is the auto rule of lox run that decided, when no human did.
+	Rule string `json:"rule,omitempty"`
 	// Outbox is the id of the outbox row the record came from (records
 	// from before the outbox have none): ids only grow along the log, so
 	// a row logged already, or replayed, is told apart exactly.

@@ -91,7 +91,7 @@ func TestRotateHubAndLock(t *testing.T) {
 	f := newFake()
 	f.keys["web"] = pubKey()
 	state := filepath.Join(w.dir, "state")
-	if _, err := upWith(w, "y\n", f, "", "hub"); err == nil || !strings.Contains(err.Error(), "first lox up") {
+	if _, err := upWith(w, "y\n", f, "", "hub"); err == nil || !strings.Contains(err.Error(), "first lox run") {
 		t.Fatalf("rotation before the first lox up: %v", err)
 	}
 	if _, err := w.up("y\n", f); err != nil {
@@ -195,7 +195,7 @@ func TestRotateHubFailureFinishesLater(t *testing.T) {
 	f.keys["hub/new"] = pubKey()
 	f2 := &fake{keys: f.keys, failing: "rotate-key"}
 	out, err := upWith(w, "y\n", f2, "", "hub")
-	if err == nil || !strings.Contains(err.Error(), "run lox up --rotate hub again") || f2.ran("up -d") {
+	if err == nil || !strings.Contains(err.Error(), "run lox run --rotate hub again") || f2.ran("up -d") {
 		t.Fatalf("failed rotation: %v %v\n%s", err, f2.calls, out)
 	}
 	os.WriteFile(filepath.Join(stage, "hub.key"), []byte("staged"), 0o600) // keygen's file, which the fake does not make

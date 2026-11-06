@@ -171,7 +171,7 @@ func TestAddNonInteractiveDeclares(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
 	}
-	if !strings.HasSuffix(out.String(), "run lox up at a terminal to review and start it\n") {
+	if !strings.HasSuffix(out.String(), "run lox run at a terminal to review and start it\n") {
 		t.Fatalf("output:\n%s", out.String())
 	}
 	if strings.Contains(out.String(), "lox add locksql: one database") {
@@ -266,7 +266,7 @@ func TestAddNonInteractiveSFTP(t *testing.T) {
 			if code := run(args, devNull(t), &out, &errb); code != 0 {
 				t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
 			}
-			if !strings.HasSuffix(out.String(), "lock orders declared: run lox up at a terminal to review and start it\n") {
+			if !strings.HasSuffix(out.String(), "lock orders declared: run lox run at a terminal to review and start it\n") {
 				t.Fatalf("output:\n%s", out.String())
 			}
 			want := []string{"lockfile", "profile", "add", "--non-interactive", "--json", "--project", ws, "--profile", "orders",
@@ -359,7 +359,7 @@ func TestAddOldFormStillDeclares(t *testing.T) {
 	if code := run([]string{"add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg}, devNull(t), &out, &errb); code != 0 {
 		t.Fatalf("code %d\n%s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "lock crm (locksql) declared; run lox up to review and start it") {
+	if !strings.Contains(out.String(), "lock crm (locksql) declared; run lox run to review and start it") {
 		t.Fatalf("output:\n%s", out.String())
 	}
 	if len(verbs.calls) != 0 {

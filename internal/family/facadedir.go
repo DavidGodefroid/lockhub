@@ -70,7 +70,7 @@ func runtimeParent(p string, mine func(os.FileInfo) bool) error {
 	}
 	if !fi.IsDir() || !mine(fi) || fi.Mode().Perm()&0o022 != 0 {
 		return fmt.Errorf("runtime directory %s (the facade directory's parent) is not a directory of yours that only you can write (uid %d, mode %v): lox makes and removes nothing there. "+
-			"Set XDG_RUNTIME_DIR to a directory of yours with mode 0700 (systemd's /run/user/$(id -u)), then lox up again", p, owner(fi), fi.Mode())
+			"Set XDG_RUNTIME_DIR to a directory of yours with mode 0700 (systemd's /run/user/$(id -u)), then lox run again", p, owner(fi), fi.Mode())
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func readyFacadeDirTry(d string, mine func(os.FileInfo) bool, retry bool) (bool,
 		if !mine(fi) {
 			sudo = "sudo "
 		}
-		return false, "", fmt.Errorf("facade directory %s: not a directory (a link?): check what it is (ls -la %s), remove it (%srm %s), then lox up again", d, d, sudo, d)
+		return false, "", fmt.Errorf("facade directory %s: not a directory (a link?): check what it is (ls -la %s), remove it (%srm %s), then lox run again", d, d, sudo, d)
 	}
 	was := fmt.Sprintf("uid %d, mode %04o", owner(fi), fi.Mode().Perm())
 	if mine(fi) {
@@ -107,10 +107,10 @@ func readyFacadeDirTry(d string, mine func(os.FileInfo) bool, retry bool) (bool,
 	// (rmdir), and never empties.
 	entries, rerr := os.ReadDir(d)
 	if rerr == nil && len(entries) > 0 {
-		return false, "", fmt.Errorf("facade directory %s is not yours (%s) and is not empty, so lox leaves it: check what it holds (sudo ls -la %s), then run\n  sudo rm -r %s && mkdir -m 700 %s\nand lox up again", d, was, d, d, d)
+		return false, "", fmt.Errorf("facade directory %s is not yours (%s) and is not empty, so lox leaves it: check what it holds (sudo ls -la %s), then run\n  sudo rm -r %s && mkdir -m 700 %s\nand lox run again", d, was, d, d, d)
 	}
 	if err := os.Remove(d); err != nil {
-		return false, "", fmt.Errorf("facade directory %s is not yours (%s; Docker makes a missing bind source as root) and lox cannot remove it (%v): run\n  sudo rmdir %s && mkdir -m 700 %s\nthen lox up again", d, was, err, d, d)
+		return false, "", fmt.Errorf("facade directory %s is not yours (%s; Docker makes a missing bind source as root) and lox cannot remove it (%v): run\n  sudo rmdir %s && mkdir -m 700 %s\nthen lox run again", d, was, err, d, d)
 	}
 	if facadeDirRace != nil {
 		facadeDirRace(d)
@@ -121,7 +121,7 @@ func readyFacadeDirTry(d string, mine func(os.FileInfo) bool, retry bool) (bool,
 		if retry {
 			return readyFacadeDirTry(d, mine, false)
 		}
-		return false, "", fmt.Errorf("facade directory %s was made again by someone else (a hub its engine restarted?) while lox repaired it: run lox up again", d)
+		return false, "", fmt.Errorf("facade directory %s was made again by someone else (a hub its engine restarted?) while lox repaired it: run lox run again", d)
 	} else if err != nil {
 		return false, "", err
 	}

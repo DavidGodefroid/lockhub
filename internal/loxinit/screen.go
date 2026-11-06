@@ -18,7 +18,7 @@ func RenderPrereqs(w io.Writer, p Prereqs, goos string) {
 		fmt.Fprintf(w, "  !!  Docker does not answer: %s\n", DockerHint(goos, p.DockerCLI))
 	}
 	if p.Cosign != "" {
-		fmt.Fprintln(w, "  ok  cosign (lox add and lox up verify every image's signature)")
+		fmt.Fprintln(w, "  ok  cosign (lox add and lox run verify every image's signature)")
 	} else {
 		fmt.Fprintf(w, "  !!  cosign not found: %s\n", CosignHint(goos))
 	}

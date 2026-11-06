@@ -1,44 +1,129 @@
-# lox up and lea
+# lox run and lea
 
-`lox up` runs the hub and a workspace's locks with Docker Compose. Agents
+`lox run` runs the hub and a workspace's locks with Docker Compose. Agents
 reach the locks' sockets, never the hub: lea's agents in their containers,
 and a host agent (Claude Code, Codex... run in a terminal) through the
 locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, as
 `<lock> init` writes them in `.mcp.json`). This page is the contract
-between `lox up` and both.
+between `lox run` and both.
+
+## Serving decisions
+
+`lox run` is meant for a terminal of its own, outside lea and any agent: it
+first starts (or reuses) the hub and the locks (everything below: the
+review, `--review`, `-v`, `--pin`, `--rotate`), then serves the hub's
+decisions in the foreground until you quit. `--no-start` only serves
+decisions (the stack runs already); `--manual` starts in manual mode;
+`--theme light|dark` overrides `COLORFGBG`. stdin must be a terminal: an
+answer is typed by a human, never piped.
+
+It follows the hub's queue over the facade socket, checks each ticket under
+the lock key it pinned (`locks.json`), and decides it with its engine
+(`internal/loxrun`):
+
+| Ticket (lockkit kind) | Auto mode | Rule named in the decision |
+|---|---|---|
+| `read` (risk read, read-pii) | approved | `default:read` |
+| `action` that only reads (MQ peek, file read) | approved | `default:action` |
+| `action` that writes, `write`, `ddl` | asked every time | (human) |
+| `connect` | asked once per instance/profile per session, then approved | `session:connect` |
+| `endpoint` (lockhttp host + route) | asked once per session, then approved | `session:endpoint` |
+| `policy`, a grant, `never_auto`, a production name to type | always asked | (human) |
+| version-1 ticket (no kind), or one not checked under a pinned key | always asked | (human) |
+
+Manual mode (Shift+Tab, `--manual`) asks every ticket. A rule is only ever
+applied to a version-2 ticket: the hub signs its decision with the rule
+(`rule: {by: auto, id}` in lockkit's decision, `"rule"` in the hub's audit
+record), refuses a rule's approval of a never-auto ticket or of one whose
+approval needs a typed name (`needs_human`), and accepts a rule from the
+terminal facade only. Per-profile auto rules (`auto`/`ask`/`deny` per action,
+`Engine.Rules`) are applied when a lock provides them (locksql#185, lockmq);
+until then the defaults above hold. A `deny` rule holds in both modes.
+
+**Connections.** A lock starts disconnected (lockkit `lazyconn`): an agent's
+first request for a profile reaches the lock over its socket, the lock sends a
+`connect` ticket, and it connects on the signed decision. When the profile's
+credentials are `ask` (or its Vault token expired), the ticket carries a
+one-use key of the lock: `lox run` asks the password (or token) in the card,
+seals it to that key (`ticket.SealSecret`, only for a ticket it verified under
+the pinned lock key) and sends the box with the approval; the hub relays a box
+it cannot open and the agent never sees it. An `ask` password is kept in `lox
+run`'s memory only once the lock connected with it (its connect ticket was
+consumed), to answer the profile's next connect ticket after an idle close;
+it is wiped when `lox run` ends. A connect that never runs drops it. A profile
+that asks to connect again within 30 seconds of connecting, with nothing run
+on it in between, has it dropped and is asked again, so a password the
+backend refused after the dial is not sent on every retry. `x` drops a
+profile's session connection, endpoints and password by hand (the profile of
+the question on top; with no question up, every profile). `y` on a connect
+always shows the password prompt: Enter alone keeps the session's password,
+anything typed replaces it. A Vault token is asked
+each time the lock asks. The header lists the connected profiles (a connect
+ticket the lock acted on) with their age, until they have been idle for the
+locks' idle timeout.
+
+**The screen.** A fixed header (workspace, the `AUTO`/`MANUAL` badge, hub
+status, locks, waiting questions, connected profiles), the feed (one line per
+ticket: time, agent in a stable colour, lock icon and instance, profile in red
+for production, kind, the masked request with SQL/HTTP/MQ keywords
+highlighted and masked values set apart as `‹…›` in dim italic, the decision:
+`auto` dim green, `✔ you` green, `◆ asked` bold yellow, `✘ denied` red,
+`! error` magenta, then `✓` once the lock ran it), and the footer's keys.
+Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
+framed card above the feed: what, who, which profile, the masked screen,
+why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
+is typed in the card. The bell rings only when a card appears. `Tab` brings
+the next card up, `a` lists the session's decisions and their rules, `?` the
+keys, `q q` or Ctrl-C quits.
+
+**A key answers the card it was pressed for.** When the card on top changes
+(answered, decided elsewhere, withdrawn, expired, or `Tab`), the keys already
+typed are dropped, and `y`, `n` (or Enter in its prompt) answer the new card
+only once it has been on screen for 400 ms: a key meant for the card that went
+away never approves the one that took its place. If a card goes away while its
+prompt (a password, the instance name) is being typed, what is typed next is
+dropped until Enter or Esc, never read as keys on the next card.
+
+**Quitting fails closed.** Once `lox run` ends, nothing decides: pending and
+new tickets wait at the hub until the next `lox run` (or another facade), and
+the locks close their connections once idle, so the next request asks again.
+
+Extension points: the image update (lockhub#118) and the lockfile seccomp
+profile under Vault (lockhub#45) belong to the start; the engine takes
+per-profile rules through `Session.Rules`.
 
 ## Files
 
 | Path | Written by | Read by |
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lox add`, `lox import`) | `lox` |
-| `<workspace>/.lockfamily/up.json` | `lox up`, after a confirmed apply | lea; the locks' launchers (host agents) |
-| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lox up`, which copies it (see below) |
-| `$XDG_STATE_HOME/lockfamily/<project>/` | `lox up` | `lox` only (hub data, applied fingerprint, compose copy) |
-| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox up pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox up` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
-| `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox up` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
+| `<workspace>/.lockfamily/up.json` | `lox run`, after a confirmed apply | lea; the locks' launchers (host agents) |
+| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
+| `$XDG_STATE_HOME/lockfamily/<project>/` | `lox run` | `lox` only (hub data, applied fingerprint, compose copy) |
+| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
+| `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox run` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lox approve`, lea's deck |
 
 `$XDG_RUNTIME_DIR/lockhub` is on a tmpfs wiped at logout and reboot. Every
-`lox up` (and `lox init`, `lox add`, `lox remove`, which run it) makes it
+`lox run` (and `lox init`, `lox add`, `lox remove`, which run it) makes it
 before starting anything, yours, mode `0700`, and repairs it: one of yours
 with another mode is closed, an empty one of another account (a Docker
 engine that restarted the hub while it was missing made it as root, `0755`)
 is removed and made again, and the hub starts again on it. Anything else (a
 link, a file, another account's directory that holds something or that lox
-cannot remove) is left as it is, and `lox up` prints the commands to run.
+cannot remove) is left as it is, and `lox run` prints the commands to run.
 The hub mounts it with `create_host_path: false`: when it is missing, the
-engine no longer makes it, the hub stays stopped until `lox up`.
+engine no longer makes it, the hub stays stopped until `lox run`.
 `create_host_path` is a Compose Specification option (Docker Compose v2
 honours it); a compose implementation that ignores it makes the missing
 directory as before (as root under a rootful engine), the hub refuses it
-and its error names the fix, and the next `lox up` repairs it.
+and its error names the fix, and the next `lox run` repairs it.
 
 When `XDG_RUNTIME_DIR` is unset, the runtime directory is
-`$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox up` makes it (0700) and refuses one that is
+`$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.
 
-`lox up` refuses a `.lockfamily/` that is a link, not the user's, or
+`lox run` refuses a `.lockfamily/` that is a link, not the user's, or
 writable by group or others, and keeps its own copy of up.json in its state
 directory. It writes up.json through a fresh file renamed into place (a
 planted link is replaced, never followed).
@@ -47,7 +132,7 @@ lea creates `.lockfamily/` (owned by the host user, 0755) before it mounts
 it read-only in its agents' containers: no agent can change
 lockfamily.yaml or up.json. A `lockfamily.yaml` at the workspace's root
 (the layout before this page) is still read, with a warning: agents can
-write there. The first confirmed `lox up` copies exactly what was reviewed
+write there. The first confirmed `lox run` copies exactly what was reviewed
 into `.lockfamily/lockfamily.yaml` and says so; from then on only that file
 counts (remove the root one). Once `.lockfamily/` exists, a root file is
 never adopted (an agent could have planted it). The workspace keeps its
@@ -79,12 +164,12 @@ What a lock's gate pins (lea's lockhttp gate; `"lockhttp_gate": 1` says
 these members are written, and lea runs its gate only then):
 
 - `devices` (top level): the paired devices (lockkit `ticket.DeviceSet`,
-  public keys only), the set lox up mounts read-only for the consoles at
+  public keys only), the set lox run mounts read-only for the consoles at
   `/run/lockfamily-devices/devices.json`. Absent while no device is
   paired (`lox mobile pair`).
 - per lock, `devices: true` when the lock pins them (lockfamily.yaml
   `locks.<name>.devices`); then `require_device` and `seal_clear`, from
-  `hub.mobile`, exactly as lox up passes `--require-device` and
+  `hub.mobile`, exactly as lox run passes `--require-device` and
   `--seal-clear` to its consoles once a device is paired (with none
   paired, the gate pins none, as the consoles). Without `devices`, neither
   is written.
@@ -124,7 +209,7 @@ facade and refuses reveals; renewals work either way. When the lock has
 `devices` to a read-only input of its own and passes `--devices-file …`,
 with `--require-device` and `--seal-clear` as the lock says: a decision
 of those risk classes must be device-signed, and clear screens go to the
-phones sealed. lea stops (saying why, and to run `lox up` once a device
+phones sealed. lea stops (saying why, and to run `lox run` once a device
 is paired) when `require_device` is set and no device is paired. The gate refuses the hub's addresses as targets,
 so an agent cannot reach the hub through it (invariant I2). No agent
 container joins `hub_network`.
@@ -137,7 +222,7 @@ lockfile's alike; lockhttp has no agent command: its gate is lea's). The
 launcher runs the command in the lock's image, with the socket volume of the
 workspace's lock of its type mounted **read-only** on `/run/<type>`
 (connecting to a socket needs no write), never a fixed volume: the consoles
-run hub-attached only, started by `lox up`. It takes the volume only after
+run hub-attached only, started by `lox run`. It takes the volume only after
 lea's checks, in POSIX sh:
 
 - up.json is found in the nearest directory up from the working directory
@@ -145,11 +230,11 @@ lea's checks, in POSIX sh:
   `.lockfamily` directory and up.json are no link, are the user's, and
   neither group nor others may write them; up.json is at most 1 MiB, and is
   the same file after the read as before.
-- up.json is read as `lox up` writes it: Go's `json.MarshalIndent` with a
+- up.json is read as `lox run` writes it: Go's `json.MarshalIndent` with a
   two-space indent, the members the launcher reads (`version`, `project`,
   `workspace`, and per lock `type`, `socket_volume`, `client_gid`) at their
-  depth, their values with nothing escaped. Anything else is not lox up's
-  state. lox up keeps that layout (`TestUpWritesLeaContract`).
+  depth, their values with nothing escaped. Anything else is not lox run's
+  state. lox run keeps that layout (`TestUpWritesLeaContract`).
 - version 1, `project` `lockfamily-<8 hex of sha256(workspace)>` and
   `workspace` this physical directory.
 - the lock: the workspace's only lock of the launcher's type, or the one
@@ -165,8 +250,8 @@ lea's checks, in POSIX sh:
   `dev.lockfamily.workspace`, each as JSON on a line of its own, compared
   whole with what they must be.
 - every container that mounts the volume (`docker ps -a --filter
-  volume=…`, then `docker inspect` of each, labels as JSON) is lox up's own
-  (compose ran it with `com.docker.compose.project.working_dir` lox up's
+  volume=…`, then `docker inspect` of each, labels as JSON) is lox run's own
+  (compose ran it with `com.docker.compose.project.working_dir` lox run's
   state directory `$XDG_STATE_HOME/lockfamily/<project>`, and
   `config_files` `-` or that directory's `compose.yaml`) or mounts the
   volume read-only. A container that mounts it read-write, of another
@@ -174,7 +259,7 @@ lea's checks, in POSIX sh:
   trusts none of that socket.
 
 Without up.json, or with a lock or volume it cannot trust, the launcher
-says why and what to do (`lox up`), exits 2 (as a client that finds no
+says why and what to do (`lox run`), exits 2 (as a client that finds no
 console) and runs nothing: it never falls back to the fixed `<type>-run`
 volume of the consoles the launchers used to start. up.json only names the
 lock: what is mounted is what Docker's labels prove. `.mcp.json` stays
@@ -183,9 +268,9 @@ lock: what is mounted is what Docker's labels prove. `.mcp.json` stays
 The socket's name is the lock's: `<project hash>-<profile>.sock`, where
 the project hash comes from the lock's profile directory up from the
 working directory (`.locksql`, `.lockmq`; lockfile has none: `user`) and the
-profile is the one the console serves (lox up passes `--profile` only for
+profile is the one the console serves (lox run passes `--profile` only for
 a lock that names one, and `default` for lockfile). Run the agent from the
-workspace, whose profile directory lox up's console serves.
+workspace, whose profile directory lox run's console serves.
 
 lockhub's end-to-end test (`ci/e2e/phase2.sh`, run by the e2e workflow's
 phase 2 on every pull request) drives both launchers as `.mcp.json` starts
@@ -203,7 +288,7 @@ workspace's lock, a volume or compose file of the same name, a container
 squatting the volume) and against files others than the user can write.
 They are **not** a boundary against the host agent itself: it usually runs
 as the user, often with Docker access, and can then rewrite up.json, create
-volumes and containers with any labels, `docker exec` into lox up's
+volumes and containers with any labels, `docker exec` into lox run's
 containers, or read a lock's home volume. What it still cannot do: decide a
 ticket (the hub signs decisions with its key, which the consoles pin, and
 only a human at a facade approves), or see a lock's credentials through
@@ -212,7 +297,7 @@ another agent false answers or collect its requests. To contain the agent,
 run it in lea: its containers have no Docker access and see `.lockfamily`
 read-only.
 
-Binding the volume to lox up's state (a nonce label that lox up records in
+Binding the volume to lox run's state (a nonce label that lox run records in
 its state directory and the launchers compare) would also stop a look-alike
 volume made with `docker volume create` and the same labels; it adds
 nothing against an agent with Docker access, which can read the state
@@ -220,11 +305,11 @@ directory too.
 
 ## The review and the output
 
-`lox up` keeps cosign's and docker's own output out of the way: it is shown
+`lox run` keeps cosign's and docker's own output out of the way: it is shown
 when a step fails, or with `-v`.
 
 The review a human confirms is short by default. For each lock (only the one
-`lox add` or `lox remove` is about, when they run `lox up`) it shows one
+`lox add` or `lox remove` is about, when they run `lox run`) it shows one
 block:
 
 ```
@@ -234,21 +319,21 @@ lock shop-db (locksql)
   environment  none
   credentials  ask, typed at the console's start
   production   no
-  profile      sha256:…  (lox up --review prints it in full)
+  profile      sha256:…  (lox run --review prints it in full)
 ```
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
 `credentials` then reads `vault, <path>`. A profile that changed since the last
-`lox up` says so. Every summary line that no block renders is listed under
-`Other changes since the last lox up:` (`Also applied:` on the first run), so
-the fingerprint that `lox up` compares still covers everything the review
+`lox run` says so. Every summary line that no block renders is listed under
+`Other changes since the last lox run:` (`Also applied:` on the first run), so
+the fingerprint that `lox run` compares still covers everything the review
 shows or lists. The question is `Apply? [y/N]`.
 
-`lox up --review` shows everything: on the first run the whole configuration,
+`lox run --review` shows everything: on the first run the whole configuration,
 then, for a later change, the lines that changed and every profile line by
 line. It asks even for a hub with no lock.
 
-The first `lox up` of a workspace with no lock declared and none applied
+The first `lox run` of a workspace with no lock declared and none applied
 before asks nothing (the hub alone cannot reach a credential) and says so.
 
 ## Profiles: a reviewed copy
@@ -278,7 +363,7 @@ look for another socket.
 
 Every lock's console asks a human at its terminal: its policy on the first
 start and after a loosening, the typed profile name of a production
-profile, the credentials its profile does not take from Vault. lox up runs
+profile, the credentials its profile does not take from Vault. lox run runs
 each console with a terminal (`tty: true`, `stdin_open: true`) as its
 image's console account, and prints `lox attach <instance>` for each; that
 command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
@@ -301,7 +386,7 @@ terminal, as do `pii add` and the later PII proposals. The rule sets of
 `.locksql/pii/` in the workspace, if any, are copied in once; from then on
 the console's copy is in force (`/home/locksql/pii-rules/pii/<set>.toml` in
 the volume `<project>_<instance>-home`): at each start it takes the
-profile's new mask rules (a tightening you made in the workspace and lox up
+profile's new mask rules (a tightening you made in the workspace and lox run
 reviewed), never what would loosen it or change its mode (allow rules,
 removed masks, mode changes), which you change at the console. A locksql image older than v0.11.0 ignores the variable and cannot
 write its first rule set: `lox add locksql <instance>` again pins a newer
@@ -325,17 +410,17 @@ locks:
     allowed_uids: [1000]   # id -u of the account that runs lea
 ```
 
-lox up passes it as the console's `--allowed-uids 1000` (locksql v0.11.2,
+lox run passes it as the console's `--allowed-uids 1000` (locksql v0.11.2,
 lockmq v0.4.1, lockfile v0.5.1 or later; an older image refuses to start), and the review
 shows it (`lock events serves uids 1000 besides its clients group`): a
 change of it is a change to confirm. Only uids, each once: never root, 65534
 (nobody), nor the console's own uid. `.lockfamily/` is read-only in lea's containers,
 and every `allowed_uids` (from a legacy root file or a sub-project `lox
-import` reads, which agents may write, too) is in the review you confirm. A lockhttp lock takes none (lox up refuses
+import` reads, which agents may write, too) is in the review you confirm. A lockhttp lock takes none (lox run refuses
 the key there): it is reached by lea's gate, an account of its image. `lox import` keeps the uids every
 declaration of an instance lists.
 
-`lox add` pins only releases that run under lox up (hub mode on lockkit
+`lox add` pins only releases that run under lox run (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
 lockhttp v0.3.0 or later.
 
@@ -352,23 +437,23 @@ lock. The token is typed at the console's start (`lox attach`), never
 written anywhere. See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
 set`.
 
-Not yet (lockhub#45): lockfile's shipped seccomp profile (lox up uses
+Not yet (lockhub#45): lockfile's shipped seccomp profile (lox run uses
 Docker's default).
 
 ## Restoring a hub version, rotating keys
 
-`lox up --pin sha256:<digest>` (or the whole
+`lox run --pin sha256:<digest>` (or the whole
 `ghcr.io/davidgodefroid/lockhub@sha256:…` reference) runs the hub on that
 image: a previous version restored by digest. The review shows the image
 line that changes; cosign checks the image is a lockhub release as for any
-other; once applied, lockfamily.yaml takes the digest, so the next lox up
+other; once applied, lockfamily.yaml takes the digest, so the next lox run
 keeps it. `hub-images.log` in the state directory lists the hub images
 applied in the workspace, oldest first. An older hub on data a newer one
 wrote may refuse to start: the hub's data has no downgrade path. A hub
 image from before key rotation (no `lockhub rotate-key`) refuses an audit
 log whose key was rotated.
 
-`lox up --rotate hub`, `--rotate <instance>` or `--rotate all`
+`lox run --rotate hub`, `--rotate <instance>` or `--rotate all`
 (repeatable, or comma-separated) replaces keys. The new keys are made
 before the review, which shows each key line that changes; declined (or
 `--dry-run`), they are dropped.
@@ -379,7 +464,7 @@ before the review, which shows each key line that changes; declined (or
   no network) moves it over the old one, whose private key is gone. The
   hub's lock list takes the new key and the lock's console restarts.
 - The hub's new key is made by `lockhub keygen` in the hub's data
-  directory (`rotate/`); the hub image must have `lockhub rotate-key`. After the yes, lox up stops the hub and runs
+  directory (`rotate/`); the hub image must have `lockhub rotate-key`. After the yes, lox run stops the hub and runs
   `lockhub rotate-key`: the audit outbox is flushed under the old key, a
   `key_rotated` record signed by the old and the new key ends the old
   key's part of the audit log, the old key is listed in
@@ -390,12 +475,12 @@ before the review, which shows each key line that changes; declined (or
 - A restarted console asks again for what it does not take from Vault
   (`lox attach`).
 
-Before the review, lox up checks the hub image has `rotate-key` (and
+Before the review, lox run checks the hub image has `rotate-key` (and
 refuses a `--pin` to an image without it once the hub key was rotated: it
 would refuse the log). `rotate-key` takes the data directory's lock
 (`hub.lock`, which a running hub holds), so it never runs beside a hub.
 If the hub's rotation stops halfway, the hub stays stopped (no lock
-executes anything) and lox up refuses to start it until `lox up
+executes anything) and lox run refuses to start it until `lox run
 --rotate hub` is run again, which finishes the same rotation with the same
 new key, after asking the hub which key it holds (`lockhub pubkey`).
 
@@ -412,12 +497,12 @@ vouches for it.
 (lea's side of this is lea#209: lea runs its gate in hub mode for the one
 lockhttp lock of a workspace's up.json from `"lockhttp_gate": 1` on. Since
 lea v0.4.0 (lea#232) there is no standalone gate: without a trusted up.json
-naming one lockhttp lock, with an older lox up, or with anything in up.json
-it cannot check, lea stops, says why, and says to run `lox up`.)
+naming one lockhttp lock, with an older lox run, or with anything in up.json
+it cannot check, lea stops, says why, and says to run `lox run`.)
 
 lockhttp's hub mode is in the gate (`lockhttp gate --hub`, lockhttp#11),
 not in its console, and the gate must sit in the network namespace of
-lea's proxy to see the agents' requests. lox up therefore does not run a
+lea's proxy to see the agents' requests. lox run therefore does not run a
 gate: it runs the lockhttp console (it serves the policy, with no hub
 network), creates the gate's own volume, makes the gate's instance key in
 it as the gate's account (`lockhttp hub-key --home`), and registers that

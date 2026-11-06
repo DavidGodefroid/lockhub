@@ -49,6 +49,13 @@ type Info struct {
 	Flags string
 	// Renews, when set, makes this ticket the renewal of an expired one.
 	Renews *Renewal
+	// V is the ticket's schema version; Kind is what a version-2 ticket
+	// asks for (lockkit ticket.Kind: connect, read, write, ddl, action,
+	// endpoint, policy), "" on version 1. AskSecret: a connect ticket
+	// whose lock asks the decider for the backend's secret, sealed to it.
+	V         int
+	Kind      string
+	AskSecret bool
 }
 
 // Renewal is what the hub needs of a ticket's Renews (lockkit
@@ -82,6 +89,16 @@ type Verdict struct {
 	Device       []byte // the assertion, JSON
 	DeviceID     string
 	DeviceRecord []byte
+	// Rule, when set, is the id of the auto rule of `lox run` that
+	// decided (no human answered this ticket): the decision names it for
+	// the lock's audit. Only a version-2 ticket takes one, never a
+	// NeverAuto ticket nor one whose approval needs a typed name.
+	Rule string
+	// Secret is the backend's secret sealed by the decider to the lock's
+	// one-use key (lockkit ticket.Sealed, JSON), on the approval of a
+	// connect ticket that asked for it: the hub relays a box it cannot
+	// open.
+	Secret []byte
 }
 
 // Codec is the ticket format: lockkit's ticket package in production,
@@ -123,6 +140,9 @@ var (
 	// remove), so the ticket cannot be checked nor decided. Not
 	// ErrUnknownLock, which is a lock API caller's authentication.
 	ErrLockRemoved = errors.New("the ticket's lock is no longer declared")
+	// ErrNotAuto: an auto rule's decision on a ticket only a human may
+	// decide.
+	ErrNotAuto = errors.New("this ticket needs a human's decision")
 )
 
 // DefaultMaxPending is the hub's cap on an instance's pending tickets.
@@ -434,8 +454,15 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if v.ApproverID == "" || v.Facade == "" {
 		return nil, fmt.Errorf("%w: a decision needs an approver and a facade", ErrBadRequest)
 	}
-	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID {
+	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID ||
+		len(v.Rule) > MaxID || len(v.Secret) > MaxSecret {
 		return nil, fmt.Errorf("%w: field too long", ErrBadRequest)
+	}
+	if len(v.Secret) > 0 && !v.Approved {
+		return nil, fmt.Errorf("%w: only an approval carries a secret", ErrBadRequest)
+	}
+	if v.Rule != "" && v.Facade != route.TTY {
+		return nil, fmt.Errorf("%w: an auto rule decides at the terminal (lox run), never on another facade", ErrBadRequest)
 	}
 	onDevice := v.Facade == route.Mobile
 	if onDevice != (len(v.Device) > 0) || onDevice != (len(v.DeviceRecord) > 0) || onDevice != (v.Nonce != "") || onDevice != !v.At.IsZero() {
@@ -477,6 +504,24 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 			return fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 		}
 		info.Raw = tk.Raw
+		if v.Rule != "" {
+			// An auto rule never approves for the human where the lock
+			// or the hub wants one: a never-auto ticket (a grant, a
+			// profile the lock keeps from auto rules), a production
+			// approval that needs its name typed, a version-1 ticket
+			// (its decision cannot name the rule).
+			switch {
+			case info.V < 2:
+				return fmt.Errorf("%w: an auto rule decides only a ticket that names its kind (version 2)", ErrBadRequest)
+			case v.Approved && info.NeverAuto:
+				return fmt.Errorf("%w: ticket %s is never decided by an auto rule", ErrNotAuto, ref.ID)
+			case v.Approved && needsRetype(info):
+				return fmt.Errorf("%w: approving ticket %s needs its instance name typed", ErrNotAuto, ref.ID)
+			}
+		}
+		if len(v.Secret) > 0 && !info.AskSecret {
+			return fmt.Errorf("%w: ticket %s asks for no secret", ErrBadRequest, ref.ID)
+		}
 		at := now
 		if onDevice {
 			// The time the device signed: recent, not ahead of the hub.
@@ -519,6 +564,7 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		return h.audit(tx, audit.Record{
 			Event: string(ev), Ticket: ref.ID, Instance: tk.Instance, Risk: tk.Risk, State: string(to),
 			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw), Device: v.DeviceID,
+			Rule: v.Rule,
 		})
 	})
 	if err != nil {
@@ -692,6 +738,9 @@ func (h *Hub) closeRemoved(ctx context.Context) error {
 const (
 	MaxID     = 128
 	MaxReason = 1024
+	// MaxSecret bounds a sealed secret (a password or a Vault token,
+	// sealed and encoded).
+	MaxSecret = 8 << 10
 )
 
 // validID accepts ticket ids of 1 to MaxID characters from [A-Za-z0-9._-].

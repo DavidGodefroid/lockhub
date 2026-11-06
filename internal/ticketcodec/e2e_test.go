@@ -132,7 +132,7 @@ func TestHelloAnnouncesVersionsAndKey(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(raw["ticket_versions"]), "["+strconv.Itoa(ticket.Version)+"]"; got != want {
+	if got, want := string(raw["ticket_versions"]), "["+strconv.Itoa(ticket.Version)+","+strconv.Itoa(ticket.VersionKinds)+"]"; got != want {
 		t.Errorf("ticket_versions %s, want %s", got, want)
 	}
 	if got, want := string(raw["hub_key_id"]), strconv.Quote(ticket.KeyID(hubPub)); got != want {

@@ -1,6 +1,7 @@
 package ticketcodec
 
 import (
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -151,5 +152,74 @@ func TestTTLClampedToRisk(t *testing.T) {
 		if info.TTL != x.want {
 			t.Errorf("%s ttl %v: got %v, want %v", x.risk, x.ttl, info.TTL, x.want)
 		}
+	}
+}
+
+// TestLockkitFixturesKinds: a version-2 (kind) ticket of lockkit verifies
+// here, and the decision the hub signs on it names its rule and relays the
+// secret lox run sealed to the lock, which the lock opens. Fixtures of a
+// lockkit before ticket kinds have none: skipped.
+func TestLockkitFixturesKinds(t *testing.T) {
+	dir, lock, hubKey := fixtures(t)
+	raw, err := os.ReadFile(filepath.Join(dir, "ticket-connect-v2.json"))
+	if os.IsNotExist(err) {
+		t.Skip("lockkit fixtures before ticket kinds")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPub := lock.Public().(ed25519.PublicKey)
+	var c Codec
+	info, err := c.VerifyTicket(lockPub, raw)
+	if err != nil {
+		t.Fatalf("lockkit's connect ticket does not verify: %v", err)
+	}
+	if info.V != ticket.VersionKinds || info.Kind != string(ticket.KindConnect) || !info.AskSecret {
+		t.Fatalf("info %+v: want version 2, kind connect, a secret asked", info)
+	}
+	tk, _ := ticket.VerifyTicket(lockPub, raw)
+	box, err := ticket.SealSecret(tk, []byte("s3cret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := json.Marshal(box)
+	for _, rule := range []string{"", "session:connect"} {
+		out, err := c.SignDecision(hubKey, info, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: "tty", Rule: rule, Secret: sealed}, tk.Created.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := ticket.VerifyDecision(hubKey.Public().(ed25519.PublicKey), out)
+		if err != nil {
+			t.Fatalf("hub decision does not verify: %v", err)
+		}
+		if err := d.Match(tk); err != nil {
+			t.Fatalf("decision does not match: %v", err)
+		}
+		if d.Auto() != (rule != "") || (rule != "" && d.Rule.ID != rule) {
+			t.Errorf("rule %+v, want %q", d.Rule, rule)
+		}
+		var k struct {
+			X string `json:"connect_x25519_private"`
+		}
+		kb, _ := os.ReadFile(filepath.Join(dir, "keys-connect-v2.json"))
+		json.Unmarshal(kb, &k)
+		privRaw, _ := base64.RawURLEncoding.DecodeString(k.X)
+		priv, err := ecdh.X25519().NewPrivateKey(privRaw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := d.OpenSecret(tk, priv)
+		if err != nil || string(got) != "s3cret" {
+			t.Errorf("secret %q, %v", got, err)
+		}
+	}
+	// A version-1 ticket's decision names no rule.
+	v1, _ := os.ReadFile(filepath.Join(dir, "ticket-v1.json"))
+	i1, err := c.VerifyTicket(lockPub, v1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SignDecision(hubKey, i1, hub.Verdict{Approved: true, ApproverID: "x", Facade: "tty", Rule: "r"}, time.Now()); err == nil {
+		t.Error("a version-1 decision named a rule")
 	}
 }
