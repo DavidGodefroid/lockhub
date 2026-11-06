@@ -90,6 +90,9 @@ type Up struct {
 	Focus string
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
+	// LogHost is what a locklog lock's mount plan is checked against
+	// (nil: this host).
+	LogHost *LogHost
 	// Upgrade (lox run) replaces the pinned images older than the
 	// releases this lox ships with, once verified (upgrade.go); nil: the
 	// pins are applied as they are.
@@ -519,9 +522,39 @@ func (u *Up) Do(ctx context.Context) error {
 		lockPubs[n] = k
 	}
 
+	// The mount plans of the locks that read host logs (locklog),
+	// derived in their image from the reviewed copy and checked here.
+	plans := map[string]*LogPlan{}
+	for _, n := range c.Instances() {
+		l := c.Locks[n]
+		if !Kinds[l.Type].Mounts {
+			continue
+		}
+		if !mountSafe(ws) {
+			return fmt.Errorf("lock %s: the workspace %s holds a character a mount cannot carry: move or rename it", n, ws)
+		}
+		out, err := u.runSetup(ctx, project, composeYAML, profiles[l.Type].Tar, "mounts-"+n)
+		if err != nil {
+			return fmt.Errorf("mount plan of %s (locklog mounts): %w", n, err)
+		}
+		pl, err := DeriveLogPlan(ctx, u.Run, u.LogHost, out, LogMapDir(u.State, n))
+		if err != nil {
+			return fmt.Errorf("lock %s: %w", n, err)
+		}
+		for _, w := range pl.Warnings {
+			fmt.Fprintf(u.Out, "warning: lock %s: %s\n", n, w)
+		}
+		plans[n] = pl
+	}
+
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := append(Summary(c, hp, lockPubs, facadePubs), chatTokens(c, hubData)...)
+	for _, n := range c.Instances() {
+		if pl := plans[n]; pl != nil {
+			sum = append(sum, pl.Review(n)...)
+		}
+	}
 	for _, t := range types(c) {
 		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
 		for _, l := range profiles[t].Lines {
@@ -738,12 +771,38 @@ func (u *Up) Do(ctx context.Context) error {
 	} else {
 		os.Remove(filepath.Join(u.State, lockfileSeccompFile))
 	}
+	// The applied plans, for lox refresh and lox doctor, and the
+	// containers maps of the docker sources (rewritten by lox refresh).
+	for _, n := range c.Instances() {
+		pl := plans[n]
+		if pl == nil {
+			continue
+		}
+		if err := writeLogPlan(u.State, n, pl); err != nil {
+			return err
+		}
+		if len(pl.DockerGlobs) > 0 {
+			m, err := BuildLogMap(ctx, u.Run, pl.DockerGlobs)
+			if err != nil {
+				return fmt.Errorf("containers map of %s: %w", n, err)
+			}
+			if _, err := WriteLogMap(pl.MapDir, m); err != nil {
+				return fmt.Errorf("containers map of %s: %w", n, err)
+			}
+		}
+	}
+	paths.Logs = plans
 	composeYAML = []byte(Compose(c, paths))
 	// The profiles go on the setup service's stdin (they can hold
 	// secrets; a process's arguments are public): compose reads this
 	// confirmed file from the private state directory meanwhile.
-	if err := u.copyProfiles(ctx, c, project, composeYAML, profiles); err != nil {
+	ids, err := u.copyProfiles(ctx, c, project, composeYAML, profiles)
+	if err != nil {
 		return err
+	}
+	if len(ids) > 0 {
+		paths.ProfileIDs = ids
+		composeYAML = []byte(Compose(c, paths))
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
 		return fmt.Errorf("hub key for the locks: %w", err)
@@ -1035,12 +1094,13 @@ func validPub(s string) bool {
 	return err == nil && len(b) == 32 && keys.Public(b) == s
 }
 
-// copyProfiles copies each reviewed profile into its volume, the archive
-// on the stdin of the setup service profile-<type>.
-func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, composeYAML []byte, profiles map[string]*Profile) error {
+// runSetup runs the setup service svc of the compose file with stdin on
+// its stdin (the compose file is then read from a private file in the
+// state directory, not from stdin).
+func (u *Up) runSetup(ctx context.Context, project string, composeYAML, stdin []byte, svc string) ([]byte, error) {
 	f, err := os.CreateTemp(u.State, ".compose-*.yaml")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer os.Remove(f.Name())
 	_, err = f.Write(composeYAML)
@@ -1048,16 +1108,33 @@ func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, compos
 		err = cerr
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
+	return u.Run.Run(ctx, stdin, "docker", "compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
+		"run", "--rm", "-T", "--no-deps", svc)
+}
+
+var devInoLine = regexp.MustCompile(`^[0-9]{1,20}:[0-9]{1,20}$`)
+
+// copyProfiles copies each reviewed profile into its volume, the archive
+// on the stdin of the setup service profile-<type>. It returns the
+// device:inode of the copies of the kinds that check it (Kind.Mounts).
+func (u *Up) copyProfiles(ctx context.Context, c *Config, project string, composeYAML []byte, profiles map[string]*Profile) (map[string]string, error) {
+	ids := map[string]string{}
 	for _, t := range types(c) {
-		args := []string{"compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
-			"run", "--rm", "-T", "--no-deps", "profile-" + t}
-		if _, err := u.Run.Run(ctx, profiles[t].Tar, "docker", args...); err != nil {
-			return fmt.Errorf("profile of the %s locks: %w", t, err)
+		out, err := u.runSetup(ctx, project, composeYAML, profiles[t].Tar, "profile-"+t)
+		if err != nil {
+			return nil, fmt.Errorf("profile of the %s locks: %w", t, err)
+		}
+		if Kinds[t].Mounts {
+			id := strings.TrimSpace(string(out))
+			if !devInoLine.MatchString(id) {
+				return nil, fmt.Errorf("profile of the %s locks: its copy's device and inode: got %q", t, id)
+			}
+			ids[t] = id
 		}
 	}
-	return nil
+	return ids, nil
 }
 
 // vaultCAFile is the ca_file the locks with vault: true trust ("" when no

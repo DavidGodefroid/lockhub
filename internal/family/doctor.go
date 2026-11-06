@@ -153,9 +153,31 @@ func (d *Doctor) Do(ctx context.Context) int {
 
 	if c != nil && engine {
 		d.stack(ctx, c, ok, fail)
+		d.logMaps(ctx, c, ok, warn, fail)
 	}
 	d.accounts(warn)
 	return fails
+}
+
+// logMaps checks the containers map of each locklog lock with a docker
+// source against the containers its approved globs name now: a stale map
+// serves containers since removed, and not the new ones, until lox
+// refresh rewrites it (lox run runs no map loop).
+func (d *Doctor) logMaps(ctx context.Context, c *Config, ok, warn, fail func(string, ...any)) {
+	for _, n := range c.Instances() {
+		if !Kinds[c.Locks[n].Type].Mounts {
+			continue
+		}
+		msg, stale, err := logMapStale(ctx, d.Run, d.State, n)
+		switch {
+		case err != nil:
+			fail("lock %s containers map: %v", n, err)
+		case stale:
+			warn("lock %s containers map: %s", n, msg)
+		case msg != "":
+			ok("lock %s containers map: %s", n, msg)
+		}
+	}
 }
 
 // routing checks that the hub applies the routing lockfamily.yaml
