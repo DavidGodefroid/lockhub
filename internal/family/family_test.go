@@ -73,6 +73,9 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if f.failing != "" && strings.Contains(line, f.failing) {
 		return nil, errors.New("refused")
 	}
+	if strings.Contains(line, "docker network ls ") {
+		return []byte(f.keys["networks"]), nil
+	}
 	if strings.HasSuffix(line, " lockhub help") {
 		if f.keys["nohelp"] != "" {
 			return []byte("lockhub serve\n"), nil
@@ -299,11 +302,11 @@ func TestComposeIsolation(t *testing.T) {
 	out := Compose(c, Paths{HubData: "/s/hub", FacadeDir: "/r/lockhub", Workspace: "/w", User: "0:0"})
 	for _, want := range []string{
 		"  lockhub:\n    internal: true",
-		`networks: [lockhub, "egress-crm-prod"]`,
+		`networks: [lockhub, "locknet-crm-prod"]`,
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
-		`extra_hosts: ["host.docker.internal:host-gateway"]`, `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
+		"  \"locknet-crm-prod\":\n    internal: true", `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
 		"      - hubkey:/run/lockfamily:ro", `      - "profile-locksql:/w/.locksql:ro"`,
 		"dev.lockfamily.role: \"socket\"", "dev.lockfamily.instance: \"crm-prod\"",
 		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,

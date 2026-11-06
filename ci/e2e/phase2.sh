@@ -65,7 +65,7 @@ mqapi() {
 # What this run created on the Postgres server and the broker, dropped at exit.
 made_db="" made_role="" made_vhost="" made_mquser=""
 cleanup() {
-	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" "$E2E_ID-squat-rw" >/dev/null 2>&1 || true
+	docker rm -f "$gate" "$gate-ctl" "$E2E_ID-squat" "$E2E_ID-squat-rw" "$E2E_ID-decoy" >/dev/null 2>&1 || true
 	# A run that died with up.json tampered with (the host agent's checks).
 	if [ -f "$ws/up.json.orig" ]; then cat "$ws/up.json.orig" >"$ws/.lockfamily/up.json" || true; chmod g-w "$ws/.lockfamily/up.json" || true; fi
 	# A run that died while .lockfamily was moved aside (the link check).
@@ -499,7 +499,25 @@ if [ -n "$mq" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ]; then
 	mqimg=$(sed -n '/^  mq:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 	hostmq() { LOCKMQ_IMAGE="$mqimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKMQ_LAUNCHER" mcp; }
 	mqread='"profile":"e2e","vhost":"e2e","name":"orders","from":"first","count":1'
-	hostmq lockmq_read "{$mqread,\"intent\":\"e2e host agent\"}" >mread1.json || { cat mread1.json; die "host lockmq_read failed"; }
+	# lockmq v0.8.0 opens its broker connection on the agent's first
+	# request (a connect ticket, auto.connect=ask), and that request waits
+	# for it: the connect is approved meanwhile, then the read is pending.
+	(
+		for i in $(seq 1 45); do
+			tty 'y\n' "$lox" approve --once >approve-connect.out 2>&1 || true
+			if tr -d '\r' <approve-connect.out | grep -Eq '(^|: )approved$'; then break; fi
+			sleep 2
+		done
+	) &
+	connect_pid=$!
+	hostmq lockmq_read "{$mqread,\"intent\":\"e2e host agent\"}" >mread1.json || {
+		cat mread1.json approve-connect.out
+		docker logs "$p-gw-mq-1" 2>&1 | tail -20
+		docker logs "$p-gwout-mq-1" 2>&1 | tail -20
+		die "host lockmq_read failed"
+	}
+	wait "$connect_pid" || true
+	if tr -d '\r' <approve-connect.out | grep -Eq '(^|: )approved$'; then decisions=$((decisions + 1)); fi
 	cat mread1.json
 	jq -e '.data.status == "pending" and .data.lock == "lockmq" and .data.instance == "mq"' mread1.json >/dev/null ||
 		die "host agent: the read did not answer pending on the instance mq"
@@ -531,6 +549,54 @@ if [ -n "$mq" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ]; then
 	echo "host agent: lockmq read of e2e/orders approved as $mticket, message e2e-1 returned"
 	decisions=$((decisions + 1))
 fi
+say "lockhub#123: each lock reaches the endpoints of its reviewed profile, and nothing else"
+# The queries above went through the gateways (positive control); now what
+# a lock must not reach, from inside its own network namespace.
+decoy_start "$E2E_ID-decoy"
+tr -d '\r' <up.out >up.txt
+for l in $LOCKS; do
+	n=${l%%:*}
+	case "${l#*:}" in
+	locksql) eps="host.docker.internal ${PGPORT:-5432}" ;;
+	lockmq) eps="host.docker.internal ${MQ_MGMT_PORT:-15672} host.docker.internal ${MQ_AMQP_PORT:-5672}" ;;
+	*) continue ;;
+	esac
+	[ "$(docker inspect -f '{{.HostConfig.ExtraHosts}}' "$p-lock-$n-1")" = "[]" ] || die "lock-$n maps host names itself (extra_hosts): it must resolve its endpoints to its gateway"
+	for net in $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$p-lock-$n-1"); do
+		[ "$(docker network inspect -f '{{.Internal}}' "$net")" = true ] || die "lock-$n is on $net, which is not internal"
+	done
+	# shellcheck disable=SC2086
+	egress_only "$p-lock-$n-1" $eps
+	# shellcheck disable=SC2086
+	set -- $eps
+	want="only $1:$2"
+	[ $# -lt 4 ] || want="only $3:$4, $1:$2"
+	grep -qF "  egress       $want" up.txt || die "the review does not show the allowlist of $n ($want)"
+done
+if [ -n "$sql" ]; then
+	# The broker's ports are another lock's endpoints, not db's.
+	[ -z "$mq" ] || ! reaches "$p-lock-db-1" host.docker.internal "${MQ_MGMT_PORT:-15672}" || die "lock-db reached the broker, mq's endpoint"
+	say "lockhub#123: an agent edits .locksql without a review: nothing changes"
+	gw_before=$(docker inspect -f '{{json .Config.Cmd}}' "$p-gwout-db-1")
+	cp -p .locksql/config.toml locksql.orig
+	sed -i "s/^port = .*/port = $DECOY_PORT/" .locksql/config.toml
+	grep -qx "port = $DECOY_PORT" .locksql/config.toml || die "the profile was not edited"
+	reaches "$p-lock-db-1" host.docker.internal "$DECOY_PORT" && die "lock-db reached the port of an unreviewed profile"
+	tty 'n\n' "$lox" up >up-edit.out 2>&1 || true
+	tr -d '\r' <up-edit.out | grep -qF "  egress       only host.docker.internal:$DECOY_PORT" || { cat up-edit.out; die "lox run did not show the edited allowlist"; }
+	grep -q 'not applied' up-edit.out || die "the edited allowlist was applied without a yes"
+	[ "$(docker inspect -f '{{json .Config.Cmd}}' "$p-gwout-db-1")" = "$gw_before" ] || die "the gateway changed without a yes"
+	reaches "$p-lock-db-1" host.docker.internal "$DECOY_PORT" && die "lock-db reached the port of a declined profile"
+	reaches "$p-lock-db-1" host.docker.internal "${PGPORT:-5432}" || die "lock-db lost its reviewed endpoint"
+	cp -p locksql.orig .locksql/config.toml
+	say "lockhub#123: lox doctor reports each lock's effective egress"
+	"$lox" doctor >doctor.out 2>&1 || true
+	cat doctor.out
+	grep -qF "ok   lock db egress: only host.docker.internal:${PGPORT:-5432} (internal networks, gateway running)" doctor.out || die "lox doctor does not report db's egress"
+	[ -z "$mq" ] || grep -qF "ok   lock mq egress: only host.docker.internal:${MQ_AMQP_PORT:-5672}, host.docker.internal:${MQ_MGMT_PORT:-15672} (internal networks, gateway running)" doctor.out || die "lox doctor does not report mq's egress"
+	grep -q 'FAIL lock .* egress' doctor.out && die "lox doctor finds a lock's egress broken"
+fi
+docker rm -f "$E2E_ID-decoy" >/dev/null
 "$lox" audit verify --data "$state/hub" --hub-key-file "$state/hub.pub" >audit.out 2>&1 || { cat audit.out; die "lox audit verify failed"; }
 cat audit.out
 grep -q " $decisions decisions signed" audit.out || die "the approvals are not in the hub's audit (want $decisions)"

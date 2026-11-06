@@ -265,6 +265,12 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 		profiles[t] = pr
 	}
+	// Each lock's allowlist, from those reviewed copies only (egress.go):
+	// reviewed below, applied as the lock's gateway.
+	egresses, err := Egresses(c, profiles)
+	if err != nil {
+		return err
+	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
 	// Everything lox up writes and runs from lives in host-only
@@ -316,7 +322,7 @@ func (u *Up) Do(ctx context.Context) error {
 			return errors.New("--rotate: nothing to rotate before the first lox run of this workspace")
 		}
 	}
-	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks, Egress: egresses}
 	devices, err := ReadDevices(u.State)
 	if err != nil {
 		return fmt.Errorf("paired devices: %w", err)
@@ -517,6 +523,9 @@ func (u *Up) Do(ctx context.Context) error {
 			sum = append(sum, fmt.Sprintf("profile %s %s", t, l))
 		}
 	}
+	for _, n := range c.Instances() {
+		sum = append(sum, egresses[n].Lines(n)...)
+	}
 	sum = append(sum, devicesSummary(devices)...)
 	// The CA the locks with vault: true trust, read once here: what is
 	// reviewed (path and digest) is what is copied after the yes.
@@ -606,6 +615,7 @@ func (u *Up) Do(ctx context.Context) error {
 				l := c.Locks[n]
 				f := ProfileFacts(profiles[l.Type], l.Type, LockProfile(l))
 				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
+				f.Egress = egresses[n].Short()
 				facts[n] = f
 			}
 			var changed []string
@@ -735,6 +745,18 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
+	}
+	// The networks the locks had before their egress was restricted
+	// (lockhub#123), left without a container by the up above.
+	if out, err := u.Run.Run(ctx, nil, "docker", "network", "ls", "--filter", "label=com.docker.compose.project="+project, "--format", `{{.Name}} {{.Label "com.docker.compose.network"}}`); err == nil {
+		old := formerNets(c)
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if name, key, ok := strings.Cut(strings.TrimSpace(l), " "); ok && old[key] {
+				if _, err := u.Run.Run(ctx, nil, "docker", "network", "rm", name); err != nil {
+					fmt.Fprintf(u.Out, "note: the former network %s of the lock could not be removed (%v): docker network rm %s\n", name, err, name)
+				}
+			}
+		}
 	}
 	// A hub created before binds the facade directory it started with,
 	// deleted since: one made or repaired above takes a new hub (compose up
