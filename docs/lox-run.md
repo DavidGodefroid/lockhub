@@ -524,6 +524,49 @@ digest as a label, so a new profile recreates the console. The review shows
 shows the profile under `HostConfig.SecurityOpt`. The other locks and the hub
 keep Docker's default.
 
+## locklog: the mount plan and the containers map
+
+A locklog console reads host logs, so lox run mounts the directories its
+profile names, as locklog's own launcher does. Before the review, lox run runs
+`locklog mounts [--profile P]` in the lock's image (setup service
+`mounts-<instance>`: the image's agent account, no network, the reviewed copy
+unpacked in a tmpfs at the workspace's path) and checks every line it prints
+on the host:
+
+- a `file` line binds its directory: one under `/var/log` or
+  `/run/log/journal`, a real path (no link, not `/`), with no character a
+  mount cannot carry;
+- a `journald` line binds the host's `/var/log/journal` and
+  `/run/log/journal`;
+- a `docker` line binds the Docker containers root (`docker info`'s
+  `DockerRootDir` + `/containers`) with group 0. That group applies to the
+  whole console, so a docker source is refused beside file or journald
+  sources: put it in a lock of its own;
+- a `remote` line binds nothing;
+- local sources are refused on macOS (Docker Desktop) and under rootless
+  Docker.
+
+Every directory is bound read-only and non-recursive (Compose
+`bind: {recursive: disabled}`: no submount of it appears) at its own path.
+The console joins only the groups its files grant: `adm` and `systemd-journal`,
+and gid 0 for the containers root; lox run warns about a file the console will
+not reach. It also gets `LOCKLOG_EXPECT_ROOTS` (the device and inode of each
+root it could stat), `LOCKLOG_EXPECT_DIR` (the profile copy's, printed by
+its copy service), `LOCKLOG_DOCKER_ROOT` and `LOCKLOG_PII_DIR` (its home
+volume). The review lists the plan's header and lines, each bind, the groups
+and the map directory, so a new log directory is a change to confirm.
+
+A docker source's containers map (`map.v<N>`: the names and ids of the
+containers its approved globs name, json-file only, locklog consoles
+excluded, 0644 in a 0755 directory) lives in the state directory,
+`$XDG_STATE_HOME/lockfamily/<project>/locklog/<instance>/map`. It is bound
+read-only at `/run/locklog-map`, the last two versions kept. lox run writes
+it before the consoles start and again once they exist (their ids are
+excluded); `lox refresh <instance>`
+rewrites it from the globs lox run applied (the console re-reads it). No loop
+follows `docker events` under lox run, and `lox doctor` says when the map is
+stale.
+
 ## Upgrading the images
 
 At start, `lox run` compares the images lockfamily.yaml pins with the

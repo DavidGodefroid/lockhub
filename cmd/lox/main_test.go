@@ -43,6 +43,10 @@ func TestRun(t *testing.T) {
 		{[]string{"run", "--no-start", "--manual"}, 1, "", "outside the agent"},
 		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
+		{[]string{"refresh"}, 2, "", "usage: lox refresh INSTANCE"},
+		{[]string{"refresh", "a", "b"}, 2, "", "usage: lox refresh INSTANCE"},
+		{[]string{"refresh", "--nope", "a"}, 2, "", "flag provided but not defined"},
+		{[]string{"help"}, 0, "lox refresh INSTANCE", ""},
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lox add slack"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "#gen", "--user", "U1x"}, 2, "", "slack.channel"},
 		{[]string{"add", "slack", "--team", "T01", "--channel", "C01", "--user", "U01"}, 1, "", "stdin is not one"},
@@ -133,6 +137,13 @@ func TestAddImportDoctor(t *testing.T) {
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "crm:") {
 		t.Errorf("file:\n%s", b)
+	}
+	// lox refresh: only a locklog lock has a containers map.
+	if code, _, e := call("refresh", "crm", "--file", file); code != 1 || !strings.Contains(e, "only a locklog lock") {
+		t.Errorf("refresh of a locksql lock: %d %q", code, e)
+	}
+	if code, _, e := call("refresh", "nope", "--file", file); code != 1 || !strings.Contains(e, `no lock "nope"`) {
+		t.Errorf("refresh of an unknown lock: %d %q", code, e)
 	}
 	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lox run") {
 		t.Errorf("doctor before lox up: %d %q", code, o)
