@@ -1,7 +1,7 @@
 # lockhub
 
-The approval hub of the [Lock Family](https://github.com/DavidGodefroid/lockfamily)
-(locksql, lockmq, lockfile, lockhttp).
+The approval hub of the [Lock Family](https://github.com/DavidGodefroid/lockfamily),
+harness security for AI agents (locksql, lockmq, lockfile, lockhttp).
 
 Each Lock keeps a human between an AI agent and a production system. With the
 hub, a Lock no longer needs a human at its own terminal: it sends an approval
@@ -143,10 +143,12 @@ with every Lock.
 ```sh
 brew trust davidgodefroid/tap
 brew install davidgodefroid/tap/lockfamily   # lea, lox and the Locks' launchers
-lea                  # runs lox init in its projects directory on its first start
+lea                                          # starts lea; it runs no lox command
 ```
 
-Later, one source at a time, in lea's projects directory:
+Then, in lea's projects directory, run `lox init` — or go straight to
+`lox add locksql` — and keep `lox run` open in a terminal of its own: it
+serves the decisions. Later, one source at a time, in that directory:
 
 ```sh
 lox add locksql      # or lockmq, lockfile, lockhttp
