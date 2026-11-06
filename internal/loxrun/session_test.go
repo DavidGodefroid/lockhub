@@ -465,6 +465,7 @@ func TestSessionWrongPasswordAskedAgain(t *testing.T) {
 	if e := h.wait(EvResult, c2.ID); e.Result != ResRan {
 		t.Fatalf("%+v", e)
 	}
+	runRead(t, h, hub, lk) // the connection works: a read ran on it
 	k3 := newKey()
 	c3 := lk.connectItem(t, "dev", k3)
 	hub.push(c3)
@@ -511,6 +512,7 @@ func TestSessionCachedPasswordDroppedWhenNotRun(t *testing.T) {
 	h.wait(EvDecided, c1.ID)
 	setState(c1.ID, "consumed")
 	h.wait(EvResult, c1.ID)
+	runRead(t, h, hub, lk)
 
 	c2 := lk.connectItem(t, "dev", key())
 	hub.push(c2)
@@ -525,4 +527,172 @@ func TestSessionCachedPasswordDroppedWhenNotRun(t *testing.T) {
 	c3 := lk.connectItem(t, "dev", key())
 	hub.push(c3)
 	h.wait(EvQuestion, c3.ID)
+}
+
+// runRead has the agent run an auto read on profile dev.
+func runRead(t *testing.T, h *harness, hub *fakeHub, lk lockKey) {
+	t.Helper()
+	r := lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT 1", nil)
+	hub.push(r)
+	if e := h.wait(EvDecided, r.ID); e.Rule != "default:read" {
+		t.Fatalf("%+v", e)
+	}
+}
+
+// noDecision fails if lox run decided id (a prompt should be up).
+func noDecision(t *testing.T, hub *fakeHub, id, why string) {
+	t.Helper()
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := hub.decision(id); ok {
+		t.Fatal(why)
+	}
+}
+
+// A wrong password the backend took at the dial (the connect ran) is
+// the session's: the next connect is approved with it. x drops it, with
+// the session's connection approval: the next connect is asked, y opens
+// an empty prompt (no session password to keep) and the new password is
+// the one sealed. A connect approved before x that runs after it does
+// not put the old password back.
+func TestSessionForgetDropsWrongPassword(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, nil)
+	key := func() *ecdh.PrivateKey { k, _ := ecdh.X25519().GenerateKey(rand.Reader); return k }
+	setState := func(id, s string) { hub.mu.Lock(); hub.states[id] = s; hub.mu.Unlock() }
+
+	k1 := key()
+	c1 := lk.connectItem(t, "dev", k1)
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "wrong")
+	h.wait(EvDecided, c1.ID)
+	setState(c1.ID, "consumed")
+	h.wait(EvResult, c1.ID)
+	runRead(t, h, hub, lk) // it failed later, at the backend
+
+	// The reconnect: the session's, with the wrong password.
+	k2 := key()
+	c2 := lk.connectItem(t, "dev", k2)
+	hub.push(c2)
+	if e := h.wait(EvDecided, c2.ID); e.Rule != "session:connect" {
+		t.Fatalf("%+v", e)
+	}
+	if s := sealed(t, hub, lk, c2, k2); s != "wrong" {
+		t.Fatalf("sealed %q", s)
+	}
+
+	// x, no question up: every profile is forgotten.
+	h.keys <- R('x')
+	time.Sleep(50 * time.Millisecond)
+	if !strings.Contains(h.output(), "forgot every profile") {
+		t.Fatalf("no flash:\n%s", h.output())
+	}
+	setState(c2.ID, "consumed") // it ran after x: puts nothing back
+	h.wait(EvResult, c2.ID)
+
+	k3 := key()
+	c3 := lk.connectItem(t, "dev", k3)
+	hub.push(c3)
+	if e := h.wait(EvQuestion, c3.ID); e.ID != c3.ID {
+		t.Fatalf("%+v", e)
+	}
+	h.keys <- R('y')
+	h.keys <- Key{Code: KeyEnter} // Enter alone: no session password to keep
+	noDecision(t, hub, c3.ID, "Enter alone approved with a forgotten password")
+	typeIn(h, "right")
+	if e := h.wait(EvDecided, c3.ID); !e.Approved || e.Rule != "" {
+		t.Fatalf("%+v", e)
+	}
+	if s := sealed(t, hub, lk, c3, k3); s != "right" {
+		t.Fatalf("sealed %q, want the new password", s)
+	}
+}
+
+// On a question, y shows the prompt even with a session password, and
+// Enter alone keeps it; x on the question forgets its profile, so the
+// prompt then has no default.
+func TestSessionPromptDefaultAndForgetOnCard(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, nil)
+	key := func() *ecdh.PrivateKey { k, _ := ecdh.X25519().GenerateKey(rand.Reader); return k }
+	setState := func(id, s string) { hub.mu.Lock(); hub.states[id] = s; hub.mu.Unlock() }
+
+	c1 := lk.connectItem(t, "dev", key())
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "pw1")
+	h.wait(EvDecided, c1.ID)
+	setState(c1.ID, "consumed")
+	h.wait(EvResult, c1.ID)
+	runRead(t, h, hub, lk)
+
+	h.keys <- Key{Code: KeyShiftTab} // manual: asked
+	h.wait(EvMode, "")
+	k2 := key()
+	c2 := lk.connectItem(t, "dev", k2)
+	hub.push(c2)
+	h.wait(EvQuestion, c2.ID)
+	h.keys <- R('y')
+	noDecision(t, hub, c2.ID, "y reused the session password without a prompt")
+	h.keys <- Key{Code: KeyEnter}
+	h.wait(EvDecided, c2.ID)
+	if s := sealed(t, hub, lk, c2, k2); s != "pw1" {
+		t.Fatalf("sealed %q, want the session's", s)
+	}
+
+	k3 := key()
+	c3 := lk.connectItem(t, "dev", k3)
+	hub.push(c3)
+	h.wait(EvQuestion, c3.ID)
+	h.keys <- R('x')
+	h.keys <- R('y')
+	h.keys <- Key{Code: KeyEnter}
+	noDecision(t, hub, c3.ID, "Enter alone kept a forgotten password")
+	typeIn(h, "pw2")
+	h.wait(EvDecided, c3.ID)
+	if s := sealed(t, hub, lk, c3, k3); s != "pw2" {
+		t.Fatalf("sealed %q", s)
+	}
+}
+
+// A profile that asks to connect again right after the lock connected
+// on it, with nothing run in between, did not get a working connection:
+// its session password is dropped and the human asked, not the same
+// credentials sent on every retry.
+func TestSessionQuickReconnectAsked(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, nil)
+	key := func() *ecdh.PrivateKey { k, _ := ecdh.X25519().GenerateKey(rand.Reader); return k }
+
+	c1 := lk.connectItem(t, "dev", key())
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "wrong")
+	h.wait(EvDecided, c1.ID)
+	hub.mu.Lock()
+	hub.states[c1.ID] = "consumed"
+	hub.mu.Unlock()
+	h.wait(EvResult, c1.ID)
+
+	k2 := key()
+	c2 := lk.connectItem(t, "dev", k2)
+	hub.push(c2)
+	h.wait(EvQuestion, c2.ID)
+	if !strings.Contains(h.output(), "right after connecting") {
+		t.Fatalf("why not shown:\n%s", h.output())
+	}
+	h.keys <- R('y')
+	h.keys <- Key{Code: KeyEnter}
+	noDecision(t, hub, c2.ID, "Enter alone kept the dropped password")
+	typeIn(h, "right")
+	h.wait(EvDecided, c2.ID)
+	if s := sealed(t, hub, lk, c2, k2); s != "right" {
+		t.Fatalf("sealed %q", s)
+	}
 }

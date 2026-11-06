@@ -49,7 +49,7 @@ func parseTicket(it api.QueueItem, keys map[string]ed25519.PublicKey) (*ticket.T
 	if k, ok := keys[it.Instance]; ok {
 		tk, err := ticket.VerifyTicket(k, it.Ticket)
 		if err != nil {
-			return nil, false, fmt.Errorf("does not verify under the lock key lox up pinned: %w", err)
+			return nil, false, fmt.Errorf("does not verify under the pinned lock key: %w", err)
 		}
 		if tk.Source.Instance != it.Instance || tk.ID != it.ID {
 			return nil, false, errors.New("the hub lists it under another instance or id")
@@ -250,6 +250,19 @@ func (st *state) add(it api.QueueItem) {
 	}
 	t.profileKey = it.Instance + "/" + t.req.Profile()
 	st.active[t.profileKey] = now
+	t.gen = st.gen[t.profileKey]
+	dropped := false
+	if ran, ok := st.ran[t.profileKey]; ok {
+		delete(st.ran, t.profileKey)
+		if tk.Kind == ticket.KindConnect && st.s.ReconnectAsk > 0 && now.Sub(ran) < st.s.ReconnectAsk {
+			// It connected and asks again before anything ran on it: the
+			// connection did not work. The same credentials are not
+			// sent again on their own.
+			st.forget(it.Instance, t.req.Profile())
+			t.gen = st.gen[t.profileKey]
+			dropped = true
+		}
+	}
 	target := ""
 	if tk.Subject != nil {
 		target = clean(tk.Subject.Target)
@@ -264,7 +277,48 @@ func (st *state) add(it api.QueueItem) {
 		st.results[k] = t
 		return
 	}
-	st.apply(t, st.eng.Decide(t.req))
+	v := st.eng.Decide(t.req)
+	if dropped && v.Outcome == Question {
+		v.Why = "asked to connect again right after connecting: the session's password is dropped"
+	}
+	st.apply(t, v)
+}
+
+// forget drops the session's connection approval, endpoints and secret
+// for a profile (x, or a reconnect right after connecting): its next
+// ticket is asked again, and a connect still on its way does not put
+// them back.
+func (st *state) forget(instance, profile string) {
+	pk := instance + "/" + profile
+	if s, ok := st.secrets[pk]; ok {
+		clear(s)
+		delete(st.secrets, pk)
+	}
+	st.eng.Forget(instance, profile)
+	delete(st.conns, pk)
+	delete(st.ran, pk)
+	st.gen[pk]++
+}
+
+// forgetAll is forget on every profile of the session.
+func (st *state) forgetAll() {
+	for pk, s := range st.secrets {
+		clear(s)
+		delete(st.secrets, pk)
+	}
+	st.eng.ForgetAll()
+	pks := map[string]bool{}
+	for pk := range st.conns {
+		pks[pk] = true
+	}
+	for _, t := range st.seen {
+		pks[t.profileKey] = true
+	}
+	for pk := range pks {
+		st.gen[pk]++
+	}
+	clear(st.conns)
+	clear(st.ran)
 }
 
 func shortNote(s string) string {
@@ -553,6 +607,10 @@ func (st *state) settleConnect(t *tracked, ran bool) {
 		clear(secret)
 		return
 	}
+	if t.gen != st.gen[t.profileKey] {
+		clear(secret) // the human dropped the profile since: kept nothing
+		return
+	}
 	if !ran {
 		clear(secret)
 		if t.cached {
@@ -564,6 +622,7 @@ func (st *state) settleConnect(t *tracked, ran bool) {
 		}
 		return
 	}
+	st.ran[t.profileKey] = st.s.now()
 	if secret != nil {
 		if old, ok := st.secrets[t.profileKey]; ok {
 			clear(old)
@@ -655,8 +714,22 @@ func (st *state) onKey(k Key) bool {
 		if top != nil {
 			top.card.Details = !top.card.Details
 		}
+	case 'x', 'X':
+		st.forgetKey(top)
 	}
 	return false
+}
+
+// forgetKey is x: drop the session's connection, endpoints and secret of
+// the question's profile, or of every profile when nothing is asked.
+func (st *state) forgetKey(top *tracked) {
+	if top != nil && top.tk != nil {
+		st.forget(top.instance, top.req.Profile())
+		st.setFlash("forgot " + clean(top.profileKey) + ": its connection, endpoints and password are asked again")
+		return
+	}
+	st.forgetAll()
+	st.setFlash("forgot every profile: connections, endpoints and passwords are asked again")
 }
 
 func toggle(cur, v string) string {
@@ -683,9 +756,9 @@ func (st *state) reevaluate() {
 }
 
 // approve is y on t: the instance name first when the hub wants it typed,
-// then the secret when the lock asks for one. The human is always asked
-// for the secret, never handed the session's: y is how a mistyped one is
-// typed again.
+// then the secret when the lock asks for one. The human is always shown
+// the secret prompt, never handed the session's silently: y is how a
+// mistyped one is typed again, and Enter alone keeps the session's.
 func (st *state) approve(t *tracked) {
 	if t.item.Retype != "" && t.retyped != t.item.Retype {
 		t.promptKind = promptRetype
@@ -694,7 +767,7 @@ func (st *state) approve(t *tracked) {
 	}
 	if needsSecret(t) {
 		if !t.req.Verified {
-			st.setFlash("this lock's key is not pinned here: no secret can be sealed to it (run lox up); n denies")
+			st.setFlash("this lock's key is not pinned here: no secret can be sealed to it (restart lox run to pin it); n denies")
 			return
 		}
 		t.promptKind = promptSecret
@@ -702,7 +775,13 @@ func (st *state) approve(t *tracked) {
 		if t.tk.Subject.Credential == ticket.CredentialVault {
 			label = "Vault token for " + clean(t.profileKey) + " (its token expired):"
 		}
-		t.card.Prompt = &Prompt{Label: label, Secret: true}
+		p := &Prompt{Label: label, Secret: true}
+		if c := st.cachedSecret(t); c != nil {
+			clear(c)
+			p.Label = "password for " + clean(t.profileKey) + " (Enter alone: this session's):"
+			p.Default = true
+		}
+		t.card.Prompt = p
 		return
 	}
 	st.send(t, true, "", nil)
@@ -743,7 +822,16 @@ func (st *state) promptKey(t *tracked, k Key) {
 			st.approve(t)
 		case promptSecret:
 			if len(secret) == 0 {
-				p.Error = "empty"
+				c := st.cachedSecret(t)
+				if c == nil {
+					p.Error = "empty"
+					return
+				}
+				// Enter alone: the session's, dropped if it does not connect.
+				defer clear(c)
+				t.cached = true
+				t.card.Prompt = nil
+				st.send(t, true, "", c)
 				return
 			}
 			if t.tk.Subject.Credential == ticket.CredentialAsk {

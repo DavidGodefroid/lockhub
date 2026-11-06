@@ -221,7 +221,7 @@ func (e *Engine) Decide(r Request) Verdict {
 	case r.V < ticket.VersionKinds:
 		return ask("this lock's ticket does not name its kind (version 1): asked")
 	case !r.Verified:
-		return ask("the ticket was not checked under the lock key lox up pinned: asked")
+		return ask("the ticket was not checked under the pinned lock key: asked")
 	case r.NeverAuto || r.Risk == ticket.RiskGrant:
 		return ask("the lock wants a human for this ticket")
 	case r.Retype:
@@ -283,6 +283,12 @@ func (e *Engine) Forget(instance, profile string) {
 			delete(e.endpoints, ek)
 		}
 	}
+}
+
+// ForgetAll drops what the session approved for every profile.
+func (e *Engine) ForgetAll() {
+	clear(e.connected)
+	clear(e.endpoints)
 }
 
 // Disconnect drops the session's approval of profile's connection alone

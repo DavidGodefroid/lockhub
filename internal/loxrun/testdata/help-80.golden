@@ -9,16 +9,16 @@
  │ ! production                                                               │
  │ personal data touched: email (masked)                                      │
  │ why asked: write is always asked                                           │
- │ y approve   n deny   d details                                             │
+ │ y approve   n deny   d details   x forget profile                          │
  └────────────────────────────────────────────────────────────────────────────┘
  keys
    Shift+Tab    switch auto / manual (manual: every ticket is asked)
    y / n        approve / deny the question on top
    d            the question's whole masked screen
+   x            forget the profile on top (none up: all): asked again, password…
    a            this session's decisions and the rule that took each
    ?            this help; Esc or ? again to close
    q q, Ctrl-C  quit: decisions stop, tickets wait (fail closed)
 
- auto mode (default)
 ────────────────────────────────────────────────────────────────────────────────
  Shift+Tab mode  y/n answer  d details  a audit  ? help  q quit

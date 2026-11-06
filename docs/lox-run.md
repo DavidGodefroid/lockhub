@@ -47,9 +47,17 @@ credentials are `ask` (or its Vault token expired), the ticket carries a
 one-use key of the lock: `lox run` asks the password (or token) in the card,
 seals it to that key (`ticket.SealSecret`, only for a ticket it verified under
 the pinned lock key) and sends the box with the approval; the hub relays a box
-it cannot open and the agent never sees it. An `ask` password stays in `lox
-run`'s memory for the session, to answer the profile's next connect ticket
-after an idle close; it is wiped when `lox run` ends. A Vault token is asked
+it cannot open and the agent never sees it. An `ask` password is kept in `lox
+run`'s memory only once the lock connected with it (its connect ticket was
+consumed), to answer the profile's next connect ticket after an idle close;
+it is wiped when `lox run` ends. A connect that never runs drops it. A profile
+that asks to connect again within 30 seconds of connecting, with nothing run
+on it in between, has it dropped and is asked again, so a password the
+backend refused after the dial is not sent on every retry. `x` drops a
+profile's session connection, endpoints and password by hand (the profile of
+the question on top; with no question up, every profile). `y` on a connect
+always shows the password prompt: Enter alone keeps the session's password,
+anything typed replaces it. A Vault token is asked
 each time the lock asks. The header lists the connected profiles (a connect
 ticket the lock acted on) with their age, until they have been idle for the
 locks' idle timeout.
@@ -63,7 +71,7 @@ highlighted and masked values set apart as `‹…›` in dim italic, the decisi
 `! error` magenta, then `✓` once the lock ran it), and the footer's keys.
 Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
 framed card above the feed: what, who, which profile, the masked screen,
-why it is asked, and `y` / `n` / `d` (details); a production name or a secret
+why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
 is typed in the card. The bell rings only when a card appears. `Tab` brings
 the next card up, `a` lists the session's decisions and their rules, `?` the
 keys, `q q` or Ctrl-C quits.

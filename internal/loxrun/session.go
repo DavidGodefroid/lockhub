@@ -85,6 +85,14 @@ type Session struct {
 	// IdleConn is how long a profile without a ticket stays shown as
 	// connected (the locks close idle connections: lazyconn.DefaultIdle).
 	IdleConn time.Duration
+	// ReconnectAsk: a profile that asks to connect again this soon after
+	// the lock connected on it, with no other ticket of the profile in
+	// between, has its session connection and secret dropped and is
+	// asked again: the connection did not work (a mistyped password the
+	// backend took at the dial and refused after), and the session must
+	// not send the same credentials on every retry. Default 30s;
+	// negative turns it off.
+	ReconnectAsk time.Duration
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
@@ -101,6 +109,7 @@ type tracked struct {
 	decided      bool // lox run's decision is signed (or not lox run's to take)
 	sending      bool // a decision is on its way
 	profileKey   string
+	gen          int // the profile's generation when it came: x bumps it
 	answer
 }
 
@@ -117,7 +126,14 @@ type state struct {
 	// secrets typed for "ask" profiles, kept in this process for the
 	// session only (wiped when Run returns), sealed again to each
 	// connect ticket of that profile.
-	secrets  map[string][]byte
+	secrets map[string][]byte
+	// ran: when the lock last connected on a profile, while no other
+	// ticket of the profile came since (ReconnectAsk).
+	ran map[string]time.Time
+	// gen counts, per profile, the times the human dropped the session's
+	// connection (x): a connect that comes back from before does not
+	// put back what was dropped.
+	gen      map[string]int
 	hubOK    bool
 	hubErr   string
 	overlay  string
@@ -164,8 +180,12 @@ func (s *Session) Run(ctx context.Context) error {
 	if s.IdleConn == 0 {
 		s.IdleConn = 2 * time.Minute
 	}
+	if s.ReconnectAsk == 0 {
+		s.ReconnectAsk = 30 * time.Second
+	}
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
-		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{}, dirty: true}
+		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
+		ran: map[string]time.Time{}, gen: map[string]int{}, dirty: true}
 	st.eng.Rules = s.Rules
 	defer st.wipe()
 

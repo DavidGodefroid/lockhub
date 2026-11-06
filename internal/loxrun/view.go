@@ -107,10 +107,12 @@ type Card struct {
 
 // Prompt is a line typed on a card.
 type Prompt struct {
-	Label  string
-	Secret bool
-	Typed  []rune
-	Error  string
+	Label string
+	// Default: Enter alone keeps the session's secret.
+	Default bool
+	Secret  bool
+	Typed   []rune
+	Error   string
 }
 
 // ProfileConn is a profile whose connection the session approved.
@@ -548,6 +550,7 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 		} else {
 			keys = keys.add("d", sgrBold).add(" details", sgrDim)
 		}
+		keys = keys.add("   x", sgrBold).add(" forget profile", sgrDim)
 		rows = append(rows, row(keys))
 	}
 	bottom := line{{" " + bl + strings.Repeat(hz, w-4) + br, fsgr}}
@@ -559,6 +562,7 @@ func helpLines(w int, st Style) []line {
 		{"Shift+Tab", "switch auto / manual (manual: every ticket is asked)"},
 		{"y / n", "approve / deny the question on top"},
 		{"d", "the question's whole masked screen"},
+		{"x", "forget the profile on top (none up: all): asked again, password too"},
 		{"a", "this session's decisions and the rule that took each"},
 		{"?", "this help; Esc or ? again to close"},
 		{"q q, Ctrl-C", "quit: decisions stop, tickets wait (fail closed)"},

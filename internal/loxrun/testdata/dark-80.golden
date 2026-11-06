@@ -9,7 +9,7 @@
 [1;31m │ [0m[31m! production[0m                                                               [1;31m│[0m
 [1;31m │ [0m[2;3mpersonal data touched: email (masked)[0m                                      [1;31m│[0m
 [1;31m │ [0m[2mwhy asked: write is always asked[0m                                           [1;31m│[0m
-[1;31m │ [0m[32;1my[0m[2m approve   [0m[31;1mn[0m[2m deny   [0m[1md[0m[2m details[0m                                             [1;31m│[0m
+[1;31m │ [0m[32;1my[0m[2m approve   [0m[31;1mn[0m[2m deny   [0m[1md[0m[2m details[0m[1m   x[0m[2m forget profile[0m                          [1;31m│[0m
 [1;31m └────────────────────────────────────────────────────────────────────────────┘[0m
 
 
