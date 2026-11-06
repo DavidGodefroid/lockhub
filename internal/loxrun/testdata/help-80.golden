@@ -1,0 +1,24 @@
+ lox run [AUTO]  ~/Documents/shop                ● hub up · 3 locks · 2 waiting
+ connected shop/prod! 4m · shop/dev 50s
+────────────────────────────────────────────────────────────────────────────────
+ ┌ ◆ QUESTION write on shop/prod  PRODUCTION ───────────────── 1 of 2 waiting ┐
+ │ dev-1 asks (unverified name) · ◆ locksql · expires in 9m                   │
+ │ shop / prod · write                                                        │
+ │   UPDATE customers SET email = ‹j***(20)› WHERE id = ‹4***(3)›             │
+ │   -- 1 row (estimated)                                                     │
+ │ ! production                                                               │
+ │ personal data touched: email (masked)                                      │
+ │ why asked: write is always asked                                           │
+ │ y approve   n deny   d details                                             │
+ └────────────────────────────────────────────────────────────────────────────┘
+ keys
+   Shift+Tab    switch auto / manual (manual: every ticket is asked)
+   y / n        approve / deny the question on top
+   d            the question's whole masked screen
+   a            this session's decisions and the rule that took each
+   ?            this help; Esc or ? again to close
+   q q, Ctrl-C  quit: decisions stop, tickets wait (fail closed)
+
+ auto mode (default)
+────────────────────────────────────────────────────────────────────────────────
+ Shift+Tab mode  y/n answer  d details  a audit  ? help  q quit

@@ -28,14 +28,14 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
 | Flag | Meaning |
 |---|---|
 | `--file PATH` | the workspace's `lockfamily.yaml` (default: `.lockfamily/lockfamily.yaml` of the current directory) |
-| `--hub-image REF` | the hub's image for a new `lockfamily.yaml`, `ghcr.io/davidgodefroid/lockhub@sha256:<digest>` (default: the latest signed release's); an existing file keeps its hub image (`lox up --pin` changes it) |
-| `--review` | `lox up` shows everything and asks, even for a hub with no lock (needs a terminal) |
+| `--hub-image REF` | the hub's image for a new `lockfamily.yaml`, `ghcr.io/davidgodefroid/lockhub@sha256:<digest>` (default: the latest signed release's); an existing file keeps its hub image (`lox run --pin` changes it) |
+| `--review` | `lox run` shows everything and asks, even for a hub with no lock (needs a terminal) |
 | `-v` | show cosign's and docker's own output (default: only when a step fails) |
 
 ## Steps
 
 1. **Prerequisites.** Docker must answer and cosign must be installed
-   (`lox add` and `lox up` verify every image's signature); otherwise
+   (`lox add` and `lox run` verify every image's signature); otherwise
    `lox init` prints the install command for your system and stops with
    nothing done. lea and each lock's launcher (`locksql`, `lockmq`,
    `lockfile`, `lockhttp`) are looked up on `PATH`: the locks run without
@@ -54,10 +54,10 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
    runs in a container, where `localhost` is itself.
 3. **The hub.** With no `lockfamily.yaml` yet, `lox init` writes one with the
    hub alone, pinned by digest to lockhub's latest signed release.
-4. **`lox up`.** With no lock declared and none applied before, it asks no
+4. **The start (what `lox run` does before it serves decisions).** With no lock declared and none applied before, it asks no
    question: the hub alone cannot reach a credential. A hub that already
    runs, from a file that was there, with nothing changed since the last
-   `lox up`, is left alone.
+   `lox run`, is left alone.
 
 Nothing is written for a hint: detection never activates a lock by itself.
 `lox add TYPE` offers a hint's values as the defaults of its questions.
@@ -65,10 +65,13 @@ Nothing is written for a hint: detection never activates a lock by itself.
 ## Re-running
 
 `lox init` starts from the existing `.lockfamily/lockfamily.yaml`. Locks it
-declares are kept as they are and listed; `lox up` reviews them like any
-change. Without a terminal, `lox init` stops before `lox up` when the file
+declares are kept as they are and listed; `lox run` reviews them like any
+change. Without a terminal, `lox init` stops before the start when the file
 declares locks (or when locks applied before would be removed) and says to
-run `lox up` at a terminal. `--review` always runs `lox up` and asks.
+run `lox run` at a terminal. `--review` always runs the start and asks.
+
+Decisions are served by `lox run`, in a terminal of its own outside the agent
+([lox-run.md](lox-run.md)).
 
 ## Secrets
 

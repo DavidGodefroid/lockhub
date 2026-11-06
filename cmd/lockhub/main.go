@@ -392,7 +392,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 	var extra []func(*http.ServeMux)
 	if *mobileListen != "" {
 		if !h.Routes().On(route.Mobile) {
-			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lox up)")
+			fmt.Fprintln(stderr, "lockhub: --mobile-listen, and routing.json has mobile not enabled (run lox run)")
 			return 1
 		}
 		mc := mobile.Config{Hub: h, Origin: *mobileOrigin, HubKeyID: ticket.KeyID(h.PublicKey()), Log: stderr}
@@ -419,7 +419,7 @@ func serve(ctx context.Context, args []string, stderr io.Writer) int {
 		extra = append(extra, m.FacadeRoutes)
 		fmt.Fprintf(stderr, "lockhub %s: mobile facade on %s for %s (web push: %t)\n", version, *mobileListen, *mobileOrigin, m.Push())
 	} else if r := h.Routes(); slices.Contains(r.Enabled, route.Mobile) {
-		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lox up)")
+		fmt.Fprintln(stderr, "lockhub: routing.json enables mobile, and no --mobile-listen/--mobile-origin (run lox run)")
 		return 1
 	}
 	if *facadeSock != "" {
@@ -465,9 +465,9 @@ func chatFacades(h *hub.Hub, data string, log io.Writer) ([]*chat.Facade, error)
 		on := slices.Contains(h.Routes().Enabled, f)
 		switch {
 		case on && !configured:
-			return false, fmt.Errorf("%s is enabled but chat.json has no %s section (run lox up)", f, f)
+			return false, fmt.Errorf("%s is enabled but chat.json has no %s section (run lox run)", f, f)
 		case !on && configured:
-			return false, fmt.Errorf("chat.json configures %s but routing.json has it not enabled (run lox up)", f)
+			return false, fmt.Errorf("chat.json configures %s but routing.json has it not enabled (run lox run)", f)
 		}
 		return on, nil
 	}
@@ -552,8 +552,8 @@ func facadeDirError(dir string, fi os.FileInfo, err error) error {
 		}
 	}
 	return fmt.Errorf("%s: want a directory of mode 0700 owned by the hub's account, and %s: make it so (it holds --facade-socket). "+
-		"When lox up runs this hub, it is the host's $XDG_RUNTIME_DIR/lockhub, which Docker makes as root when it is missing: "+
-		`on the host, remove it (rmdir "$XDG_RUNTIME_DIR/lockhub", with sudo when root owns it), then run lox up, `+
+		"When lox run starts this hub, it is the host's $XDG_RUNTIME_DIR/lockhub, which Docker makes as root when it is missing: "+
+		`on the host, remove it (rmdir "$XDG_RUNTIME_DIR/lockhub", with sudo when root owns it), then run lox run, `+
 		"which makes it yours with mode 0700 and starts the hub again", dir, found)
 }
 

@@ -94,7 +94,7 @@ func pinLockKeys(dir, project, ws string, pubs map[string]string) ([]string, err
 			err = json.Unmarshal(b, &f)
 		}
 		if err != nil {
-			warns = append(warns, fmt.Sprintf("%s: unreadable, left out (%v): delete it if its workspace is gone, or lox up there", filepath.Join(LockKeysDir, e.Name()), err))
+			warns = append(warns, fmt.Sprintf("%s: unreadable, left out (%v): delete it if its workspace is gone, or lox run there", filepath.Join(LockKeysDir, e.Name()), err))
 			continue
 		}
 		for n, l := range f.Locks {

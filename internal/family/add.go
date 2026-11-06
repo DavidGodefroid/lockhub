@@ -72,7 +72,7 @@ func SetVault(path string, v Vault) error {
 // Add appends a lock instance to the lockfamily.yaml at path, keeping its
 // comments and order, or creates the file. What would be written is
 // validated first: a refusal leaves the file as it was. Nothing is
-// started (run lox up, which reviews the change).
+// started (run lox run, which reviews the change).
 func Add(path string, o AddOptions) error {
 	b, err := os.ReadFile(path)
 	fresh := errors.Is(err, os.ErrNotExist)

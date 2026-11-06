@@ -100,7 +100,7 @@ func TestFacadeDirForeignNotEmptyNamesTheFix(t *testing.T) {
 	if err == nil {
 		t.Fatal("accepted")
 	}
-	for _, want := range []string{"sudo ls -la " + d, "sudo rm -r " + d + " && mkdir -m 700 " + d, "lox up"} {
+	for _, want := range []string{"sudo ls -la " + d, "sudo rm -r " + d + " && mkdir -m 700 " + d, "lox run"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -125,7 +125,7 @@ func TestFacadeDirForeignUnremovableNamesTheFix(t *testing.T) {
 	if err == nil {
 		t.Fatal("accepted")
 	}
-	for _, want := range []string{"sudo rmdir " + d + " && mkdir -m 700 " + d, "lox up"} {
+	for _, want := range []string{"sudo rmdir " + d + " && mkdir -m 700 " + d, "lox run"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
@@ -139,7 +139,7 @@ func TestFacadeDirLinkRefused(t *testing.T) {
 	os.Mkdir(filepath.Join(dir, "elsewhere"), 0o700)
 	os.Symlink(filepath.Join(dir, "elsewhere"), d)
 	_, _, err := readyFacadeDir(d, mine)
-	if err == nil || !strings.Contains(err.Error(), "lox up") {
+	if err == nil || !strings.Contains(err.Error(), "lox run") {
 		t.Fatalf("err %v", err)
 	}
 	if fi, _ := os.Lstat(d); fi.Mode()&os.ModeSymlink == 0 {
@@ -181,7 +181,7 @@ func TestUpRepairsFacadeDir(t *testing.T) {
 	}
 }
 
-// A facade directory gone since the last lox up (wiped at logout or
+// A facade directory gone since the last lox run (wiped at logout or
 // reboot) is made again, and the existing hub, which binds the deleted
 // one, is created again: compose up alone leaves it, without a socket.
 // The first lox up has no hub to create again.
@@ -272,7 +272,7 @@ func TestFacadeDirParentRefused(t *testing.T) {
 
 // The old hub restarted by its engine can make the directory again, as
 // root, between lox's removal and its mkdir: lox tries once more, then
-// says to run lox up again.
+// says to run lox run again.
 func TestFacadeDirRace(t *testing.T) {
 	t.Cleanup(func() { facadeDirRace = nil })
 	for _, times := range []int{1, 100} {
@@ -289,7 +289,7 @@ func TestFacadeDirRace(t *testing.T) {
 		switch {
 		case times == 1 && (err != nil || !made || checkPrivate(d) != nil):
 			t.Errorf("once: made %v, err %v", made, err)
-		case times > 1 && (err == nil || !strings.Contains(err.Error(), "run lox up again")):
+		case times > 1 && (err == nil || !strings.Contains(err.Error(), "run lox run again")):
 			t.Errorf("always: err %v", err)
 		}
 	}

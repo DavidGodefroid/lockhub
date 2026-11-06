@@ -1,0 +1,12 @@
+ lox run [AUTO]  ~/Documents/… ○ hub unreachable (connection refused) · 3 locks
+ connected none yet: a lock connects on its agent's first request
+────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+  no ticket yet: every ticket and decision of the hub shows here, masked by its…
+────────────────────────────────────────────────────────────────────────────────
+ Shift+Tab mode  a audit  ? help  q quit

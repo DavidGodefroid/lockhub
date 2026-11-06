@@ -152,7 +152,7 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 		return s.rollback(ctx, l, a, snaps, cfg, err)
 	}
 	if !s.Terminal {
-		s.say("lock %s declared: run lox up at a terminal to review and start it", l.Name)
+		s.say("lock %s declared: run lox run at a terminal to review and start it", l.Name)
 		s.dropDraft()
 		return nil
 	}
@@ -174,9 +174,9 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 			return nil
 		}
 		if l.Credentials == CredVault {
-			return fmt.Errorf("lock %s is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox up); else lox up, then lox attach %s", l.Name, l.Name)
+			return fmt.Errorf("lock %s is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox run); else lox run, then lox attach %s", l.Name, l.Name)
 		}
-		return fmt.Errorf("lock %s is declared and its console stopped (above): lox up, then lox attach %s", l.Name, l.Name)
+		return fmt.Errorf("lock %s is declared and its console stopped (above): lox run, then lox attach %s", l.Name, l.Name)
 	}
 	return nil
 }
@@ -279,7 +279,7 @@ func (s *Steps) rollback(ctx context.Context, l Lock, a Answers, snaps []Snapsho
 	}
 	if len(bad) > 0 {
 		// The files are not as before: not ErrNothingKept.
-		return &rollbackError{msg: "not applied, and " + strings.Join(bad, ", and ") + ": check it before lox up", errs: errs}
+		return &rollbackError{msg: "not applied, and " + strings.Join(bad, ", and ") + ": check it before lox run", errs: errs}
 	}
 	msg := fmt.Sprintf("nothing kept: %s and %s are as before; lox add %s offers the same answers again", s.rel(cfg), s.rel(s.File), l.Type)
 	if ctx.Err() != nil || errors.Is(cause, context.Canceled) {
@@ -334,7 +334,7 @@ func (s *Steps) doctor(ctx context.Context, lock string) {
 			fails = append(fails, c)
 		}
 	}
-	s.say("%s: %d ok, %d warning(s), %d failed (advisory before lox up)", name, ok, warn, len(fails))
+	s.say("%s: %d ok, %d warning(s), %d failed (advisory before lox run)", name, ok, warn, len(fails))
 	for _, c := range fails {
 		line := "  " + c.Check + ": " + c.Detail
 		if c.Fix != "" {

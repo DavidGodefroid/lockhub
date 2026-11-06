@@ -150,7 +150,7 @@ func TestFirstRunReviewsEverything(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"First lox up", "lock crm-prod (locksql)", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
+	for _, want := range []string{"First lox run", "lock crm-prod (locksql)", "hub facades tty,deck", "lock events key " + f.keys["events"], "hub key " + f.keys["hub"]} {
 		if !strings.Contains(out, want) {
 			t.Errorf("review lacks %q:\n%s", want, out)
 		}
@@ -204,7 +204,7 @@ func TestPreexistingDirStillFullReview(t *testing.T) {
 	os.MkdirAll(filepath.Join(filepath.Dir(w.file), ".lockfamily", "keys"), 0o755)
 	os.WriteFile(filepath.Join(filepath.Dir(w.file), ".lockfamily", "applied.json"), []byte(`{"fingerprint":"x"}`), 0o644)
 	out, _ := w.up("n\n", newFake())
-	if !strings.Contains(out, "First lox up") {
+	if !strings.Contains(out, "First lox run") {
 		t.Errorf("planted state trusted:\n%s", out)
 	}
 }

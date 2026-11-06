@@ -25,8 +25,14 @@ func TestRun(t *testing.T) {
 		{[]string{"up", "--dry-run", "extra"}, 2, "", "unexpected arguments"},
 		{[]string{"up", "-v", "extra"}, 2, "", "unexpected arguments"},
 		{[]string{"up", "--review", "extra"}, 2, "", "unexpected arguments"},
-		{[]string{"help"}, 0, "[--dry-run] [-v] [--review]", ""},
-		{[]string{"help"}, 0, "--review shows", ""},
+		{[]string{"help"}, 0, "lox run [--manual] [--theme light|dark]", ""},
+		{[]string{"help"}, 0, "deprecated: use lox run", ""},
+		{[]string{"up"}, 1, "", "lox up is deprecated: use lox run"},
+		{[]string{"run", "--nope"}, 2, "", "flag provided but not defined"},
+		{[]string{"run", "extra"}, 2, "", "unexpected arguments"},
+		{[]string{"run", "--theme", "sepia"}, 2, "", "--theme is light or dark"},
+		{[]string{"run"}, 1, "", "stdin is not one"},
+		{[]string{"run", "--no-start", "--manual"}, 1, "", "outside the agent"},
 		{[]string{"help"}, 0, "--rotate hub|INSTANCE|all", ""},
 		{[]string{"audit", "verify"}, 2, "", "are required"},
 		{[]string{"add", "slack", "--team", "T01"}, 2, "", "usage: lox add slack"},
@@ -103,7 +109,7 @@ func TestAddImportDoctor(t *testing.T) {
 		t.Errorf("add without instance (the guided form) at no terminal: %d %q", code, e)
 	}
 	// Flags after the positional arguments, as people type them.
-	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lox up") {
+	if code, o, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg, "--hub-image", hubImg); code != 0 || !strings.Contains(o, "lox run") {
 		t.Fatalf("add: %d %q %q", code, o, e)
 	}
 	if code, _, e := call("add", "locksql", "crm", "--file", file, "--image", sqlImg); code != 1 || !strings.Contains(e, "already declared") {
@@ -113,14 +119,14 @@ func TestAddImportDoctor(t *testing.T) {
 	os.MkdirAll(sub, 0o755)
 	os.WriteFile(filepath.Join(sub, "lockfamily.yaml"), []byte("version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  events:\n    type: lockmq\n    image: "+mqImg+"\n"), 0o644)
 	// No argument: every sub-project's lockfamily.yaml.
-	if code, o, e := call("import", "--file", file); code != 0 || !strings.Contains(o, "adds lock events") || !strings.Contains(o, "lox up") {
+	if code, o, e := call("import", "--file", file); code != 0 || !strings.Contains(o, "adds lock events") || !strings.Contains(o, "lox run") {
 		t.Fatalf("import: %d %q %q", code, o, e)
 	}
 	b, _ := os.ReadFile(file)
 	if !strings.Contains(string(b), "events:") || !strings.Contains(string(b), "crm:") {
 		t.Errorf("file:\n%s", b)
 	}
-	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lox up") {
+	if code, o, _ := call("doctor", "--file", file); code != 1 || !strings.Contains(o, "run lox run") {
 		t.Errorf("doctor before lox up: %d %q", code, o)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "state", "lockfamily")); !os.IsNotExist(err) {

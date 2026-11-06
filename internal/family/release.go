@@ -126,7 +126,7 @@ func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) 
 		return "", errors.New("release tag: want vX.Y.Z (lox add --version)")
 	}
 	if min, ok := MinRelease[repo]; ok && semverLess(tag, min) {
-		return "", fmt.Errorf("%s %s cannot run under lox up (no hub mode): %s or later is needed", repo, tag, min)
+		return "", fmt.Errorf("%s %s cannot run under lox run (no hub mode): %s or later is needed", repo, tag, min)
 	}
 	name := "davidgodefroid/" + repo
 	// The release workflows tag the image with the version without the v.

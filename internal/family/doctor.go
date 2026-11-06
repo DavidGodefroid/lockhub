@@ -55,7 +55,7 @@ func (d *Doctor) Do(ctx context.Context) int {
 	if c != nil && engine {
 		for _, img := range images(c) {
 			if _, err := d.Run.Run(ctx, nil, "docker", "image", "inspect", "--format", "{{.Id}}", img); err != nil {
-				warn("image %s: not pulled yet (lox up pulls it after checking its signature)", img)
+				warn("image %s: not pulled yet (lox run pulls it after checking its signature)", img)
 			} else {
 				ok("image %s", img)
 			}
@@ -68,11 +68,11 @@ func (d *Doctor) Do(ctx context.Context) int {
 		switch err := checkPrivate(dir.path); {
 		case errors.Is(err, os.ErrNotExist):
 			upRan = false
-			fail("%s %s: missing: run lox up", dir.name, dir.path)
+			fail("%s %s: missing: run lox run", dir.name, dir.path)
 		case err != nil && dir.name == "facade dir":
 			// Docker made it as root while it was missing (a tmpfs, wiped at
 			// reboot): lox up repairs it, or says what to run.
-			fail("%s: %v: run lox up (it repairs it, or says what to run)", dir.name, err)
+			fail("%s: %v: run lox run (it repairs it, or says what to run)", dir.name, err)
 		case err != nil:
 			fail("%s: %v", dir.name, err)
 		default:
@@ -103,7 +103,7 @@ func (d *Doctor) Do(ctx context.Context) int {
 		}
 		slices.Sort(have)
 		if !slices.Equal(have, c.Instances()) {
-			fail("hub lock list: the hub knows %s, lockfamily.yaml declares %s: run lox up", strings.Join(have, ", "), strings.Join(c.Instances(), ", "))
+			fail("hub lock list: the hub knows %s, lockfamily.yaml declares %s: run lox run", strings.Join(have, ", "), strings.Join(c.Instances(), ", "))
 		} else {
 			ok("hub lock list: a key for each lock")
 		}
@@ -161,7 +161,7 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 	p := filepath.Join(d.State, "hub", "routing.json")
 	b, err := os.ReadFile(p)
 	if err != nil {
-		fail("hub routing: %v (without it the hub runs the local facades only, no chat: run lox up)", err)
+		fail("hub routing: %v (without it the hub runs the local facades only, no chat: run lox run)", err)
 		return
 	}
 	var r route.Rules
@@ -171,12 +171,12 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 	}
 	want := route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}
 	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) {
-		fail("hub routing %s differs from lockfamily.yaml: run lox up", p)
+		fail("hub routing %s differs from lockfamily.yaml: run lox run", p)
 		return
 	}
 	for inst, fs := range want.Only {
 		if got, has := r.Only[inst]; !has || !sameSet(got, fs) {
-			fail("hub routing %s: %s differs from lockfamily.yaml: run lox up", p, inst)
+			fail("hub routing %s: %s differs from lockfamily.yaml: run lox run", p, inst)
 			return
 		}
 	}
@@ -189,12 +189,12 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	b, err := os.ReadFile(filepath.Join(d.State, "applied.json"))
 	if err != nil {
-		warn("lockfamily.yaml never applied: run lox up")
+		warn("lockfamily.yaml never applied: run lox run")
 		return
 	}
 	var a Applied
 	if json.Unmarshal(b, &a) != nil {
-		warn("applied.json unreadable: run lox up")
+		warn("applied.json unreadable: run lox run")
 		return
 	}
 	noKeys := func(s []string) []string {
@@ -203,7 +203,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {
-		warn("lockfamily.yaml changed since the last lox up (run lox up to review it): %s", strings.Join(ch, "; "))
+		warn("lockfamily.yaml changed since the last lox run (run lox run to review it): %s", strings.Join(ch, "; "))
 	}
 	// Devices paired or revoked since: the locks pin them at the next lox up.
 	if devs, err := ReadDevices(d.State); err != nil {
@@ -213,7 +213,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 			return slices.DeleteFunc(slices.Clone(s), func(l string) bool { return !strings.HasPrefix(l, "device ") })
 		}
 		if ch := diff(onlyDevices(a.Summary), devicesSummary(devs)); len(ch) > 0 {
-			warn("paired devices changed since the last lox up (run lox up to pin them at the locks): %s", strings.Join(ch, "; "))
+			warn("paired devices changed since the last lox run (run lox run to pin them at the locks): %s", strings.Join(ch, "; "))
 		}
 	}
 	// The hub reads its chat tokens at start: one rotated since is not in
@@ -233,7 +233,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		}
 	}
 	if len(ch) > 0 {
-		warn("a chat token changed since the last lox up (run lox up to apply it): %s", strings.Join(ch, "; "))
+		warn("a chat token changed since the last lox run (run lox run to apply it): %s", strings.Join(ch, "; "))
 	}
 }
 
@@ -261,7 +261,7 @@ func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...
 		case "running":
 			ok("%s running", s)
 		case "":
-			fail("%s not created: run lox up", s)
+			fail("%s not created: run lox run", s)
 		default:
 			fail("%s %s: docker compose -p %s -f %s logs %s", s, st, project, compose, s)
 		}
@@ -271,7 +271,7 @@ func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...
 	if out, err := d.Run.Run(ctx, nil, "docker", "network", "inspect", "--format", "{{.Internal}}", net); err != nil {
 		fail("network %s: %v", net, err)
 	} else if strings.TrimSpace(string(out)) != "true" {
-		fail("network %s is not internal: the hub must have no route out (run lox up)", net)
+		fail("network %s is not internal: the hub must have no route out (run lox run)", net)
 	} else {
 		ok("network %s internal", net)
 	}

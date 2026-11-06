@@ -186,7 +186,7 @@ say "lox up (review at a terminal)"
 tty 'y\n' "$lox" up >up.out 2>&1 || { cat up.out; die "lox up failed"; }
 cat up.out
 grep -q "up: project " up.out || die "lox up did not finish"
-grep -q "First lox up of this workspace" up.out || die "no full review on the first lox up"
+grep -q "First lox run of this workspace" up.out || die "no full review on the first lox run"
 grep -qE '^  profile +\.lockhttp/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the profile is not in the review"
 [ -z "$sql" ] || grep -qE '^  profile +\.locksql/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the locksql profile is not in the review"
 [ -z "$mq" ] || grep -qE '^  profile +\.lockmq/ \[profiles\.[^]]+\] sha256:[0-9a-f]{64}' up.out || die "the lockmq profile is not in the review"

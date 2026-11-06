@@ -202,8 +202,8 @@ func TestShortReviewFocus(t *testing.T) {
 		"  environment  VAULT_ADDR=https://vault.example.com:8200\n",
 		"  credentials  vault, database/creds/orders\n",
 		"  production   no\n",
-		"  profile      .locksql/ sha256:abc  (lox up --review prints it in full)\n",
-		"Other changes since the last lox up:\n  + lock events routed only to tty\n",
+		"  profile      .locksql/ sha256:abc  (lox run --review prints it in full)\n",
+		"Other changes since the last lox run:\n  + lock events routed only to tty\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("lacks %q:\n%s", want, got)
@@ -252,7 +252,7 @@ func TestShortReviewNeverHidesAChange(t *testing.T) {
 	os.WriteFile(w.file, []byte(strings.Replace(shortConf, "hub:\n", "hub:\n  routing:\n    orders: [tty]\n", 1)), 0o644)
 	f2 := &fake{keys: f.keys}
 	out, err = w.up("n\n", f2)
-	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "Other changes since the last lox up:") || !strings.Contains(out, "+ lock orders routed only to tty") {
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "Other changes since the last lox run:") || !strings.Contains(out, "+ lock orders routed only to tty") {
 		t.Errorf("edited routing line: %v\n%s", err, out)
 	}
 }
@@ -350,7 +350,7 @@ func TestShortReviewFoldsTheProfile(t *testing.T) {
 	// A changed profile says so; --review prints every line.
 	os.WriteFile(filepath.Join(proj, ".locksql", "config.toml"), []byte("[profiles.orders]\nengine = \"mysql\"\n"), 0o644)
 	out, err = w.up("n\n", &fake{keys: f.keys})
-	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "(changed since the last lox up; lox up --review shows the lines)") || strings.Contains(out, "+ profile locksql config.toml") {
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "(changed since the last lox run; lox run --review shows the lines)") || strings.Contains(out, "+ profile locksql config.toml") {
 		t.Errorf("changed profile: %v\n%s", err, out)
 	}
 	out, _ = upReview(w, context.Background(), strings.NewReader("n\n"), true, &fake{keys: f.keys})
@@ -397,7 +397,7 @@ func TestFocusOnARemovedLock(t *testing.T) {
 	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out.String(), "- lock orders type locksql") || !strings.Contains(out.String(), "Apply? [y/N]") {
 		t.Errorf("Do = %v\n%s", err, out.String())
 	}
-	if _, other, ok := strings.Cut(out.String(), "Other changes since the last lox up:"); !ok || !strings.Contains(other, "+ lock events type lockmq") {
+	if _, other, ok := strings.Cut(out.String(), "Other changes since the last lox run:"); !ok || !strings.Contains(other, "+ lock events type lockmq") {
 		t.Errorf("the other change is not listed:\n%s", out.String())
 	}
 }

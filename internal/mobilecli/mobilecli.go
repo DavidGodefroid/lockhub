@@ -51,12 +51,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("hub facade socket: %w (is the hub up, with the mobile facade? lox up)", err)
+		return fmt.Errorf("hub facade socket: %w (is the hub up, with the mobile facade? lox run)", err)
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusNotFound && strings.HasPrefix(path, "/v1/mobile/pairings") && method == http.MethodPost && !strings.Contains(path, "confirm") {
-		return errors.New("the hub runs no mobile facade: add mobile to hub.facades with hub.mobile.origin, then lox up")
+		return errors.New("the hub runs no mobile facade: add mobile to hub.facades with hub.mobile.origin, then lox run")
 	}
 	if resp.StatusCode/100 != 2 {
 		var e struct{ Error, Message string }
@@ -135,7 +135,7 @@ func Pair(ctx context.Context, c *Client, name, origin, state string, in *bufio.
 	if err := family.PinDevice(state, devs[0]); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Paired %s. Run lox up to pin it at the locks: until then they refuse its decisions.\n", name)
+	fmt.Fprintf(out, "Paired %s. Run lox run to pin it at the locks: until then they refuse its decisions.\n", name)
 	return nil
 }
 
@@ -195,7 +195,7 @@ func Revoke(ctx context.Context, c *Client, which, state string, out io.Writer) 
 	if _, err := family.UnpinDevice(state, id); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Revoked %s at the hub. Run lox up to unpin it at the locks.\n", id)
+	fmt.Fprintf(out, "Revoked %s at the hub. Run lox run to unpin it at the locks.\n", id)
 	return nil
 }
 

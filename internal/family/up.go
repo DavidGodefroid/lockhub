@@ -69,13 +69,13 @@ type Up struct {
 	In     *bufio.Reader
 	Out    io.Writer
 	DryRun bool
-	// Pin sets the hub image by digest (lox up --pin: a previous version
+	// Pin sets the hub image by digest (lox run --pin: a previous version
 	// restored); lockfamily.yaml takes it once applied.
 	Pin string
-	// Rotate names the keys lox up --rotate replaces: "hub", lock
+	// Rotate names the keys lox run --rotate replaces: "hub", lock
 	// instances, "all".
 	Rotate []string
-	// Review (lox up --review) shows everything and asks, even for a hub
+	// Review (lox run --review) shows everything and asks, even for a hub
 	// with no lock that nothing was applied for before.
 	Review bool
 	// Probe makes Do compute the fingerprint of the configuration it would
@@ -254,7 +254,7 @@ func (u *Up) Do(ctx context.Context) error {
 		gid, _ := strconv.Atoi(k.GID)
 		pr, err := ReadProfile(profileDir(ws, t), uid, gid)
 		if err != nil {
-			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lox up)", t, err, t)
+			return fmt.Errorf("profile of the %s locks: %w (make it with %s's own tools, then lox run)", t, err, t)
 		}
 		profiles[t] = pr
 	}
@@ -302,11 +302,11 @@ func (u *Up) Do(ctx context.Context) error {
 	stage := filepath.Join(hubData, "rotate")
 	attempted := filepath.Join(stage, "attempted")
 	if _, err := os.Stat(attempted); err == nil && !rot.hub {
-		return errors.New("a hub key rotation did not finish (the hub stays stopped): run lox up --rotate hub again to finish it")
+		return errors.New("a hub key rotation did not finish (the hub stays stopped): run lox run --rotate hub again to finish it")
 	}
 	if rot.any() {
 		if _, err := os.Stat(appliedPath); err != nil {
-			return errors.New("--rotate: nothing to rotate before the first lox up of this workspace")
+			return errors.New("--rotate: nothing to rotate before the first lox run of this workspace")
 		}
 	}
 	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks}
@@ -328,9 +328,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if m := c.Hub.Mobile; m != nil && len(m.RequireDevice) > 0 && c.anyDevices() {
 			// Fail closed: without a device, the locks would take the hub's
 			// approvals of these risk classes again.
-			return fmt.Errorf("hub.mobile.require_device needs a paired device: lox up without it, lox mobile pair, then set it again")
+			return fmt.Errorf("hub.mobile.require_device needs a paired device: lox run without it, lox mobile pair, then set it again")
 		} else if m != nil && m.SealClear {
-			fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lox mobile pair, then lox up)")
+			fmt.Fprintln(u.Out, "note: hub.mobile.seal_clear takes effect once a device is paired (lox mobile pair, then lox run)")
 		}
 	}
 	// The compose file goes to docker on stdin: nothing on disk to swap
@@ -407,7 +407,7 @@ func (u *Up) Do(ctx context.Context) error {
 				if err != nil {
 					why = fmt.Sprintf(" (%v)", err)
 				}
-				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lox up --pin a newer lockhub first", c.Hub.Image, why)
+				return fmt.Errorf("--rotate hub: the hub image %s has no lockhub rotate-key%s: lox run --pin a newer lockhub first", c.Hub.Image, why)
 			}
 			return fmt.Errorf("--pin: %s predates hub key rotation and would refuse this hub's audit log (its key was rotated)", c.Hub.Image)
 		}
@@ -541,18 +541,18 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	if prev.Fingerprint == fp {
-		fmt.Fprintln(u.Out, "configuration unchanged since the last lox up")
+		fmt.Fprintln(u.Out, "configuration unchanged since the last lox run")
 	} else {
 		d := diff(prev.Summary, sum)
 		switch {
 		case u.Review && first:
 			// --review: the whole configuration, the profiles line by line.
-			fmt.Fprintln(u.Out, "First lox up of this workspace. Review the whole configuration:")
+			fmt.Fprintln(u.Out, "First lox run of this workspace. Review the whole configuration:")
 			for _, l := range sum {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
 		case u.Review:
-			fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+			fmt.Fprintln(u.Out, "The configuration changed since the last lox run:")
 			for _, l := range d {
 				fmt.Fprintln(u.Out, "  "+l)
 			}
@@ -579,13 +579,13 @@ func (u *Up) Do(ctx context.Context) error {
 			}
 			var changed []string
 			cov := shortCovered(c, u.Focus, sum)
-			heading := "Other changes since the last lox up:"
+			heading := "Other changes since the last lox run:"
 			if first {
-				fmt.Fprintln(u.Out, "First lox up of this workspace. Review:")
+				fmt.Fprintln(u.Out, "First lox run of this workspace. Review:")
 				changed = uncovered(sum, cov)
 				heading = "Also applied:"
 			} else {
-				fmt.Fprintln(u.Out, "The configuration changed since the last lox up:")
+				fmt.Fprintln(u.Out, "The configuration changed since the last lox run:")
 				// Only an added line can be rendered by a block: a removed
 				// line is always shown.
 				for _, l := range d {

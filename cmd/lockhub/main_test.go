@@ -108,13 +108,13 @@ func TestFacadeSocketGuards(t *testing.T) {
 		t.Error("socket in a directory open to others accepted")
 	} else {
 		// The error names the fix (lockhub#112).
-		for _, want := range []string{"want a directory of mode 0700", "mode 0755", `rmdir "$XDG_RUNTIME_DIR/lockhub"`, "lox up"} {
+		for _, want := range []string{"want a directory of mode 0700", "mode 0755", `rmdir "$XDG_RUNTIME_DIR/lockhub"`, "lox run"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("error lacks %q: %v", want, err)
 			}
 		}
 	}
-	if _, err := listenFacade(h, filepath.Join(dir, "none", "f.sock"), "0600", errc); err == nil || !strings.Contains(err.Error(), "lox up") {
+	if _, err := listenFacade(h, filepath.Join(dir, "none", "f.sock"), "0600", errc); err == nil || !strings.Contains(err.Error(), "lox run") {
 		t.Errorf("missing directory: %v", err)
 	}
 	priv := filepath.Join(dir, "priv")

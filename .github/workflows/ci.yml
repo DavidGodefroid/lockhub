@@ -40,15 +40,18 @@ jobs:
   # lockkit and on the release before it, checked against the signed
   # ticket fixtures of the pinned lockkit, of the release before it and of
   # the newest one: the tickets of locks built on each (scripts/compat.sh).
-  # With the pin at v0.8.1, the release before it is v0.8.0, which has
-  # every lockkit API lockhub uses. A pin whose previous release lacks one
-  # drops prev from `build` and says why here.
+  # A pin whose previous release lacks an API lockhub uses drops prev from
+  # `build` and says why here: with the pin at v0.13.0, the release before
+  # it (v0.12.x) has no ticket kinds, rules or sealed secrets
+  # (ticket.VersionKinds, Rule, SealSecret: lockkit#132), which lox run and
+  # the hub's codec use. Its fixtures (prev) are still checked: the hub
+  # verifies the version-1 tickets of locks built on it.
   compat:
     name: compat (build ${{ matrix.build }}, fixtures ${{ matrix.fixtures }})
     strategy:
       fail-fast: false
       matrix:
-        build: [pinned, prev]
+        build: [pinned]
         fixtures: [pinned, prev, latest]
     runs-on: ubuntu-latest
     env:

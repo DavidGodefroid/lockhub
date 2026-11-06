@@ -323,7 +323,7 @@ func TestRevealRefusals(t *testing.T) {
 	rk, _, _ = ticket.NewRevealKey(other, ticket.FacadeDeck, tk, w.clk.now())
 	kb, _ = json.Marshal(rk)
 	_, err := c.Reveal(context.Background(), "crm", id, api.RevealRequest{Facade: "deck", Key: kb})
-	if approve.Explain(err) != "the lock does not pin this terminal's facade key (run lox up)" {
+	if approve.Explain(err) != "the lock does not pin this terminal's facade key (run lox run)" {
 		t.Errorf("unpinned deck key: %v (%s)", err, approve.Explain(err))
 	}
 }

@@ -139,7 +139,7 @@ func TestDoctorFindsProblems(t *testing.T) {
 			os.WriteFile(p, nil, 0o600)
 		}, "FAIL facade socket"},
 		"state dir open":  {func(d *Doctor, a *answers) { os.Chmod(d.State, 0o755) }, "FAIL state"},
-		"facade dir open": {func(d *Doctor, a *answers) { os.Chmod(filepath.Join(d.Runtime, "lockhub"), 0o755) }, "want 0700: run lox up (it repairs it"},
+		"facade dir open": {func(d *Doctor, a *answers) { os.Chmod(filepath.Join(d.Runtime, "lockhub"), 0o755) }, "want 0700: run lox run (it repairs it"},
 		"bad hub key": {func(d *Doctor, a *answers) {
 			os.WriteFile(filepath.Join(d.State, "hub.pub"), []byte("nope\n"), 0o644)
 		}, "FAIL hub key"},
@@ -205,7 +205,7 @@ func TestDoctorWritesNothing(t *testing.T) {
 	file := write(t, filepath.Join(root, "ws", "lockfamily.yaml"), yamlConf(""))
 	d := &Doctor{File: file, State: filepath.Join(root, "state"), Runtime: filepath.Join(root, "run"), Root: filepath.Join(root, "sys"), Run: &answers{out: map[string]string{"info": "27\n"}}}
 	out, n := doc(t, d)
-	if n == 0 || !strings.Contains(out, "lox up") {
+	if n == 0 || !strings.Contains(out, "lox run") {
 		t.Errorf("a workspace never brought up is not healthy:\n%s", out)
 	}
 	for _, p := range []string{d.State, d.Runtime, filepath.Join(root, "ws", ".lockfamily")} {

@@ -1,0 +1,20 @@
+ lox run [AUTO]  ~/Document… ● hub up · 3 locks · 2 waiting
+ connected shop/prod! 4m · shop/dev 50s
+────────────────────────────────────────────────────────────
+ ┌ ◆ QUESTION write on shop/prod  PRODUCT… 1 of 2 waiting ┐
+ │ dev-1 asks (unverified name) · ◆ locksql · expires in …│
+ │ shop / prod · write                                    │
+ │   UPDATE customers SET email = ‹j***(20)› WHERE id = ‹…│
+ │   -- 1 row (estimated)                                 │
+ │ ! production                                           │
+ │ personal data touched: email (masked)                  │
+ │ why asked: write is always asked                       │
+ │ y approve   n deny   d details                         │
+ └────────────────────────────────────────────────────────┘
+ 14:03 ◇ mq       local    action PEEK orders.cr… auto ✓    
+ 14:03 ⇄ api      stripe   route  GET api.stripe… ✔ you ✓   
+ 14:04 ◆ shop     dev      ddl    DROP TABLE ses… ✘ denied  
+ 14:05 ◆ shop     prod!    write  INSERT INTO au… ! error   
+ 14:06 ◆ shop     prod!    write  UPDATE custome… ◆ asked   
+────────────────────────────────────────────────────────────
+ Shift+Tab mode  y/n answer  d details  a audit  ? help  q …

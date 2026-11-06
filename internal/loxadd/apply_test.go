@@ -311,7 +311,7 @@ func TestApplyInterruptedAfterDeclareNoTerminal(t *testing.T) {
 	}
 	a := sqlAnswers(CredAsk)
 	assertInterrupted(t, w, w.steps.Apply(ctx, mustBuild(t, a), a))
-	if strings.Contains(w.out.String(), "run lox up at a terminal") {
+	if strings.Contains(w.out.String(), "run lox run at a terminal") {
 		t.Fatalf("declared after an interrupt:\n%s", w.out.String())
 	}
 	if d, err := LoadDraft(w.draft); err != nil || d["name"] != "orders" {
@@ -398,7 +398,7 @@ func TestApplyNoTerminalStopsBeforeUp(t *testing.T) {
 	if slices.Contains(w.fake.log, "up orders") || slices.Contains(w.fake.log, "attach orders") {
 		t.Fatalf("log = %q", w.fake.log)
 	}
-	if !strings.HasSuffix(w.out.String(), "lock orders declared: run lox up at a terminal to review and start it\n") {
+	if !strings.HasSuffix(w.out.String(), "lock orders declared: run lox run at a terminal to review and start it\n") {
 		t.Fatalf("output:\n%s", w.out.String())
 	}
 	if !strings.Contains(readOr(t, w.file), "orders:") {
@@ -441,7 +441,7 @@ func TestApplyConsoleStoppedAfterVaultSaysHow(t *testing.T) {
 	a["vault-path"] = "database/creds/orders"
 	a["vault-address"] = "https://vault.example.com:8200"
 	err := w.steps.Apply(context.Background(), mustBuild(t, a), a)
-	const msg = "lock orders is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox up); else lox up, then lox attach orders"
+	const msg = "lock orders is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox run); else lox run, then lox attach orders"
 	if err == nil || err.Error() != msg {
 		t.Fatalf("err = %v\nwant %s", err, msg)
 	}
@@ -458,7 +458,7 @@ func TestApplyConsoleStoppedAfterVaultSaysHow(t *testing.T) {
 	w3.steps.ConsoleAlive = w.steps.ConsoleAlive
 	ask := sqlAnswers(CredAsk)
 	err = w3.steps.Apply(context.Background(), mustBuild(t, ask), ask)
-	const askMsg = "lock orders is declared and its console stopped (above): lox up, then lox attach orders"
+	const askMsg = "lock orders is declared and its console stopped (above): lox run, then lox attach orders"
 	if err == nil || err.Error() != askMsg {
 		t.Fatalf("ask: err = %v\nwant %s", err, askMsg)
 	}

@@ -120,7 +120,7 @@ func devicesSnapshot(state string, devs []ticket.Device) (path string, content [
 func AppliedMobileOrigin(state string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
 	if err != nil {
-		return "", fmt.Errorf("no applied configuration (run lox up first): %w", err)
+		return "", fmt.Errorf("no applied configuration (run lox run first): %w", err)
 	}
 	var a Applied
 	if err := json.Unmarshal(b, &a); err != nil {
@@ -133,5 +133,5 @@ func AppliedMobileOrigin(state string) (string, error) {
 			}
 		}
 	}
-	return "", errors.New("the applied configuration has no mobile facade (hub.mobile, then lox up)")
+	return "", errors.New("the applied configuration has no mobile facade (hub.mobile, then lox run)")
 }
