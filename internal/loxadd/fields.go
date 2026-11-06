@@ -512,6 +512,17 @@ func checkDirs(key string) func(string, Answers) string {
 	}
 }
 
+// normDirs is a checkDirs value as locklog profile add --only takes it:
+// each directory trimmed, the commas alone between them ("/a, /b" is
+// "/a,/b").
+func normDirs(v string) string {
+	ds := strings.Split(v, ",")
+	for i, d := range ds {
+		ds[i] = strings.TrimSpace(d)
+	}
+	return strings.Join(ds, ",")
+}
+
 // logFields are locklog's: its profile add detects this host's logs (the
 // files under /var/log, the journal, the containers) by itself; --only
 // narrows it to some directories. A remote source (Loki, Elasticsearch,

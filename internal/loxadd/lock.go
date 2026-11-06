@@ -60,6 +60,9 @@ func Build(lock string, a Answers) (Lock, error) {
 	}
 	for _, k := range keys {
 		if v := a[k]; v != "" {
+			if lock == "locklog" && k == "only" {
+				v = normDirs(v) // locklog profile add --only does not trim
+			}
 			l.Target = append(l.Target, "--"+k, v)
 		}
 	}

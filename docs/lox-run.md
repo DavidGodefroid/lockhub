@@ -629,7 +629,11 @@ plan (`plan.json`), where `lox run --no-start` reads them. The engine applies
 `read-pii` tickets (a ticket does not tell them apart; rule `read-pii`). Rules
 lox run cannot read (an error, an answer it does not parse, a profile not
 listed) leave every ticket of the lock asked, with a warning before the
-review. The console enforces its own side whatever lox run does: an action
+review. The engine keys this on the ticket's lock: a locklog ticket whose
+rules are unknown to it, because lockfamily.yaml no longer loads after the
+start, its instance is not in it, or its profile is not the one lox run
+applied, has its `read` and `read-pii` asked, never the auto mode's default
+(fail closed). The console enforces its own side whatever lox run does: an action
 its rules deny is refused before any ticket, and the ticket of an `ask` is
 signed never-auto, which lox run always asks and the lock refuses an auto
 approval of. A `read-pii` decision is taken on `tty`, `deck` or `mobile`

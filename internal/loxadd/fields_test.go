@@ -120,9 +120,14 @@ func TestPromptsVerbatim(t *testing.T) {
 	}
 	only := find(t, logs, "only", Answers{})
 	for v, ok := range map[string]bool{"/var/log/nginx": true, "/var/log/nginx,/var/log/app": true, "var/log": false, "/var/log/../etc": false,
-		"/var/log,": false, "/a:b": false} {
+		"/var/log,": false, "/a:b": false, "/var/log/nginx, /var/log/app": true, " /var/log ": true, "/a, ,/b": false} {
 		if _, r := Answer(only, v, Answers{}); (r == "") != ok {
 			t.Errorf("only %q: reason %q", v, r)
+		}
+	}
+	for in, want := range map[string]string{"/a, /b": "/a,/b", " /a ,\t/b/c ": "/a,/b/c", "/a": "/a", "/a,/b": "/a,/b"} {
+		if got := normDirs(in); got != want {
+			t.Errorf("normDirs(%q) = %q, want %q", in, got, want)
 		}
 	}
 	v := Answers{"credentials": "vault"}
