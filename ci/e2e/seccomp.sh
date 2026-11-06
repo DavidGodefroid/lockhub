@@ -30,7 +30,7 @@ local_hub .lockfamily/lockfamily.yaml
 cat .lockfamily/lockfamily.yaml
 
 say "the lock's profile: an S3 bucket, credentials typed at the console's start"
-mkdir -p .lockfile
+mkdir -p .lockfile && chmod 0700 .lockfile
 printf '[profiles.default]\nsource = "s3"\nbucket = "e2e-documents"\nregion = "eu-west-1"\ncredentials = "ask"\n' >.lockfile/config.toml
 chmod 0600 .lockfile/config.toml
 
