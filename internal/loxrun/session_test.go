@@ -2,8 +2,10 @@ package loxrun
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -366,4 +368,161 @@ func TestParseKeys(t *testing.T) {
 			t.Errorf("key %d: %+v, want %+v", i, got[i], want[i])
 		}
 	}
+}
+
+// connectItem is a connect ticket of an "ask" profile that asks for the
+// password, sealed to priv's public half.
+func (k lockKey) connectItem(t *testing.T, profile string, priv *ecdh.PrivateKey) api.QueueItem {
+	return k.item(t, ticket.KindConnect, ticket.RiskRead, profile, "connect", func(tk *ticket.Ticket) {
+		tk.Subject.Endpoint = "db.internal:5432"
+		tk.Subject.Credential = ticket.CredentialAsk
+		tk.Subject.SecretTo = ticket.EncodeX25519(priv.PublicKey())
+	})
+}
+
+// sealed opens the secret lox run sealed in its decision on it.
+func sealed(t *testing.T, hub *fakeHub, lk lockKey, it api.QueueItem, priv *ecdh.PrivateKey) string {
+	t.Helper()
+	d, ok := hub.decision(it.ID)
+	if !ok || !d.Approved || d.Secret == nil {
+		t.Fatalf("decision on %s: %+v, want an approval with a secret", it.ID, d)
+	}
+	var box ticket.Sealed
+	if err := json.Unmarshal(d.Secret, &box); err != nil {
+		t.Fatal(err)
+	}
+	tk, err := ticket.VerifyTicket(lk.pub, it.Ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ticket.Open(priv, &box, ticket.SecretAAD(tk))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(s)
+}
+
+func typeIn(h *harness, s string) {
+	for _, r := range s {
+		h.keys <- R(r)
+	}
+	h.keys <- Key{Code: KeyEnter}
+}
+
+// A mistyped password is not kept: its connect never ran (the lock could
+// not connect), so the next connect of the profile is asked again and
+// takes a new password; only once the lock connected with it is the
+// password reused, and in manual mode y still asks for it.
+func TestSessionWrongPasswordAskedAgain(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, nil)
+	newKey := func() *ecdh.PrivateKey {
+		k, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+
+	// 1. The first connect: asked, a wrong password typed. The lock
+	// cannot connect: the ticket stays approved, never consumed.
+	k1 := newKey()
+	c1 := lk.connectItem(t, "dev", k1)
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "wrong")
+	h.wait(EvDecided, c1.ID)
+	if s := sealed(t, hub, lk, c1, k1); s != "wrong" {
+		t.Fatalf("sealed %q", s)
+	}
+
+	// 2. The lock asks again: a question, not session:connect, and y
+	// asks for the password again rather than reusing "wrong".
+	k2 := newKey()
+	c2 := lk.connectItem(t, "dev", k2)
+	hub.push(c2)
+	h.wait(EvQuestion, c2.ID)
+	h.keys <- R('y')
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := hub.decision(c2.ID); ok {
+		t.Fatal("approved with the mistyped password, no prompt")
+	}
+	typeIn(h, "right")
+	if e := h.wait(EvDecided, c2.ID); e.Rule != "" || !e.Approved {
+		t.Fatalf("%+v", e)
+	}
+	if s := sealed(t, hub, lk, c2, k2); s != "right" {
+		t.Fatalf("sealed %q, want the new password", s)
+	}
+
+	// 3. The lock connected with it: the next connect is the session's,
+	// with the new password.
+	hub.mu.Lock()
+	hub.states[c2.ID] = "consumed"
+	hub.mu.Unlock()
+	if e := h.wait(EvResult, c2.ID); e.Result != ResRan {
+		t.Fatalf("%+v", e)
+	}
+	k3 := newKey()
+	c3 := lk.connectItem(t, "dev", k3)
+	hub.push(c3)
+	if e := h.wait(EvDecided, c3.ID); e.Rule != "session:connect" {
+		t.Fatalf("%+v: want session:connect", e)
+	}
+	if s := sealed(t, hub, lk, c3, k3); s != "right" {
+		t.Fatalf("sealed %q", s)
+	}
+
+	// 4. Manual mode: asked, and y opens the password prompt again.
+	h.keys <- Key{Code: KeyShiftTab}
+	h.wait(EvMode, "")
+	k4 := newKey()
+	c4 := lk.connectItem(t, "dev", k4)
+	hub.push(c4)
+	h.wait(EvQuestion, c4.ID)
+	h.keys <- R('y')
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := hub.decision(c4.ID); ok {
+		t.Fatal("manual y reused the session password without a prompt")
+	}
+	typeIn(h, "other")
+	h.wait(EvDecided, c4.ID)
+	if s := sealed(t, hub, lk, c4, k4); s != "other" {
+		t.Fatalf("sealed %q", s)
+	}
+}
+
+// A connect approved with the session's password that never runs (the
+// password changed at the backend) drops it: the next one is asked.
+func TestSessionCachedPasswordDroppedWhenNotRun(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, nil)
+	key := func() *ecdh.PrivateKey { k, _ := ecdh.X25519().GenerateKey(rand.Reader); return k }
+	setState := func(id, s string) { hub.mu.Lock(); hub.states[id] = s; hub.mu.Unlock() }
+
+	c1 := lk.connectItem(t, "dev", key())
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "pw")
+	h.wait(EvDecided, c1.ID)
+	setState(c1.ID, "consumed")
+	h.wait(EvResult, c1.ID)
+
+	c2 := lk.connectItem(t, "dev", key())
+	hub.push(c2)
+	if e := h.wait(EvDecided, c2.ID); e.Rule != "session:connect" {
+		t.Fatalf("%+v", e)
+	}
+	setState(c2.ID, "expired")
+	if e := h.wait(EvResult, c2.ID); e.Result != ResExpired {
+		t.Fatalf("%+v", e)
+	}
+
+	c3 := lk.connectItem(t, "dev", key())
+	hub.push(c3)
+	h.wait(EvQuestion, c3.ID)
 }

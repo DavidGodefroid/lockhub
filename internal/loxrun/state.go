@@ -31,6 +31,13 @@ type answer struct {
 	retyped    string
 	lastReq    *api.DecideRequest // a decision to send again (the hub was unreachable)
 	inFeed     bool
+	// A connect ticket's approval waits for its result: only a consumed
+	// ticket (the lock opened the connection) proves the secret typed
+	// for it (secret, kept until then) and the human's approval of the
+	// connection (human), which the session then reuses.
+	secret []byte
+	human  bool
+	cached bool // approved with the session's secret for the profile
 }
 
 func clean(s string) string { return sanitize.Terminal(s, false) }
@@ -95,6 +102,10 @@ func (st *state) wipe() {
 		if t.card != nil && t.card.Prompt != nil {
 			clear(t.card.Prompt.Typed)
 		}
+	}
+	for _, t := range st.seen {
+		clear(t.secret)
+		t.secret = nil
 	}
 }
 
@@ -269,7 +280,8 @@ func needsSecret(t *tracked) bool {
 }
 
 // cachedSecret is the secret typed earlier in this session for an "ask"
-// profile (a copy: the caller wipes it), nil otherwise. A Vault token is
+// profile that the lock connected with (a copy: the caller wipes it),
+// nil otherwise. A Vault token is
 // asked each time the lock asks: it asks only once its own expired.
 func (st *state) cachedSecret(t *tracked) []byte {
 	if t.tk.Subject.Credential != ticket.CredentialAsk {
@@ -291,6 +303,7 @@ func (st *state) apply(t *tracked, v Verdict) {
 				st.ask(t, "the lock asks for the secret: "+v.Why)
 				return
 			}
+			t.cached = true
 		}
 		t.entry.Status, t.entry.Rule = AutoApproved, v.Rule
 		st.pushEntry(t, true)
@@ -413,6 +426,8 @@ func (st *state) failed(t *tracked, note string) {
 	st.detach(t)
 	t.entry.Status, t.entry.Note = Failed, shortNote(note)
 	t.decided = true
+	clear(t.secret)
+	t.secret = nil
 	st.printEntry(t.entry)
 	st.s.observe(Event{Kind: EvFailed, Instance: t.instance, ID: t.id, Err: errors.New(note)})
 }
@@ -428,7 +443,11 @@ func (st *state) onDecided(t *tracked, req api.DecideRequest, err error) {
 			t.entry.Status = AutoApproved
 		case req.Approved:
 			t.entry.Status = Approved
-			st.eng.Answered(t.req, true)
+			if t.req.Action() == ActConnect {
+				t.human = true // the session reuses it once the lock connected
+			} else {
+				st.eng.Answered(t.req, true)
+			}
 		default:
 			t.entry.Status = Denied
 			if req.Rule == "" {
@@ -472,6 +491,7 @@ func (st *state) onState(t *tracked, res api.TicketState, err error) {
 		if errors.As(err, &he) && he.Status == 404 {
 			delete(st.results, k)
 			delete(st.seen, k)
+			st.settleConnect(t, false)
 		}
 		return
 	}
@@ -502,6 +522,7 @@ func (st *state) onState(t *tracked, res api.TicketState, err error) {
 	delete(st.results, k)
 	delete(st.seen, k)
 	st.dirty = true
+	st.settleConnect(t, r == ResRan)
 	if r == ResNone {
 		return
 	}
@@ -516,6 +537,42 @@ func (st *state) onState(t *tracked, res api.TicketState, err error) {
 		st.printEntry(t.entry)
 	}
 	st.s.observe(Event{Kind: EvResult, Instance: t.instance, ID: t.id, Result: r})
+}
+
+// settleConnect ends a connect ticket's wait for its result. Consumed
+// (ran): the lock opened the connection, so the secret typed for it
+// opens the backend and is kept for the profile, and the human's
+// approval of the connection holds for the session. Anything else (it
+// expired, was withdrawn, stayed approved and never ran: the lock could
+// not connect, a mistyped password) keeps neither, and a session secret
+// it carried is dropped: the next connect is asked again.
+func (st *state) settleConnect(t *tracked, ran bool) {
+	secret := t.secret
+	t.secret = nil
+	if t.tk == nil || t.tk.Kind != ticket.KindConnect {
+		clear(secret)
+		return
+	}
+	if !ran {
+		clear(secret)
+		if t.cached {
+			if s, ok := st.secrets[t.profileKey]; ok {
+				clear(s)
+				delete(st.secrets, t.profileKey)
+			}
+			st.eng.Disconnect(t.instance, t.req.Profile())
+		}
+		return
+	}
+	if secret != nil {
+		if old, ok := st.secrets[t.profileKey]; ok {
+			clear(old)
+		}
+		st.secrets[t.profileKey] = secret
+	}
+	if t.human {
+		st.eng.Answered(t.req, true)
+	}
 }
 
 func (st *state) onTick() {
@@ -626,7 +683,9 @@ func (st *state) reevaluate() {
 }
 
 // approve is y on t: the instance name first when the hub wants it typed,
-// then the secret when the lock asks for one.
+// then the secret when the lock asks for one. The human is always asked
+// for the secret, never handed the session's: y is how a mistyped one is
+// typed again.
 func (st *state) approve(t *tracked) {
 	if t.item.Retype != "" && t.retyped != t.item.Retype {
 		t.promptKind = promptRetype
@@ -636,11 +695,6 @@ func (st *state) approve(t *tracked) {
 	if needsSecret(t) {
 		if !t.req.Verified {
 			st.setFlash("this lock's key is not pinned here: no secret can be sealed to it (run lox up); n denies")
-			return
-		}
-		if s := st.cachedSecret(t); s != nil {
-			st.send(t, true, "", s)
-			clear(s)
 			return
 		}
 		t.promptKind = promptSecret
@@ -693,7 +747,9 @@ func (st *state) promptKey(t *tracked, k Key) {
 				return
 			}
 			if t.tk.Subject.Credential == ticket.CredentialAsk {
-				st.secrets[t.profileKey] = slices.Clone(secret)
+				// Kept for the profile only once the lock connected with it.
+				clear(t.secret)
+				t.secret = slices.Clone(secret)
 			}
 			t.card.Prompt = nil
 			st.send(t, true, "", secret)

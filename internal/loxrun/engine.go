@@ -259,7 +259,8 @@ func autoRule(e *Engine, r Request, a Action) string {
 }
 
 // Answered records the human's answer on r: an approved connection or
-// endpoint is not asked again in this session (in auto mode).
+// endpoint is not asked again in this session (in auto mode). lox run
+// records a connection only once the lock connected on it.
 func (e *Engine) Answered(r Request, approved bool) {
 	if !approved {
 		return
@@ -282,6 +283,12 @@ func (e *Engine) Forget(instance, profile string) {
 			delete(e.endpoints, ek)
 		}
 	}
+}
+
+// Disconnect drops the session's approval of profile's connection alone
+// (a connect approved on it did not connect): the next one asks again.
+func (e *Engine) Disconnect(instance, profile string) {
+	delete(e.connected, instance+"/"+profile)
 }
 
 // Connected reports whether the session approved profile's connection.
