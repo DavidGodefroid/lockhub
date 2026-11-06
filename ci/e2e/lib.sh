@@ -48,3 +48,47 @@ hub_cosigned() {
 		die "lox up did not check the hub's signer identity (no cosign shim line in $E2E_COSIGN_SHIM/log)"
 	: >"$E2E_COSIGN_SHIM/log"
 }
+# reaches CONTAINER HOST PORT: a TCP connect from inside CONTAINER's own
+# network namespace (its interfaces, routes, DNS and /etc/hosts: what the
+# lock's console itself would reach), by a throwaway alpine sharing it.
+reaches() {
+	docker run --rm --network "container:$1" alpine:3.22 nc -z -w 5 "$2" "$3" >/dev/null 2>&1
+}
+# egress_only CONTAINER HOST PORT...: CONTAINER reaches each HOST PORT given
+# (the endpoints of its reviewed profile) and none of lockhub#123's
+# forbidden destinations: another port of this machine (DECOY_PORT, which
+# answers from an ordinary container), the internet, the cloud metadata
+# address, a name outside the allowlist.
+egress_only() {
+	eg_c=$1
+	shift
+	while [ $# -ge 2 ]; do
+		reaches "$eg_c" "$1" "$2" || die "$eg_c does not reach $1:$2, an endpoint of its reviewed profile"
+		echo "egress: $eg_c reaches $1:$2 (allowed)"
+		shift 2
+	done
+	for eg_t in "host.docker.internal $DECOY_PORT" "$DECOY_IP 8080" "1.1.1.1 443" "169.254.169.254 80" "example.com 443"; do
+		# shellcheck disable=SC2086
+		reaches "$eg_c" $eg_t && die "$eg_c reached $eg_t, outside its reviewed profile"
+		echo "egress: $eg_c cannot reach $eg_t (refused)"
+	done
+}
+# decoy_start NAME: a container answering on 8080, published on DECOY_PORT
+# of this machine, and the positive controls: an ordinary container
+# reaches it by host.docker.internal and by its address, and the internet
+# (so that the refusals of egress_only prove the lock's egress, not a
+# dead network).
+decoy_start() {
+	DECOY_PORT=${DECOY_PORT:-58124}
+	docker run -d --name "$1" -p "$DECOY_PORT:8080" alpine:3.22 nc -lk -p 8080 -e cat >/dev/null
+	DECOY_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1")
+	eg_ok=""
+	for eg_i in $(seq 1 20); do
+		docker run --rm --add-host host.docker.internal:host-gateway alpine:3.22 nc -z -w 5 host.docker.internal "$DECOY_PORT" && { eg_ok=1; break; }
+		sleep 1
+	done
+	[ -n "$eg_ok" ] || die "control: an ordinary container does not reach the decoy on host.docker.internal:$DECOY_PORT"
+	docker run --rm alpine:3.22 nc -z -w 5 "$DECOY_IP" 8080 || die "control: an ordinary container does not reach the decoy at $DECOY_IP:8080"
+	docker run --rm alpine:3.22 nc -z -w 5 1.1.1.1 443 || die "control: an ordinary container does not reach 1.1.1.1:443"
+	docker run --rm alpine:3.22 nc -z -w 5 example.com 443 || die "control: an ordinary container does not reach example.com:443"
+}

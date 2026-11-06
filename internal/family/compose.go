@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/DavidGodefroid/lockhub/internal/egress"
 )
 
 // Paths lox up uses on the host.
@@ -54,6 +56,9 @@ type Paths struct {
 	// SeccompSum is its sha256 (hex): their label, so that a new profile
 	// recreates them (compose sends the content once, at creation).
 	Seccomp, SeccompSum string
+	// Egress are the locks' allowlists (egress.go), from the reviewed
+	// profiles: a lock without one reaches no host.
+	Egress map[string]Egress
 }
 
 // VaultCAPath is where the locks with vault: true see the reviewed CA.
@@ -242,11 +247,6 @@ func Compose(c *Config, p Paths) string {
 				cmd = append(cmd, "--facade-keys-file", LockFacadesPath)
 			}
 		}
-		if !k.Gate {
-			// The locks' profile tools name a database or broker on the
-			// host so, as their launchers resolve it.
-			w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
-		}
 		if k.Project {
 			// The console finds its project from its working directory.
 			w("    working_dir: %s", q(p.Workspace))
@@ -321,10 +321,19 @@ func Compose(c *Config, p Paths) string {
 			// serves the policy and has no hub network.
 			w("    networks: [%s]", q("egress-"+name))
 		} else {
+			// egress-<name> is internal: the lock reaches the hosts of its
+			// reviewed profile through its gateway only (egress.go).
 			w("    networks: [lockhub, %s]", q("egress-"+name))
-			w("    depends_on: [lockhub]")
+			if eg := p.Egress[name]; len(eg.Endpoints) > 0 {
+				w("    depends_on: [lockhub, %s]", q("gw-"+name))
+			} else {
+				w("    depends_on: [lockhub]")
+			}
 		}
 		w("    restart: unless-stopped")
+		if eg := p.Egress[name]; !k.Gate && len(eg.Endpoints) > 0 {
+			gateway(w, c.Hub.Image, name, eg)
+		}
 		if k.Gate {
 			// The gate's own volume (0700, the gate's account), with its
 			// instance key: lox up makes it and reads the key; lea's gate
@@ -401,7 +410,18 @@ func Compose(c *Config, p Paths) string {
 		w("  %s: {}", q("mobile-hub"))
 	}
 	for _, name := range c.Instances() {
-		w("  %s: {}", q("egress-"+name))
+		if Kinds[c.Locks[name].Type].Gate {
+			// lockhttp's egress is its own policy's.
+			w("  %s: {}", q("egress-"+name))
+			continue
+		}
+		w("  %s:", q("egress-"+name))
+		w("    internal: true")
+		if len(p.Egress[name].Endpoints) > 0 {
+			w("  %s:", q("gwlink-"+name))
+			w("    internal: true")
+			w("  %s: {}", q("out-"+name))
+		}
 	}
 	w("volumes:")
 	w("  hubkey: {}")
@@ -419,6 +439,44 @@ func Compose(c *Config, p Paths) string {
 		}
 	}
 	return b.String()
+}
+
+// gateway writes a lock's egress gateway (egress.go): gw-<name>, on the
+// lock's internal network under the endpoints' names, and gwout-<name>,
+// the only one with a route out, each forwarding only the allowlist.
+// Both run the hub's image (lockhub egress-gateway), its own account.
+func gateway(w func(string, ...any), image, name string, eg Egress) {
+	front, back := eg.forwards(name)
+	args := func(fs []egress.Forward) string {
+		a := []string{"egress-gateway"}
+		for _, f := range fs {
+			a = append(a, "--forward", f.String())
+		}
+		return quoteAll(a)
+	}
+	common := func() {
+		w("    image: %s", q(image))
+		limits(w, "64m", 64)
+		// Ports below 1024 (https) for its own account, as Docker sets it.
+		w("    sysctls:")
+		w("      net.ipv4.ip_unprivileged_port_start: \"0\"")
+		w("    restart: unless-stopped")
+	}
+	w("  %s:", q("gw-"+name))
+	common()
+	w("    command: [%s]", args(front))
+	w("    networks:")
+	w("      %s:", q("egress-"+name))
+	w("        aliases: [%s]", quoteAll(eg.aliases()))
+	w("      %s: {}", q("gwlink-"+name))
+	w("  %s:", q("gwout-"+name))
+	common()
+	w("    command: [%s]", args(back))
+	if eg.hostGateway() {
+		// A database or broker on this machine, named so in the profile.
+		w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
+	}
+	w("    networks: [%s, %s]", q("gwlink-"+name), q("out-"+name))
 }
 
 // deviceArgs are a lock's flags for the paired devices: pinned, and as

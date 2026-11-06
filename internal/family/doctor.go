@@ -7,13 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
+	"github.com/DavidGodefroid/lockhub/internal/egress"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/route"
 )
@@ -199,7 +202,8 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	}
 	noKeys := func(s []string) []string {
 		return slices.DeleteFunc(slices.Clone(s), func(l string) bool {
-			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ")
+			// The allowlists derive from the profiles, not from the yaml.
+			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l)
 		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {
@@ -266,6 +270,7 @@ func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...
 			fail("%s %s: docker compose -p %s -f %s logs %s", s, st, project, compose, s)
 		}
 	}
+	d.egress(ctx, c, project, state, ok, fail)
 	// I2: no route out of the hub's network.
 	net := project + "_lockhub"
 	if out, err := d.Run.Run(ctx, nil, "docker", "network", "inspect", "--format", "{{.Internal}}", net); err != nil {
@@ -275,6 +280,101 @@ func (d *Doctor) stack(ctx context.Context, c *Config, ok, fail func(string, ...
 	} else {
 		ok("network %s internal", net)
 	}
+}
+
+// egress checks each lock's effective egress (lockhub#123): every network
+// the lock's container is on is internal, and its gateway runs and
+// forwards exactly the allowlist the last lox run applied.
+func (d *Doctor) egress(ctx context.Context, c *Config, project string, state map[string]string, ok, fail func(string, ...any)) {
+	var applied Applied
+	if b, err := os.ReadFile(filepath.Join(d.State, "applied.json")); err == nil {
+		json.Unmarshal(b, &applied)
+	}
+	for _, n := range c.Instances() {
+		if Kinds[c.Locks[n].Type].Gate {
+			continue
+		}
+		if state["lock-"+n] != "running" {
+			continue
+		}
+		var want []string
+		for _, l := range applied.Summary {
+			if rest, found := strings.CutPrefix(l, "lock "+n+" egress "); found {
+				if addr, _, found := strings.Cut(rest, " ("); found && !strings.HasPrefix(rest, "unreachable:") && !strings.HasPrefix(rest, "none:") {
+					want = append(want, addr)
+				}
+			}
+		}
+		out, err := d.Run.Run(ctx, nil, "docker", "inspect", "-f", "{{json .NetworkSettings.Networks}}", project+"-lock-"+n+"-1")
+		var nets map[string]json.RawMessage
+		if err == nil {
+			err = json.Unmarshal(out, &nets)
+		}
+		if err != nil || len(nets) == 0 {
+			fail("lock %s egress: its networks cannot be read: %v", n, err)
+			continue
+		}
+		var names []string
+		for k := range nets {
+			names = append(names, k)
+		}
+		slices.Sort(names)
+		open := ""
+		for _, k := range names {
+			if out, err := d.Run.Run(ctx, nil, "docker", "network", "inspect", "--format", "{{.Internal}}", k); err != nil || strings.TrimSpace(string(out)) != "true" {
+				open = k
+				break
+			}
+		}
+		if open != "" {
+			fail("lock %s egress: its network %s is not internal, it has a route out: run lox run", n, open)
+			continue
+		}
+		if len(want) == 0 {
+			ok("lock %s egress: none (internal networks, no gateway)", n)
+			continue
+		}
+		bad := false
+		for _, s := range []string{"gw-" + n, "gwout-" + n} {
+			if st := state[s]; st != "running" {
+				fail("lock %s egress: its gateway %s is %s, the lock reaches nothing: docker compose -p %s logs %s (a hub image without lockhub egress-gateway? lox run upgrades it)", n, s, orNone(st), project, s)
+				bad = true
+			}
+		}
+		if bad {
+			continue
+		}
+		out, err = d.Run.Run(ctx, nil, "docker", "inspect", "-f", "{{json .Config.Cmd}}", project+"-gwout-"+n+"-1")
+		var cmd []string
+		if err == nil {
+			err = json.Unmarshal(out, &cmd)
+		}
+		if err != nil {
+			fail("lock %s egress: the gateway's forwards cannot be read: %v", n, err)
+			continue
+		}
+		var got []string
+		for i := 0; i+1 < len(cmd); i++ {
+			if cmd[i] == "--forward" {
+				if f, err := egress.ParseForward(cmd[i+1]); err == nil {
+					got = append(got, net.JoinHostPort(f.Host, strconv.Itoa(f.Port)))
+				}
+			}
+		}
+		sg, sw := slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(want))
+		if !slices.Equal(sg, sw) {
+			fail("lock %s egress: the gateway forwards to %s, the last lox run reviewed %s: run lox run", n, strings.Join(got, ", "), strings.Join(want, ", "))
+			continue
+		}
+		ok("lock %s egress: only %s (internal networks, gateway running)", n, strings.Join(want, ", "))
+	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "not created"
+	}
+	return s
 }
 
 // psStates reads `docker compose ps --format json`: one object per line

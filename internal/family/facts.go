@@ -22,6 +22,8 @@ type Facts struct {
 	Profile string
 	// Changed: the profile differs from the one the last lox up applied.
 	Changed bool
+	// Egress is the lock's allowlist as the short review shows it.
+	Egress string
 }
 
 // factKeys are the keys read per lock type for the target.

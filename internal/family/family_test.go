@@ -303,7 +303,7 @@ func TestComposeIsolation(t *testing.T) {
 		"    networks: [lockhub]\n    restart", // the hub has no egress
 		"read_only: true", "cap_drop: [ALL]", `"no-new-privileges:true"`,
 		`"--instance", "crm-prod"`, `"--hub-key-file", "/run/lockfamily/hub.pub"`,
-		`extra_hosts: ["host.docker.internal:host-gateway"]`, `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
+		"  \"egress-crm-prod\":\n    internal: true", `user: "10001:10000"`, "tty: true", "stdin_open: true", `working_dir: "/w"`, "    logging:\n      driver: none", "mem_limit: 1g",
 		"      - hubkey:/run/lockfamily:ro", `      - "profile-locksql:/w/.locksql:ro"`,
 		"dev.lockfamily.role: \"socket\"", "dev.lockfamily.instance: \"crm-prod\"",
 		`"--hub", "http://lockhub:8443", "--hub-plain-http"`,

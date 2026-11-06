@@ -257,6 +257,12 @@ if [ "$vault" = 1 ]; then
 	say "a host agent's locksql query on inventory, approved through the facade"
 	sql_query inventory inventory stock sku sku-1
 
+	say "lockhub#123: the Vault address is an endpoint of the vault: true lock only"
+	reaches "$p-lock-inventory-1" host.docker.internal 58200 || die "inventory (vault: true) does not reach Vault"
+	reaches "$p-lock-orders-1" host.docker.internal 55432 || die "control: orders does not reach its database"
+	reaches "$p-lock-orders-1" host.docker.internal 58200 && die "orders (no vault: true) reached Vault"
+	grep -qF '"58200=gwout-inventory:' "$state/compose.yaml" || die "inventory's gateway does not forward Vault"
+
 	say "lox remove inventory: its console stops, its profile stays"
 	tty 'y\n' "$lox" remove inventory >"$out/rm-inv.out" 2>&1 || { cat "$out/rm-inv.out"; die "lox remove inventory failed"; }
 	cat "$out/rm-inv.out"
