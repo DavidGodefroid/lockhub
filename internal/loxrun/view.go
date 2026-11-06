@@ -27,6 +27,9 @@ const (
 	// Elsewhere: another facade decided it, or it left the queue before
 	// lox run decided it.
 	Elsewhere
+	// Undecided: it ended with no decision (lox audit: expired,
+	// withdrawn, or its lock removed while it waited).
+	Undecided
 )
 
 // Result is what became of a decided ticket, as the hub knows it (never
@@ -63,6 +66,9 @@ type Entry struct {
 	Result Result
 	Count  int
 	Note   string
+	// By, when set, names the human who decided in the decision column
+	// (lox audit: decisions of any facade, not only this terminal's).
+	By string
 }
 
 // group is the key that folds equal auto reads into one line.
@@ -140,6 +146,16 @@ type View struct {
 	Loc   *time.Location
 	// Quitting: q pressed once, q again quits.
 	Quitting bool
+	// Audit is the hub's audit when the audit overlay shows it (nil: the
+	// overlay shows this session's decisions).
+	Audit *auditView
+}
+
+// auditView is the hub's audit as lox run last read it.
+type auditView struct {
+	xs   []Exchange
+	runs []RunEvent
+	err  string
 }
 
 func (v View) loc() *time.Location {
@@ -191,9 +207,12 @@ func frameLines(v View, w, h int, st Style) []line {
 	switch v.Overlay {
 	case "help", "audit":
 		// An overlay reads from its top; the feed from its newest line.
-		if v.Overlay == "help" {
+		switch {
+		case v.Overlay == "help":
 			body = helpLines(w, st)
-		} else {
+		case v.Audit != nil:
+			body = hubAuditLines(v, w, room, st)
+		default:
 			body = auditLines(v, w, st)
 		}
 		if len(body) > room {
@@ -359,6 +378,9 @@ func statusCell(e Entry, st Style) line {
 		label, sgr = "auto", st.auto()
 	case Approved:
 		label, sgr = st.g("✔ you", "+ you"), st.approved()
+		if e.By != "" {
+			label = st.g("✔ ", "+ ") + e.By
+		}
 	case Denied:
 		label, sgr = st.g("✘ denied", "x denied"), st.denied()
 		if e.Rule != "" {
@@ -368,6 +390,8 @@ func statusCell(e Entry, st Style) line {
 		label, sgr = "! error", st.errored()
 	case Elsewhere:
 		label, sgr = "elsewhere", sgrDim
+	case Undecided:
+		label, sgr = st.g("– none", "- none"), sgrDim
 	}
 	l := line{{label, sgr}}
 	switch e.Result {
@@ -563,7 +587,7 @@ func helpLines(w int, st Style) []line {
 		{"y / n", "approve / deny the question on top"},
 		{"d", "the question's whole masked screen"},
 		{"x", "forget the profile on top (none up: all): asked again, password too"},
-		{"a", "this session's decisions and the rule that took each"},
+		{"a", "the hub's audit (lox audit): each exchange and the rule or human that decided it"},
 		{"?", "this help; Esc or ? again to close"},
 		{"q q, Ctrl-C", "quit: decisions stop, tickets wait (fail closed)"},
 	}
@@ -578,6 +602,22 @@ func helpLines(w int, st Style) []line {
 		line{{"   masked values look like ", ""}, {st.g("‹", "<") + "j***(20)" + st.g("›", ">"), sgrMasked}, {": lox run never sees them in clear", ""}},
 	)
 	return out
+}
+
+// hubAuditLines is the audit overlay on the hub's audit: lox audit's
+// listing, its summary on top, its newest lines filling the room left.
+func hubAuditLines(v View, w, room int, st Style) []line {
+	out := []line{{{" the hub's audit", sgrBold}, {" · lox audit for filters · lox audit show ID for one", sgrDim}}}
+	if v.Audit.err != "" {
+		out = append(out, line{{"   cannot read it: " + v.Audit.err, st.errored()}})
+	}
+	ls := auditListing(v.Audit.xs, v.Audit.runs, v.loc(), w, st)
+	head, rest := ls[:2], ls[2:]
+	out = append(out, head...)
+	if n := room - len(out); len(rest) > n {
+		rest = rest[len(rest)-max(n, 0):]
+	}
+	return append(out, rest...)
 }
 
 func auditLines(v View, w int, st Style) []line {

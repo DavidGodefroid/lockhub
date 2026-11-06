@@ -1,0 +1,18 @@
+ + exchange shop/01KWRITE  PRODUCTION  ----------------------------------------+
+ | dev-1 asked (unverified name) - S locksql                                  |
+ | on         shop/prod!   kind write   risk prod_write                       |
+ |                                                                            |
+ | masked plan (as the lock masked it: the hub never sees it in clear)        |
+ |   shop / prod - write                                                      |
+ |   UPDATE customers SET email = <j***(20)> WHERE id = <4***(3)>             |
+ |   -- 1 row (estimated)                                                     |
+ |   ! production                                                             |
+ |   personal data touched: email (masked)                                    |
+ |                                                                            |
+ | decision   + human ok  by alice on the telegram facade                     |
+ | timings    asked 2026-11-06 14:05:20.000 - decided +12.0s - consumed +300ms|
+ | state      consumed                                                        |
+ | signature  ok ticket signed by its lock's pinned key                       |
+ |            ok decision signed by the hub key                               |
+ | the whole chain, and the lock's own log: lox audit verify                  |
+ +----------------------------------------------------------------------------+

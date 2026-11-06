@@ -1,0 +1,16 @@
+ [1m9 exchanges[0m[2m · [0m[2;32m3 auto[0m[2m · [0m[32m2 human[0m[2m · [0m[31m2 denied[0m[2m · [0m[1;33m1 waiting[0m[2m · [0m[1;33m4 writes[0m[2m · [0m[1;36m1 connectio[0m[1;36m…[0m
+[2m────────────────────────────────────────────────────────────────────────────────[0m
+[2m ── [0m[1mThursday 5 November 2026[0m [2m───────────────────────────────────────────────────[0m
+ [2m14:08:40[0m [32mdev-2[0m    [2m◆ [0mshop     [2mdev[0m      read   [1;36mSELECT[0m count(*) [1;36mFROM[0m o… [2;32mauto[0m[32m ✓[0m    
+[2m ── [0m[1mFriday 6 November 2026[0m [2m─────────────────────────────────────────────────────[0m
+[2m ── [0m[1mlox run[0m[2m started by [0m[96;1mdavid[0m[2m at 14:02:05 in [0m[2;32;1mAUTO[0m [2m───────────────────────────────[0m
+ [2m14:02:12[0m [94mdev-1[0m    [2m◆ [0mshop     [1;31mprod[0m     [1;36mconn[0m   connect db.internal:54… [32m✔ human[0m[32m ✓[0m 
+ [2m14:02:14[0m [94mdev-1[0m    [2m◆ [0mshop     [1;31mprod[0m     read   [1;36mSELECT[0m id, total [1;36mFROM[0m … [2;32mauto[0m[32m ✓[0m    
+ [2m14:03:01[0m [96mweb-age[0m[96m…[0m [2m◇ [0mmq       [2mlocal[0m    [1;33maction[0m [1;36mPEEK[0m orders.created (1… [2;32mauto[0m[32m ✓[0m    
+ [2m14:04:30[0m [32mdev-2[0m    [2m◆ [0mshop     [2mdev[0m      [1;31mddl[0m    [1;33mDROP[0m [1;36mTABLE[0m sessions     [31m✘ rule[0m    
+ [2m14:05:20[0m [94mdev-1[0m    [2m◆ [0mshop     [1;31mprod[0m     [1;33mwrite[0m  [1;33mUPDATE[0m customers [1;36mSET[0m e… [32m✔ human[0m[32m ✓[0m 
+[2m ── [0m[2mswitched to [0m[1;33;1mMANUAL[0m[2m at 14:05:40 [0m[2m──[0m
+ [2m14:05:50[0m [96mweb-age[0m[96m…[0m [2m⇄ [0mapi      [2mstripe[0m   [1;36mroute[0m  [1;33mPOST[0m api.stripe.com/v1… [31m✘ denied[0m  
+ [2m14:06:20[0m [32mdev-2[0m    [2m◆ [0mshop     [2mdev[0m      [1;33mwrite[0m  [1;33mDELETE[0m [1;36mFROM[0m carts [1;36mWHER[0m[1;36m…[0m [2m– none[0m[35m ⌛[0m  
+[2m ── [0m[2mswitched to [0m[2;32;1mAUTO[0m[2m at 14:06:40 [0m[2m──[0m
+ [2m14:06:59[0m [94mdev-1[0m    [2m◆ [0mshop     [1;31mprod[0m     [1;33mwrite[0m  [1;33mUPDATE[0m orders [1;36mSET[0m stat… [1;33m◆ asked[0m   

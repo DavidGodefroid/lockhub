@@ -112,6 +112,10 @@ func (st *state) wipe() {
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
 		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting}
+	if st.overlay == "audit" && st.s.Audit != nil {
+		a := st.audit
+		v.Audit = &a
+	}
 	for _, e := range st.feed {
 		v.Feed = append(v.Feed, *e)
 	}
@@ -648,7 +652,23 @@ func (st *state) onTick() {
 			delete(st.conns, k)
 		}
 	}
+	if st.overlay == "audit" {
+		st.loadAudit()
+	}
 	st.dirty = st.s.Size != nil
+}
+
+// loadAudit reads the hub's audit for the audit view, when it is open.
+func (st *state) loadAudit() {
+	if st.overlay != "audit" || st.s.Audit == nil {
+		return
+	}
+	xs, runs, err := st.s.Audit()
+	if err != nil {
+		st.audit.err = shortNote(err.Error())
+		return
+	}
+	st.audit = auditView{xs: xs, runs: runs}
 }
 
 // syncTop notes the card on top as the screen is about to show it. When
@@ -778,6 +798,7 @@ func (st *state) onKey(k Key) bool {
 		st.overlay = toggle(st.overlay, "help")
 	case 'a', 'A':
 		st.overlay = toggle(st.overlay, "audit")
+		st.loadAudit()
 	case 'q', 'Q':
 		st.quitting = true
 	case 'y', 'Y', 'n', 'N':

@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
+	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
+	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 	"github.com/DavidGodefroid/lockhub/internal/ticketcodec"
 )
@@ -152,5 +155,82 @@ func TestAuditVerifyRotatedHubKey(t *testing.T) {
 	}
 	if code, out := verifyRun("\n"); code != 1 || !strings.Contains(out, "no key") {
 		t.Errorf("empty key file: %d %s", code, out)
+	}
+}
+
+// lox audit on a hub data directory: piped, plain aligned text with the
+// summary; --json one object per exchange; filters; lox audit show the
+// detail with the human who decided and the signature checked.
+func TestAuditList(t *testing.T) {
+	data, keyFile, _ := hubWithDecision(t)
+	t.Setenv("COLUMNS", "100")
+	audit := func(args ...string) (int, string, string) {
+		var out, errb bytes.Buffer
+		code := run(append([]string{"audit"}, args...), devNull(t), &out, &errb)
+		return code, out.String(), errb.String()
+	}
+	base := []string{"--data", data, "--hub-key-file", keyFile, "--facade-keys", t.TempDir()}
+	code, out, errs := audit(base...)
+	if code != 0 || !strings.Contains(out, "1 exchange · 0 auto · 1 human · 0 denied") || !strings.Contains(out, "✔ human") ||
+		strings.Contains(out, "\x1b") {
+		t.Fatalf("%d %q %s", code, out, errs)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		if n := len([]rune(l)); n > 100 {
+			t.Errorf("line of %d columns: %q", n, l)
+		}
+	}
+	code, out, errs = audit(append(base, "--json")...)
+	var r struct{ ID, Instance, Decision, Facade, Signature, State string }
+	if code != 0 || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &r) != nil ||
+		r.Decision != "human" || r.Facade != "tty" || r.Signature != "ok" || r.Instance != "crm" || r.State != "approved" {
+		t.Fatalf("json: %d %q %s", code, out, errs)
+	}
+	if code, out, _ := audit(append(base, "--json", "--decision", "denied")...); code != 0 || out != "" {
+		t.Errorf("--decision denied: %d %q", code, out)
+	}
+	if code, out, _ := audit(append(base, "--lock", "other")...); code != 0 || !strings.Contains(out, "0 exchanges") {
+		t.Errorf("--lock other: %d %q", code, out)
+	}
+	code, out, errs = audit(append([]string{"show"}, append(base, r.Instance+"/"+r.ID)...)...)
+	if code != 0 || !strings.Contains(out, "by host:uid:1 on the tty facade") || !strings.Contains(out, "✓ decision signed by the hub key") ||
+		!strings.Contains(out, "ticket not checked") {
+		t.Fatalf("show: %d %s %s", code, out, errs)
+	}
+	if code, _, errs := audit(append([]string{"show"}, append(base, "nope")...)...); code != 1 || !strings.Contains(errs, "no exchange nope") {
+		t.Errorf("show nope: %d %s", code, errs)
+	}
+	code, out, _ = audit(append([]string{"show", "--json"}, append(base, r.ID)...)...)
+	if code != 0 || !strings.Contains(out, `"header":"h"`) {
+		t.Errorf("show --json: %d %s", code, out)
+	}
+}
+
+// --follow prints each exchange once, again only when it changes, and
+// the lox run sessions as they start.
+func TestAuditFollow(t *testing.T) {
+	data, keyFile, _ := hubWithDecision(t)
+	state := t.TempDir()
+	src := auditSource(auditDirs{data: data, state: state}, keyFile, t.TempDir())
+	if err := loxaudit.AppendRun(src.Runs, loxrun.RunEvent{Event: loxrun.RunStart, User: "david", Mode: "AUTO"}); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	o := auditOut{w: &out, width: 100, style: loxrun.Style{Unicode: true}}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	if code := followAudit(ctx, src, loxaudit.Filter{}, o, false, map[string]string{}, 0, 20*time.Millisecond, &errb); code != 0 {
+		t.Fatal(code, errb.String())
+	}
+	got := out.String()
+	if strings.Count(got, "✔ human") != 1 || strings.Count(got, "lox run started by david") != 1 || errb.Len() != 0 {
+		t.Errorf("follow printed:\n%s%s", got, errb.String())
+	}
+	out.Reset()
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	followAudit(ctx, src, loxaudit.Filter{}, o, true, map[string]string{}, 1, 20*time.Millisecond, &errb)
+	if strings.Count(out.String(), "\n") != 1 || !strings.Contains(out.String(), `"decision":"human"`) {
+		t.Errorf("follow --json printed:\n%s", out.String())
 	}
 }

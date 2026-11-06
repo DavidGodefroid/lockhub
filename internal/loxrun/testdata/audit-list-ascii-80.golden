@@ -1,0 +1,16 @@
+ 9 exchanges - 3 auto - 2 human - 2 denied - 1 waiting - 4 writes - 1 connect...
+--------------------------------------------------------------------------------
+ -- Thursday 5 November 2026 ---------------------------------------------------
+ 14:08:40 dev-2    S shop     dev      read   SELECT count(*) FROM... auto ok   
+ -- Friday 6 November 2026 -----------------------------------------------------
+ -- lox run started by david at 14:02:05 in AUTO -------------------------------
+ 14:02:12 dev-1    S shop     prod!    conn   connect db.internal:... + human ok
+ 14:02:14 dev-1    S shop     prod!    read   SELECT id, total FRO... auto ok   
+ 14:03:01 web-a... Q mq       local    action PEEK orders.created ... auto ok   
+ 14:04:30 dev-2    S shop     dev      ddl    DROP TABLE sessions     x rule    
+ 14:05:20 dev-1    S shop     prod!    write  UPDATE customers SET... + human ok
+ -- switched to MANUAL at 14:05:40 --
+ 14:05:50 web-a... H api      stripe   route  POST api.stripe.com/... x denied  
+ 14:06:20 dev-2    S shop     dev      write  DELETE FROM carts WH... - none exp
+ -- switched to AUTO at 14:06:40 --
+ 14:06:59 dev-1    S shop     prod!    write  UPDATE orders SET st... ? asked   

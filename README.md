@@ -85,8 +85,7 @@ answer. **Shift+Tab** switches to manual (every ticket asked) and back; the mode
 is the coloured badge in the header. The terminal **bell rings only when a
 question waits**. A question is a framed card above the feed (`y` approve, `n`
 deny, `d` the whole masked screen); masked values look like `‹j***(20)›`.
-`a` lists the session's decisions and the rule behind each (the hub's audit
-records the rule too), `?` shows the keys. **Quitting** (`q q`, Ctrl-C) stops
+`a` shows the hub's audit, as `lox audit` lists it, `?` shows the keys. **Quitting** (`q q`, Ctrl-C) stops
 serving decisions: pending and new tickets wait at the hub for the next `lox
 run` (fail closed).
 
@@ -96,6 +95,13 @@ resize down to 40 columns; with stdout not a terminal it logs one plain line
 per ticket. Light theme:
 
 ![lox run on a light terminal](docs/lox-run-light.svg)
+
+`lox audit` lists every exchange the hub keeps (each ticket and its answer,
+masked by its lock, the rule or human that decided, its outcome) in the same
+columns and colours, with filters (`--agent`, `--lock`, `--profile`,
+`--since`, `--decision denied|human|auto|pending`, `--writes`), `--follow`
+and `--json`; `lox audit show ID` draws one exchange: its masked plan, the
+deciding rule, timings and signatures.
 
 `lox up` is deprecated: it prints "use lox run" and only starts the hub and
 the locks. See [docs/lox-run.md](docs/lox-run.md).

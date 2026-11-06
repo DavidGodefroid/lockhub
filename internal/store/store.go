@@ -656,3 +656,59 @@ func (s *Store) PushSubscriptions(ctx context.Context, device string) ([]PushSub
 	}
 	return out, rows.Err()
 }
+
+// Exchange is a ticket with its decision, when it has one (Decision.Raw
+// nil: none yet).
+type Exchange struct {
+	Ticket   Ticket
+	Decision Decision
+}
+
+// History lists the tickets created at or after since (zero: all) and
+// their decisions, oldest first, the newest limit of them (limit <= 0:
+// all): what lox audit shows. The tickets and decisions are the signed
+// ones the hub keeps, masked by their locks.
+func (s *Store) History(ctx context.Context, since time.Time, limit int) ([]Exchange, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite: no limit
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, instance, risk, plan_hash, state, raw, created, expires, updated, seq, draw, at FROM (
+		SELECT t.rowid AS rid, t.id, t.instance, t.risk, t.plan_hash, t.state, t.raw, t.created, t.expires, t.updated,
+			d.seq, d.raw AS draw, d.at
+		FROM tickets t LEFT JOIN decisions d ON d.instance = t.instance AND d.ticket = t.id
+		WHERE t.created >= ?
+		ORDER BY t.created DESC, t.rowid DESC LIMIT ?) ORDER BY created, rid`, unix0(since), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Exchange
+	for rows.Next() {
+		var x Exchange
+		var st string
+		var created, updated int64
+		var expires, seq, at sql.NullInt64
+		var draw []byte
+		if err := rows.Scan(&x.Ticket.ID, &x.Ticket.Instance, &x.Ticket.Risk, &x.Ticket.PlanHash, &st, &x.Ticket.Raw,
+			&created, &expires, &updated, &seq, &draw, &at); err != nil {
+			return nil, err
+		}
+		x.Ticket.State = state.State(st)
+		x.Ticket.Created, x.Ticket.Updated = time.Unix(created, 0).UTC(), time.Unix(updated, 0).UTC()
+		if expires.Valid {
+			x.Ticket.Expires = time.Unix(expires.Int64, 0).UTC()
+		}
+		if seq.Valid {
+			x.Decision = Decision{Seq: seq.Int64, Ticket: x.Ticket.ID, Instance: x.Ticket.Instance, Raw: draw, At: time.Unix(at.Int64, 0).UTC()}
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+func unix0(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
+}
