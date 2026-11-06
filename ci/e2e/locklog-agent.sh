@@ -62,7 +62,9 @@ say "lox add locklog logs: pinned to locklog's latest signed release"
 local_hub .lockfamily/lockfamily.yaml
 img=$(sed -n '/^  logs:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 case "$img" in ghcr.io/davidgodefroid/locklog@sha256:*) ;; *) die "lox add pinned no locklog image: $img" ;; esac
-mkdir -p .locklog && chmod 0700 .locklog
+# Readable by the agent account the launcher's mcp runs as (it reads the
+# profiles from the project, mounted read-only); writable by you only.
+mkdir -p .locklog && chmod 0755 .locklog
 cat >.locklog/config.toml <<EOF
 version = 1
 
@@ -74,7 +76,7 @@ kind = "file"
 paths = ["$logs/app/*.log"]
 format = "logfmt"
 EOF
-chmod 0600 .locklog/config.toml
+chmod 0644 .locklog/config.toml
 
 say "locklog init claude: the agent's .mcp.json, as the launcher writes it"
 mkdir -p "$bin"
