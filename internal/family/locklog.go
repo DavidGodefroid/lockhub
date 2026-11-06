@@ -371,8 +371,17 @@ func DeriveLogPlan(ctx context.Context, run Runner, h *LogHost, out []byte, mapD
 		if h.goos() == "darwin" {
 			return nil, errors.New("local log sources are not supported with Docker Desktop on macOS (the containers' logs live in its VM); use a remote source")
 		}
-		if o, err := run.Run(ctx, nil, "docker", "info", "--format", "{{.SecurityOptions}}"); err == nil && strings.Contains(string(o), "rootless") {
+		// Fail closed: an engine that does not say whether it is rootless
+		// is not taken for a rootful one.
+		o, err := run.Run(ctx, nil, "docker", "info", "--format", "{{.SecurityOptions}}")
+		if err != nil {
+			return nil, fmt.Errorf("local log sources need a rootful engine, and docker info does not say whether this one is rootless: %w", err)
+		}
+		if strings.Contains(string(o), "rootless") {
 			return nil, errors.New("rootless Docker is not supported for local log sources: its containers' logs and the host's journal are out of the console's reach")
+		}
+		if err := bindEngine(ctx, run); err != nil {
+			return nil, err
 		}
 	}
 	if len(p.DockerGlobs) > 0 {
@@ -401,6 +410,43 @@ func DeriveLogPlan(ctx context.Context, run Runner, h *LogHost, out []byte, mapD
 	}
 	slices.Sort(p.GIDs)
 	return p, nil
+}
+
+// minBindEngine is the oldest Docker engine that honours a bind's
+// NonRecursive option (API 1.40): an older one ignores it, and a bind of
+// the plan would silently show the mounts under it.
+var minBindEngine = [2]int{19, 3}
+
+var engineVersion = regexp.MustCompile(`^v?([0-9]{1,4})\.([0-9]{1,4})(\.|$|[-+~])`)
+
+// bindEngine refuses an engine that would not keep the plan's binds
+// non-recursive (bind.recursive: disabled), as the launcher does, and an
+// engine whose version cannot be read (fail closed).
+func bindEngine(ctx context.Context, run Runner) error {
+	o, err := run.Run(ctx, nil, "docker", "version", "--format", "{{.Server.Version}}")
+	if err != nil {
+		return fmt.Errorf("local log sources need Docker engine %d.%02d or later (non-recursive binds), and docker version does not answer: %w", minBindEngine[0], minBindEngine[1], err)
+	}
+	v := strings.TrimSpace(string(o))
+	m := engineVersion.FindStringSubmatch(v)
+	if m == nil {
+		return fmt.Errorf("local log sources need Docker engine %d.%02d or later (non-recursive binds), and the engine's version %q cannot be read", minBindEngine[0], minBindEngine[1], v)
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < minBindEngine[0] || (major == minBindEngine[0] && minor < minBindEngine[1]) {
+		return fmt.Errorf("the Docker engine %s is older than %d.%02d: it ignores a bind's non-recursive option, so the log directories would show what is mounted under them; upgrade the engine", v, minBindEngine[0], minBindEngine[1])
+	}
+	return nil
+}
+
+// logNetLine is the review line of a locklog lock's network: the hub's
+// alone, or with its own (remote sources).
+func logNetLine(project, n string, p *LogPlan) string {
+	if p.Remote {
+		return fmt.Sprintf("lock %s network lockhub and %s, its own, which no agent joins (remote sources, through its gateway; LOCKLOG_NETWORK)", n, LockNetwork(project, n))
+	}
+	return fmt.Sprintf("lock %s network lockhub only (local sources: no route out)", n)
 }
 
 // logDir is a locklog instance's host state (0700): its applied plan and
@@ -719,7 +765,7 @@ func updateLogMap(ctx context.Context, run Runner, p *LogPlan) (int, bool, error
 
 // logPlanLine is a review line a mount plan derives (LogPlan.Review):
 // from the profile, not from lockfamily.yaml.
-var logPlanLine = regexp.MustCompile(`^lock \S+ (mount plan of profile|plan|bind|groups|containers map) `)
+var logPlanLine = regexp.MustCompile(`^lock \S+ (mount plan of profile|plan|bind|groups|containers map|network) `)
 
 // Refresh is `lox refresh <instance>`: it rewrites the containers map of
 // a locklog lock once, from the approved globs of the plan the last

@@ -94,7 +94,7 @@ func TestComposeLocklog(t *testing.T) {
       - "logs-home:/home/locklog"
       - hubkey:/run/lockfamily:ro
       - "profile-locklog:/w/.locklog:ro"
-    networks: [lockhub, "locknet-logs"]
+    networks: [lockhub]
     depends_on: [lockhub]
     restart: unless-stopped
 `
