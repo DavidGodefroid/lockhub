@@ -62,22 +62,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # locksql's host launcher (scripts/locksql), for the host agent
-      # (`locksql mcp`, lockhub#78): the commit that reads up.json
-      # (DavidGodefroid/locksql#153, its merge commit on main), until a
-      # locksql release ships it.
+      # (`locksql mcp`, lockhub#78): its v0.17.0 release commit, which
+      # ships the up.json reading (DavidGodefroid/locksql#153) and matches
+      # the image lox add pins (the latest release, v0.17.0).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DavidGodefroid/locksql
-          ref: 9fb7376d574e58aaf1aa8c92c5eae9a19948d2b2
+          ref: 8cc3eac669a2eaea569cb11acd4b5b584b16ad21 # v0.17.0
           path: locksql-launcher
       # lockmq's host launcher (scripts/lockmq), for the host agent
-      # (`lockmq mcp`, lockhub#78): its v0.5.0 release commit, which
+      # (`lockmq mcp`, lockhub#78): its v0.8.0 release commit, which
       # ships the up.json reading (DavidGodefroid/lockmq#36) and matches
-      # the image lox add pins (the latest release, v0.5.0).
+      # the image lox add pins (the latest release, v0.8.0).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DavidGodefroid/lockmq
-          ref: a4d4606de38efae92af9b03e050436f87dcf2c19 # v0.5.0
+          ref: 2a02e7cbe3a5b11d17525ab3eeb14fcc0ecaf4f8 # v0.8.0
           path: lockmq-launcher
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -132,14 +132,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The launcher lox add drives (profile add, init claude, doctor, then
-      # the host agents' mcp): the v0.13.1 release, whose profile add takes
-      # --credentials ask|vault --vault-path and whose console asks the
-      # Vault token at its start. The job this one replaces pinned a commit
-      # on main for that (DavidGodefroid/locksql#164) until the tag existed.
+      # the host agents' mcp): the v0.17.0 release (v0.13.1 or later: its
+      # profile add takes --credentials ask|vault --vault-path and its
+      # console asks the Vault token at its start). The job this one
+      # replaces pinned a commit on main for that (DavidGodefroid/locksql#164)
+      # until the tag existed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DavidGodefroid/locksql
-          ref: v0.13.1
+          ref: v0.17.0
           path: locksql-launcher
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -180,7 +181,7 @@ jobs:
           sh ci/e2e/firstrun.sh "$RUNNER_TEMP/bin/lox"
       # The Vault half of the first run: one ask lock and one vault lock in
       # the same workspace, both queries approved. Its console's
-      # Vault-token prompt is released (locksql v0.13.1, checked out above).
+      # Vault-token prompt is released (locksql v0.13.1; v0.17.0 is checked out above).
       - name: first run (lox add locksql with Vault)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

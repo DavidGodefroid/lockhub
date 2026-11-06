@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The copy of lockfile's seccomp.json (lockfile v0.3.0 to v0.7.0). A new
+// The copy of lockfile's seccomp.json (lockfile v0.3.0 to v0.8.0). A new
 // digest is a deliberate change: copy lockfile's file and update it here.
 const lockfileSeccompPinned = "785b2429264afba4d594320337cb17f144f3c7d51585f9805eef72e28f4f9334"
 

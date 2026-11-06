@@ -7,7 +7,7 @@
 # E2E_VAULT=1 (default 0) also adds a lock whose credentials Vault holds,
 # against the Vault dev server the CI job starts (E2E_VAULT_CONTAINER and
 # E2E_VAULT_TOKEN). That half needs a locksql console that asks the Vault
-# token at its start (locksql v0.13.1, the launcher e2e.yml checks out) and
+# token at its start (locksql v0.13.1 or later; e2e.yml checks out v0.17.0) and
 # the job's Vault image, pinned by digest; e2e.yml runs it as a step of its
 # own.
 #
