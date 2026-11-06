@@ -224,7 +224,7 @@ jobs:
           sh ci/e2e/seccomp.sh "$RUNNER_TEMP/bin/lox"
 
   locklog:
-    name: e2e locklog mounts (lox run binds a locklog plan, the containers map, lox refresh)
+    name: e2e locklog mounts (lox run binds a locklog plan, the containers map, lox refresh, networks and routing)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

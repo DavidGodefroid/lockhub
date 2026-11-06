@@ -174,6 +174,8 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		}
 		if fs, ok := c.Hub.Routing[n]; ok {
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
+		} else if l.Type == "locklog" {
+			s = append(s, fmt.Sprintf("lock %s routed only to %s (locklog's default: no chat facade)", n, strings.Join(LocklogFacades, ",")))
 		}
 	}
 	return s
@@ -325,7 +327,7 @@ func (u *Up) Do(ctx context.Context) error {
 			return errors.New("--rotate: nothing to rotate before the first lox run of this workspace")
 		}
 	}
-	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks, Egress: egresses}
+	paths := Paths{Workspace: ws, HubData: hubData, FacadeDir: facadeDir, Facades: facadesPath, User: u.User, Rotate: rot.locks, Egress: egresses, Project: project}
 	if needsNCPU(c) {
 		if paths.NCPU, err = hostNCPU(ctx, u.Run); err != nil {
 			return err
@@ -544,6 +546,11 @@ func (u *Up) Do(ctx context.Context) error {
 		for _, w := range pl.Warnings {
 			fmt.Fprintf(u.Out, "warning: lock %s: %s\n", n, w)
 		}
+		if !pl.Remote {
+			// No route out: whatever the profile or vault names is
+			// reached by nothing (fail closed), and the review says so.
+			egresses[n] = localLogEgress()
+		}
 		plans[n] = pl
 	}
 
@@ -553,6 +560,7 @@ func (u *Up) Do(ctx context.Context) error {
 	for _, n := range c.Instances() {
 		if pl := plans[n]; pl != nil {
 			sum = append(sum, pl.Review(n)...)
+			sum = append(sum, logNetLine(project, n, pl))
 		}
 	}
 	for _, t := range types(c) {
@@ -1066,6 +1074,13 @@ func Routes(c *Config) route.Rules {
 	r := route.Rules{Enabled: c.Hub.Facades, Only: map[string][]string{}}
 	for inst, fs := range c.Hub.Routing {
 		r.Only[inst] = slices.Clone(fs)
+	}
+	// A locklog lock is answered on the local facades only, unless
+	// hub.routing narrows it further (it cannot name a chat facade).
+	for _, n := range c.Instances() {
+		if _, set := r.Only[n]; !set && c.Locks[n].Type == "locklog" {
+			r.Only[n] = slices.Clone(LocklogFacades)
+		}
 	}
 	if slices.Contains(c.Hub.Facades, route.Mobile) {
 		for _, n := range c.Instances() {

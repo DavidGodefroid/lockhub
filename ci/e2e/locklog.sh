@@ -13,6 +13,14 @@
 # is stale once a container its globs name appears, and lox refresh
 # rewrites it.
 #
+# Networks and routing (lockhub#87, H-LL2b): the two local-source consoles
+# are on the hub's network alone (no route out, no LOCKLOG_NETWORK); a
+# third lock, with a remote (Loki) source, is on its own locknet behind its
+# gateway, which no other lock joins, and LOCKLOG_NETWORK names it. The
+# locklog locks are routed to the local facades only, and lox doctor finds
+# the routing lox run wrote. A lock whose plan.json is gone (a workspace
+# from before the mount plans) is a warning that says to run lox run.
+#
 #   ci/e2e/locklog.sh LOX_BIN
 . "$(dirname "$0")/lib.sh"
 lox=$1
@@ -46,6 +54,7 @@ id1=$(docker inspect -f '{{.Id}}' "$web-1")
 say "lox add locklog logs and ctrs: pinned to locklog's latest signed release"
 "$lox" add locklog logs --profile files
 "$lox" add locklog ctrs --profile ctr
+"$lox" add locklog rem --profile rem
 local_hub .lockfamily/lockfamily.yaml
 cat .lockfamily/lockfamily.yaml
 mkdir -p .locklog && chmod 0700 .locklog
@@ -67,6 +76,15 @@ production = false
 kind = "docker"
 containers = ["$web-*"]
 format = "json"
+
+[profiles.rem]
+production = false
+
+[profiles.rem.sources.loki]
+kind = "loki"
+url = "http://loki.invalid:3100"
+auth = "none"
+selector = { app = "e2e" }
 EOF
 chmod 0600 .locklog/config.toml
 
@@ -89,7 +107,14 @@ for want in \
 	"lock ctrs plan docker $web-*" \
 	"lock ctrs bind $root (read-only, non-recursive; the Docker containers root, group 0 for it only" \
 	"lock ctrs groups 0" \
-	"lock ctrs containers map $mapdir at /run/locklog-map (read-only)"; do
+	"lock ctrs containers map $mapdir at /run/locklog-map (read-only)" \
+	"lock logs network lockhub only (local sources: no route out)" \
+	"lock ctrs network lockhub only (local sources: no route out)" \
+	"lock rem plan remote" \
+	"lock rem network lockhub and ${p}_locknet-rem, its own, which no agent joins" \
+	"only loki.invalid:3100" \
+	"local log sources only: the console is on the hub's network alone, with no route out" \
+	"lock logs routed only to tty,deck,mobile (locklog's default: no chat facade)"; do
 	grep -qF "$want" run.out || die "the review lacks: $want"
 done
 
@@ -115,9 +140,31 @@ for f in logs.json ctrs.json; do
 done
 jq -e '[.mounts[] | select(.Destination == "/run/locklog-map")] | length == 0' logs.json >/dev/null || die "lock-logs (no docker source) has a map"
 
-say "both consoles start: their mount check accepts what lox run passed"
+say "networks: local sources on the hub's network alone, a remote source on its own"
+# nets CONTAINER: the networks it joins, sorted.
+nets() { docker inspect -f '{{json .NetworkSettings.Networks}}' "$1" | jq -c 'keys'; }
+for c in logs ctrs; do
+	[ "$(nets "$p-lock-$c-1")" = "[\"${p}_lockhub\"]" ] || die "lock-$c: networks $(nets "$p-lock-$c-1"), not the hub's alone"
+	jq -e '.env | any(startswith("LOCKLOG_NETWORK=")) | not' "$c.json" >/dev/null || die "lock-$c: LOCKLOG_NETWORK set with local sources only"
+	docker network inspect "${p}_locknet-$c" >/dev/null 2>&1 && die "${p}_locknet-$c exists for a lock with local sources only"
+	docker inspect "$p-gw-$c-1" >/dev/null 2>&1 && die "a gateway for lock-$c (local sources only)"
+done
+[ "$(nets "$p-lock-rem-1")" = "[\"${p}_lockhub\",\"${p}_locknet-rem\"]" ] || die "lock-rem: networks $(nets "$p-lock-rem-1")"
+insp "$p-lock-rem-1" >rem.json
+jq -e --arg n "${p}_locknet-rem" '.env | index("LOCKLOG_NETWORK=" + $n) != null' rem.json >/dev/null || { cat rem.json; die "lock-rem: LOCKLOG_NETWORK is not ${p}_locknet-rem"; }
+[ "$(docker network inspect -f '{{.Internal}}' "${p}_locknet-rem")" = true ] || die "${p}_locknet-rem is not internal"
+joined=$(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "${p}_locknet-rem" | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')
+[ "$joined" = "$p-gw-rem-1 $p-lock-rem-1 " ] || die "${p}_locknet-rem is joined by: $joined"
+
+say "routing: the locklog locks answered on the local facades only, as lox doctor checks"
+for c in logs ctrs rem; do
+	jq -e --arg c "$c" '.only[$c] | (. != null) and all(. == "tty" or . == "deck" or . == "mobile")' "$state/hub/routing.json" >/dev/null ||
+		{ cat "$state/hub/routing.json"; die "routing.json: lock $c is not routed to the local facades only"; }
+done
+
+say "the consoles start: their mount check accepts what lox run passed"
 sleep 5
-for c in "$p-lock-logs-1" "$p-lock-ctrs-1"; do
+for c in "$p-lock-logs-1" "$p-lock-ctrs-1" "$p-lock-rem-1"; do
 	[ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$c")" = "true 0" ] ||
 		{ docker inspect -f '{{json .State}} restarts {{.RestartCount}}' "$c"; die "$c does not stay up (its mount check refused?)"; }
 done
@@ -140,6 +187,8 @@ docker exec "$p-lock-ctrs-1" cat /run/locklog-map/map.v2 | cmp - "$mapdir/map.v2
 "$lox" doctor >doctor1.out 2>&1 || true
 grep -F "lock ctrs containers map: map.v2 current: 1 mapped" doctor1.out || { cat doctor1.out; die "lox doctor does not say map.v2 is current"; }
 grep -F "changed since the last lox run" doctor1.out && die "lox doctor takes the mount plans for a change of lockfamily.yaml"
+grep -F "hub routing" doctor1.out | grep -F "differs" && die "lox doctor: a false routing mismatch"
+grep -qF "hub routing: facades" doctor1.out || { cat doctor1.out; die "lox doctor does not find the routing lox run wrote"; }
 
 say "a new container its glob names: lox doctor says the map is stale, lox refresh rewrites it"
 docker run -d --name "$web-2" --log-driver json-file alpine:3.22 sleep 900 >/dev/null
@@ -158,4 +207,11 @@ rc=0
 "$lox" refresh logs >refresh-logs.out 2>&1 || rc=$?
 [ "$rc" = 1 ] && grep -qF "has no docker source" refresh-logs.out || { cat refresh-logs.out; die "lox refresh of a lock with no docker source: exit $rc"; }
 
-say "PASS: lox run mounts locklog's plan, the containers map and lox refresh"
+say "a lock with no applied plan (a workspace from before the mount plans): a warning, not a failure"
+mv "$state/locklog/logs/plan.json" "$state/locklog/logs/plan.json.bak"
+"$lox" doctor >doctor4.out 2>&1 || true
+grep -F "warn lock logs mount plan: none applied yet" doctor4.out | grep -qF "run lox run" || { cat doctor4.out; die "lox doctor does not warn about the missing plan"; }
+grep -E "^FAIL .*lock logs" doctor4.out && die "lox doctor fails a lock with no applied plan"
+mv "$state/locklog/logs/plan.json.bak" "$state/locklog/logs/plan.json"
+
+say "PASS: lox run mounts locklog's plan, the containers map and lox refresh; networks and routing"

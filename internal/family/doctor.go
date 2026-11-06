@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -168,6 +169,12 @@ func (d *Doctor) logMaps(ctx context.Context, c *Config, ok, warn, fail func(str
 		if !Kinds[c.Locks[n].Type].Mounts {
 			continue
 		}
+		// A workspace applied before lox run kept mount plans: nothing
+		// is broken, the next lox run derives and reviews the plan.
+		if _, err := os.Lstat(filepath.Join(logDir(d.State, n), planFile)); errors.Is(err, fs.ErrNotExist) {
+			warn("lock %s mount plan: none applied yet (a workspace from before lox run derived mount plans): run lox run to review and apply it", n)
+			continue
+		}
 		msg, stale, err := logMapStale(ctx, d.Run, d.State, n)
 		switch {
 		case err != nil:
@@ -194,7 +201,8 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 		fail("hub routing %s: %v", p, err)
 		return
 	}
-	want := route.Rules{Enabled: c.Hub.Facades, Only: c.Hub.Routing}
+	// What lox run writes: hub.routing, narrowed (mobile, locklog).
+	want := Routes(c)
 	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) {
 		fail("hub routing %s differs from lockfamily.yaml: run lox run", p)
 		return

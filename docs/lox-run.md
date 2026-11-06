@@ -477,6 +477,7 @@ those:
 | locksql | `host`:`port` (default 5432 for postgres, 3306 for mysql and mariadb); sqlite none; with an `ssh` table, the bastion only |
 | lockmq | `url`, `amqp_url`, `stream_url` (default ports of their schemes); with `ssh`, the bastion only |
 | lockfile | s3: the `endpoint`, else `<bucket>.s3.<region>.amazonaws.com:443`; sftp: `host`:`port` (22); local none |
+| locklog | the `url` of each `loki`, `elastic` and `opensearch` source (80 for http, 443 for https); file, journald and docker none. A lock whose mount plan reads no remote source gets none at all (see below) |
 | any, with `vault: true` | the `vault.address` |
 
 The lock's profile names the profile it serves (`locks.<name>.profile`); when
@@ -543,8 +544,11 @@ on the host:
   whole console, so a docker source is refused beside file or journald
   sources: put it in a lock of its own;
 - a `remote` line binds nothing;
-- local sources are refused on macOS (Docker Desktop) and under rootless
-  Docker.
+- local sources are refused on macOS (Docker Desktop), under rootless
+  Docker, and on an engine older than 19.03 (it ignores a bind's
+  non-recursive option). Fail closed: an engine whose `docker info` or
+  `docker version` does not answer, or whose version cannot be read, is
+  refused too.
 
 Every directory is bound read-only and non-recursive (Compose
 `bind: {recursive: disabled}`: no submount of it appears) at its own path.
@@ -565,7 +569,32 @@ it before the consoles start and again once they exist (their ids are
 excluded); `lox refresh <instance>`
 rewrites it from the globs lox run applied (the console re-reads it). No loop
 follows `docker events` under lox run, and `lox doctor` says when the map is
-stale.
+stale. A locklog lock with no applied plan (a workspace applied before lox
+run derived mount plans) is a warning in `lox doctor`: run `lox run` to
+review and apply it.
+
+### locklog: networks and routing
+
+A locklog lock whose plan has local sources only (or no plan yet) joins the
+hub's network alone: it is internal, so the console has no route out. It gets
+no `locknet-<instance>`, no gateway and no `LOCKLOG_NETWORK`, whatever its
+profile or `vault:` names (the review's egress row says so). A lock whose plan
+reads a remote source (Loki, Elasticsearch, OpenSearch) is on its own
+network, `locknet-<instance>`, behind its gateway, which forwards only the
+sources' urls (and Vault's, with `vault: true`); no agent and no other lock
+joins it. Its console gets `LOCKLOG_NETWORK=<project>_locknet-<instance>`,
+the engine's name of that network. The review says which:
+`lock NAME network lockhub only (local sources: no route out)`, or
+`lock NAME network lockhub and <project>_locknet-NAME, its own, which no
+agent joins`.
+
+A locklog ticket is a read of masked logs, and an unmask or a lookup is
+`read-pii`: a locklog lock is answered on the local facades only. A
+`hub.routing` entry of it naming `slack` or `telegram` is refused, and with
+no entry it is routed to `tty`, `deck` and `mobile` (narrowed away from mobile
+when it pins no device, as every lock). The review shows that default. `lox
+doctor` compares the hub's `routing.json` with that routing, as lox run writes
+it.
 
 ## Upgrading the images
 

@@ -72,7 +72,31 @@ type Paths struct {
 	// lox run reads it only when a lock's kind sets CPUs; 0: unknown, the
 	// kind's CPUs as they are.
 	NCPU int
+	// Project is the compose project: it names a locklog lock's network
+	// as the engine knows it (LOCKLOG_NETWORK, <project>_locknet-<n>).
+	Project string
 }
+
+// lockNet reports whether lock l sits on its own network, locknet-<n>
+// (and its gateway, for an allowlist): every kind but lockhttp (whose
+// egress is its own policy's), except a locklog lock whose plan reads no
+// remote source (local sources only, or no plan yet). That one is on the
+// hub's network alone, which is internal: no route out, no other
+// network.
+func lockNet(l Lock, lp *LogPlan) bool {
+	k := Kinds[l.Type]
+	if k.Gate {
+		return false
+	}
+	if k.Mounts {
+		return lp != nil && lp.Remote
+	}
+	return true
+}
+
+// LockNetwork is the engine's name of lock inst's network, locknet-<n>,
+// in the compose project.
+func LockNetwork(project, inst string) string { return project + "_locknet-" + inst }
 
 // VaultCAPath is where the locks with vault: true see the reviewed CA.
 const VaultCAPath = "/run/lockfamily-vault/ca.pem"
@@ -278,6 +302,11 @@ func Compose(c *Config, p Paths) string {
 					w("      LOCKLOG_DOCKER_ROOT: %s", q(lp.DockerRoot))
 				}
 			}
+			if lockNet(l, lp) && p.Project != "" {
+				// A remote source is reached on the lock's own network,
+				// through its gateway; no agent joins it.
+				w("      LOCKLOG_NETWORK: %s", q(LockNetwork(p.Project, name)))
+			}
 		}
 		// Where the lock reads its secrets: its address and namespace, and
 		// the reviewed CA. Never the token (typed at the console's start).
@@ -414,6 +443,11 @@ func Compose(c *Config, p Paths) string {
 			// The gate asks the hub, from lea's proxy: the console only
 			// serves the policy and has no hub network.
 			w("    networks: [%s]", q("egress-"+name))
+		} else if !lockNet(l, lp) {
+			// A locklog console with local sources only: the hub's network
+			// alone (internal: no route out).
+			w("    networks: [lockhub]")
+			w("    depends_on: [lockhub]")
 		} else {
 			// locknet-<name> is internal: the lock reaches the hosts of its
 			// reviewed profile through its gateway only (egress.go).
@@ -425,7 +459,7 @@ func Compose(c *Config, p Paths) string {
 			}
 		}
 		w("    restart: unless-stopped")
-		if eg := p.Egress[name]; !k.Gate && len(eg.Endpoints) > 0 {
+		if eg := p.Egress[name]; lockNet(l, lp) && len(eg.Endpoints) > 0 {
 			gateway(w, c.Hub.Image, name, eg)
 		}
 		if k.Gate {
@@ -539,6 +573,9 @@ func Compose(c *Config, p Paths) string {
 		if Kinds[c.Locks[name].Type].Gate {
 			// lockhttp's egress is its own policy's.
 			w("  %s: {}", q("egress-"+name))
+			continue
+		}
+		if !lockNet(c.Locks[name], p.Logs[name]) {
 			continue
 		}
 		w("  %s:", q("locknet-"+name))

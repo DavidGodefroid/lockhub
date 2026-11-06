@@ -358,6 +358,41 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 		default:
 			bad("source")
 		}
+	case "locklog":
+		// The remote sources (Loki, Elasticsearch, OpenSearch): their url,
+		// http or https. File, journald and docker sources read mounts.
+		srcs, ok := pr["sources"].(map[string]any)
+		if _, set := pr["sources"]; set && !ok {
+			bad("sources")
+			return
+		}
+		var names []string
+		for n := range srcs {
+			names = append(names, n)
+		}
+		slices.Sort(names)
+		for _, n := range names {
+			src, ok := srcs[n].(map[string]any)
+			if !ok {
+				bad("sources." + n)
+				continue
+			}
+			kind, _ := src["kind"].(string)
+			if kind != "loki" && kind != "elastic" && kind != "opensearch" {
+				continue
+			}
+			s, ok := src["url"].(string)
+			u, err := url.Parse(s)
+			scheme := ""
+			if err == nil {
+				scheme = strings.ToLower(u.Scheme)
+			}
+			if !ok || (scheme != "http" && scheme != "https") {
+				bad("sources." + n + ".url")
+				continue
+			}
+			add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), scheme == "https", kind+" source "+n)
+		}
 	}
 }
 
@@ -397,6 +432,13 @@ func (e Egress) Short() string {
 		s += "; unreachable: " + strings.Join(e.None, "; ")
 	}
 	return s
+}
+
+// localLogEgress is the egress of a locklog lock whose plan reads no
+// remote source: none, whatever its profile or vault name. Its console is
+// on the hub's network alone (lockNet).
+func localLogEgress() Egress {
+	return Egress{None: []string{"local log sources only: the console is on the hub's network alone, with no route out"}}
 }
 
 // formerNets are the lock networks of lox before lockhub#123 (bridges

@@ -94,6 +94,9 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if out, ok := f.keys["docker/"+line]; ok {
 		return []byte(out), nil
 	}
+	if line == "docker version --format {{.Server.Version}}" {
+		return []byte("27.3.1\n"), nil
+	}
 	if line == "docker info --format {{.DockerRootDir}}" {
 		return []byte("/var/lib/docker\n"), nil
 	}
