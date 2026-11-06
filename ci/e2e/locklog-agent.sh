@@ -175,8 +175,13 @@ cat unmask2.json
 [ "$(clear unmask2.json | wc -l)" = 1 ] || die "the unmask gave more than the one pseudonym's value: $(clear unmask2.json | tr '\n' ' ')"
 got=$(clear unmask2.json)
 echo "host agent: $tok of the record unmasked as $got, approved as $ticket"
-# The hub keeps the masked ticket only: never the clear value.
-docker run --rm --network none -v "$XDG_STATE_HOME/lockfamily/$p/hub:/h:ro" alpine:3.22 sh -c 'cat /h/* 2>/dev/null' | grep -aqF "$got" &&
-	die "the hub's data holds the clear value"
+# The hub keeps the masked ticket only: never the clear value. The check
+# reads the hub's files, hub.db first: with no database to read, it
+# would check nothing, so it fails.
+docker run --rm --network none -v "$XDG_STATE_HOME/lockfamily/$p/hub:/h:ro" alpine:3.22 \
+	sh -c 'test -f /h/hub.db -a -s /h/hub.db || exit 3; for f in /h/*; do [ -f "$f" ] && cat "$f"; done; exit 0' >hubdata.bin ||
+	die "the hub's database $XDG_STATE_HOME/lockfamily/$p/hub/hub.db is missing or empty: the clear-value check would read nothing"
+[ -s hubdata.bin ] || die "the hub's data read empty: the clear-value check would read nothing"
+grep -aqF "$got" hubdata.bin && die "the hub's data holds the clear value"
 
 say "PASS: a host agent reaches a lox run locklog lock: a masked count, then an approved unmask"

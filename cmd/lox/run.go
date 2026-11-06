@@ -79,7 +79,9 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		}
 	}
 	locks := 0
-	var rules func(instance, profile string) loxrun.ProfileRules
+	// Without the lock file, no lock's rules are known: the engine's
+	// defaults, and a locklog ticket's reads are asked (fail closed).
+	var rules func(lock, instance, profile string) loxrun.ProfileRules
 	if c, err := family.Load(abs); err == nil {
 		locks = len(c.Locks)
 		rules = profileRules(family.AppliedLogRules(stateDir(family.Project(family.Workspace(abs))), c))
@@ -138,18 +140,20 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 }
 
 // profileRules are the engine's per-profile rules from the locks' own
-// auto rules as lox run applied them: a locklog lock's (by instance), for
-// the profile its console serves; for any other of its profiles, and
-// rules lox run could not read, every read is asked. The other locks keep
-// the defaults (nil).
-func profileRules(logs map[string]*family.LogRules) func(instance, profile string) loxrun.ProfileRules {
-	return func(instance, profile string) loxrun.ProfileRules {
-		r, ok := logs[instance]
-		if !ok {
+// auto rules as lox run applied them: a locklog ticket's lock's (by
+// instance), for the profile its console serves. A locklog ticket on
+// another of its profiles, or on an instance whose rules lox run could
+// not read (the lock file no longer loads, the instance left it), gets
+// no rules here, and the engine asks its reads (fail closed). The other
+// locks keep the defaults (nil).
+func profileRules(logs map[string]*family.LogRules) func(lock, instance, profile string) loxrun.ProfileRules {
+	return func(lock, instance, profile string) loxrun.ProfileRules {
+		if lock != loxrun.LockLocklog {
 			return nil
 		}
-		if r.Profile != profile {
-			r = &family.LogRules{Profile: profile, Unknown: "not the profile lox run applied"}
+		r, ok := logs[instance]
+		if !ok || r.Profile != profile {
+			return nil
 		}
 		return loxrun.LocklogRules(r.Get)
 	}

@@ -169,8 +169,10 @@ type Verdict struct {
 // (connections, endpoints). It is not safe for concurrent use.
 type Engine struct {
 	Mode Mode
-	// Rules returns the rules of a profile (nil: Defaults alone).
-	Rules func(instance, profile string) ProfileRules
+	// Rules returns the rules of a profile of a lock (lock is the
+	// product the ticket names, Request.Lock; nil: Defaults alone). A
+	// locklog profile with no known rules asks its reads (rulesOf).
+	Rules func(lock, instance, profile string) ProfileRules
 
 	connected map[string]bool // instance/profile: connection approved this session
 	endpoints map[string]bool // instance/profile/endpoint/target: reached this session
@@ -184,8 +186,8 @@ func NewEngine(m Mode) *Engine {
 // ruleAction is the action of r a profile rule decides: read-pii for a
 // read of risk read-pii whose profile has a rule for it, else a.
 func (e *Engine) ruleAction(r Request, a Action) Action {
-	if a == ActRead && r.Risk == ticket.RiskReadPII && e.Rules != nil {
-		if _, ok := e.Rules(r.Instance, r.Profile())[ActReadPII]; ok {
+	if a == ActRead && r.Risk == ticket.RiskReadPII {
+		if _, ok := e.rulesOf(r)[ActReadPII]; ok {
 			return ActReadPII
 		}
 	}
@@ -193,10 +195,8 @@ func (e *Engine) ruleAction(r Request, a Action) Action {
 }
 
 func (e *Engine) rule(r Request, a Action) Value {
-	if e.Rules != nil {
-		if v, ok := e.Rules(r.Instance, r.Profile())[e.ruleAction(r, a)]; ok {
-			return v
-		}
+	if v, ok := e.rulesOf(r)[e.ruleAction(r, a)]; ok {
+		return v
 	}
 	if a == ActAction {
 		if readRisk(r.Risk) {
@@ -266,13 +266,35 @@ func (e *Engine) Decide(r Request) Verdict {
 // autoRule names the rule of an auto approval: the profile's own rule
 // when it set the action, the default otherwise.
 func autoRule(e *Engine, r Request, a Action) string {
-	if e.Rules != nil {
-		ra := e.ruleAction(r, a)
-		if _, ok := e.Rules(r.Instance, r.Profile())[ra]; ok {
-			return "profile:" + string(ra)
-		}
+	ra := e.ruleAction(r, a)
+	if _, ok := e.rulesOf(r)[ra]; ok {
+		return "profile:" + string(ra)
 	}
 	return "default:" + string(a)
+}
+
+// LockLocklog is locklog's product name, as its tickets name their lock
+// (Request.Lock).
+const LockLocklog = "locklog"
+
+// rulesOf are the rules of r's profile. A locklog ticket fails closed:
+// the engine's defaults auto-approve reads, which for locklog would cover
+// its scans and its read-pii unmasks and lookups, so a locklog profile
+// whose rules are unknown (no Rules, an instance or profile lox run has
+// no applied rules for, a rule left out) asks its read and read-pii.
+func (e *Engine) rulesOf(r Request) ProfileRules {
+	var p ProfileRules
+	if e.Rules != nil {
+		p = e.Rules(r.Lock, r.Instance, r.Profile())
+	}
+	if r.Lock != LockLocklog {
+		return p
+	}
+	out := ProfileRules{ActRead: Ask, ActReadPII: Ask}
+	for k, v := range p {
+		out[k] = v
+	}
+	return out
 }
 
 // LocklogRules are the engine's rules for a locklog profile whose auto

@@ -43,6 +43,10 @@ func TestProfileArgs(t *testing.T) {
 			[]string{"--profile", "logs"}, ""},
 		{"locklog, some directories", "locklog", Answers{"name": "web-logs", "production": "y", "only": "/var/log/nginx,/var/log/app"},
 			[]string{"--profile", "web-logs", "--production", "--only", "/var/log/nginx,/var/log/app"}, ""},
+		// The answer is checked trimmed, and passed trimmed: locklog's
+		// --only does not trim.
+		{"locklog, spaced directories", "locklog", Answers{"name": "web-logs", "only": " /var/log/nginx , /var/log/app"},
+			[]string{"--profile", "web-logs", "--only", "/var/log/nginx,/var/log/app"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

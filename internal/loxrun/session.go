@@ -77,8 +77,9 @@ type Session struct {
 	// Display is the human's name for the decisions ($USER).
 	Display string
 	Mode    Mode
-	// Rules are the profiles' auto-mode rules (nil: the defaults).
-	Rules func(instance, profile string) ProfileRules
+	// Rules are the profiles' auto-mode rules, by lock, instance and
+	// profile (nil: the defaults; a locklog profile's reads are asked).
+	Rules func(lock, instance, profile string) ProfileRules
 	Now   func() time.Time
 	// Observe, if set, is told every Event (tests, logs). It runs on the
 	// session's loop: it must not block.

@@ -154,7 +154,7 @@ func TestEngineNeverAuto(t *testing.T) {
 // defaults only; deny holds in both modes; policy is never auto.
 func TestEngineProfileRules(t *testing.T) {
 	e := NewEngine(Auto)
-	e.Rules = func(instance, profile string) ProfileRules {
+	e.Rules = func(_, instance, profile string) ProfileRules {
 		switch profile {
 		case "local":
 			return ProfileRules{ActConnect: Allow, ActWrite: Allow, ActDDL: Allow, ActPolicy: Allow}
@@ -191,7 +191,7 @@ func TestEngineLocklogRules(t *testing.T) {
 		"odd":  {"read": "yes"},
 	}
 	e := NewEngine(Auto)
-	e.Rules = func(instance, profile string) ProfileRules {
+	e.Rules = func(_, instance, profile string) ProfileRules {
 		if instance != "logs" {
 			return nil
 		}
@@ -218,9 +218,10 @@ func TestEngineLocklogRules(t *testing.T) {
 		{"prod unmask denied", lr(ticket.RiskReadPII, "prod"), Refuse, "deny:read-pii"},
 		{"unknown value asks", lr(ticket.RiskRead, "odd"), Question, "ask:read"},
 		{"odd read-pii asks", lr(ticket.RiskReadPII, "odd"), Question, "ask:read-pii"},
-		// A profile with no rules keeps the defaults; another lock's
-		// read-pii read is ruled as read.
-		{"no rules", lr(ticket.RiskRead, "other"), Approve, "default:read"},
+		// A locklog profile with no rules fails closed: its reads are
+		// asked; another lock's read-pii read is ruled as read.
+		{"no rules", lr(ticket.RiskRead, "other"), Question, "ask:read"},
+		{"no rules read-pii", lr(ticket.RiskReadPII, "other"), Question, "ask:read-pii"},
 		{"locksql pii", req(ticket.KindRead, ticket.RiskReadPII, "app"), Approve, "default:read"},
 	}
 	for _, c := range cases {
@@ -234,7 +235,57 @@ func TestEngineLocklogRules(t *testing.T) {
 	if v := e.Decide(never); v.Outcome != Question {
 		t.Errorf("never-auto scan: %+v", v)
 	}
+	unknown := lr(ticket.RiskRead, "app")
+	unknown.Instance = "gone"
+	if v := e.Decide(unknown); v.Outcome != Question || v.Rule != "ask:read" {
+		t.Errorf("unknown instance: %+v", v)
+	}
 	if r := LocklogRules(func(string) string { return "" }); r[ActRead] != Ask || r[ActReadPII] != Ask {
 		t.Errorf("empty rules: %v", r)
+	}
+}
+
+// A locklog ticket whose rules are unknown is asked, never auto: with no
+// Rules at all (lox run could not read the lock file), with Rules that
+// know nothing of its instance, or with rules that leave read or
+// read-pii out, for read and read-pii alike; connect keeps its default,
+// and another lock's reads stay auto.
+func TestEngineLocklogUnknownRulesAsk(t *testing.T) {
+	lr := func(risk ticket.Risk) Request {
+		r := req(ticket.KindRead, risk, "app")
+		r.Instance, r.Lock = "logs", LockLocklog
+		return r
+	}
+	rules := map[string]func(lock, instance, profile string) ProfileRules{
+		"no rules":       nil,
+		"other instance": func(_, instance, _ string) ProfileRules { return nil },
+		"empty":          func(string, string, string) ProfileRules { return ProfileRules{} },
+		"connect only":   func(string, string, string) ProfileRules { return ProfileRules{ActConnect: Allow} },
+	}
+	for name, f := range rules {
+		e := NewEngine(Auto)
+		e.Rules = f
+		if v := e.Decide(lr(ticket.RiskRead)); v.Outcome != Question || v.Rule != "ask:read" {
+			t.Errorf("%s: read %+v", name, v)
+		}
+		if v := e.Decide(lr(ticket.RiskReadPII)); v.Outcome != Question || v.Rule != "ask:read-pii" {
+			t.Errorf("%s: read-pii %+v", name, v)
+		}
+		c := lr(ticket.RiskRead)
+		c.Kind = ticket.KindConnect
+		if v := e.Decide(c); name != "connect only" && (v.Outcome != Question || v.Rule != "ask:connect") {
+			t.Errorf("%s: connect %+v", name, v)
+		}
+		sql := req(ticket.KindRead, ticket.RiskReadPII, "app")
+		if v := e.Decide(sql); v.Outcome != Approve {
+			t.Errorf("%s: locksql read %+v", name, v)
+		}
+	}
+	e := NewEngine(Auto)
+	e.Rules = func(string, string, string) ProfileRules { return ProfileRules{ActConnect: Allow} }
+	c := lr(ticket.RiskRead)
+	c.Kind = ticket.KindConnect
+	if v := e.Decide(c); v.Outcome != Approve || v.Rule != "profile:connect" {
+		t.Errorf("a locklog rule set is kept: %+v", v)
 	}
 }
