@@ -431,7 +431,7 @@ in the review.
 ### Egress: each lock reaches its reviewed endpoints only
 
 Every lock but lockhttp (whose egress is its own policy's job) sits on an
-internal network, `egress-<name>`: no route out, so no internet, no cloud
+internal network, `locknet-<name>`: no route out, so no internet, no cloud
 metadata (`169.254.169.254`), no other host. `lox run` reads the endpoints
 from the **reviewed copy** of the lock's profile (never from the workspace,
 which agents can write) and gives the lock a small gateway that forwards only
@@ -465,7 +465,8 @@ value it cannot read. `lox doctor` checks each lock's effective egress: every
 network of its container is internal, and its gateway runs and forwards exactly
 what the last `lox run` reviewed. A hub image older than the gateway (pinned
 with `--pin`) cannot run it: the lock then reaches nothing until `lox run`
-upgrades the hub.
+upgrades the hub. The bridge a lock had before (`egress-<name>`, with a route
+out) is removed by the first `lox run` that moves the lock off it.
 
 Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
 `-vault` variant of its image (`lox add` pins it) and gets `VAULT_ADDR` (and

@@ -233,10 +233,10 @@ locks:
 	}
 	// What the golden file must say, whatever it is rewritten to.
 	for _, s := range []string{
-		"  \"egress-db\":\n    internal: true\n",
+		"  \"locknet-db\":\n    internal: true\n",
 		"  \"gwlink-db\":\n    internal: true\n",
 		"  \"out-db\": {}\n",
-		"  \"egress-docs\":\n    internal: true\n",
+		"  \"locknet-docs\":\n    internal: true\n",
 		"  \"egress-web\": {}\n",
 		`command: ["egress-gateway", "--forward", "5432=gwout-db:20000", "--forward", "8200=gwout-db:20001"]`,
 		`command: ["egress-gateway", "--forward", "20000=host.docker.internal:5432", "--forward", "20001=host.docker.internal:8200"]`,
@@ -392,5 +392,25 @@ func TestDoctorEgress(t *testing.T) {
 				t.Errorf("want %q (%d):\n%s", tc.want, n, out)
 			}
 		})
+	}
+}
+
+// The bridges the locks had before (egress-<n>, a route out) are removed
+// once the locks run on their internal networks; lockhttp's stays.
+func TestEgressRemovesFormerNetworks(t *testing.T) {
+	w := newWS(t, yamlConf("")+"  web:\n    type: lockhttp\n    image: "+httpImg+"\n")
+	f := newFake()
+	f.keys["web"] = pubKey()
+	f.keys["networks"] = "p_lockhub lockhub\np_egress-crm-prod egress-crm-prod\np_egress-web egress-web\np_locknet-events locknet-events\n"
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !f.ran("docker network rm p_egress-crm-prod") {
+		t.Errorf("the former network of crm-prod was not removed: %q", f.calls)
+	}
+	for _, n := range []string{"p_egress-web", "p_lockhub", "p_locknet-events"} {
+		if f.ran("docker network rm " + n) {
+			t.Errorf("%s removed", n)
+		}
 	}
 }

@@ -746,6 +746,18 @@ func (u *Up) Do(ctx context.Context) error {
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
 	}
+	// The networks the locks had before their egress was restricted
+	// (lockhub#123), left without a container by the up above.
+	if out, err := u.Run.Run(ctx, nil, "docker", "network", "ls", "--filter", "label=com.docker.compose.project="+project, "--format", `{{.Name}} {{.Label "com.docker.compose.network"}}`); err == nil {
+		old := formerNets(c)
+		for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if name, key, ok := strings.Cut(strings.TrimSpace(l), " "); ok && old[key] {
+				if _, err := u.Run.Run(ctx, nil, "docker", "network", "rm", name); err != nil {
+					fmt.Fprintf(u.Out, "note: the former network %s of the lock could not be removed (%v): docker network rm %s\n", name, err, name)
+				}
+			}
+		}
+	}
 	// A hub created before binds the facade directory it started with,
 	// deleted since: one made or repaired above takes a new hub (compose up
 	// leaves an unchanged one as it is, its socket never appears). On the

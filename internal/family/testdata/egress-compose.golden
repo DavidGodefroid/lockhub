@@ -59,7 +59,7 @@ services:
       - "db-home:/home/locksql"
       - hubkey:/run/lockfamily:ro
       - "profile-locksql:/w/.locksql:ro"
-    networks: [lockhub, "egress-db"]
+    networks: [lockhub, "locknet-db"]
     depends_on: [lockhub, "gw-db"]
     restart: unless-stopped
   "gw-db":
@@ -75,7 +75,7 @@ services:
     restart: unless-stopped
     command: ["egress-gateway", "--forward", "5432=gwout-db:20000", "--forward", "8200=gwout-db:20001"]
     networks:
-      "egress-db":
+      "locknet-db":
         aliases: ["host.docker.internal"]
       "gwlink-db": {}
   "gwout-db":
@@ -113,7 +113,7 @@ services:
       - "docs-home:/home/lockfile"
       - hubkey:/run/lockfamily:ro
       - "profile-lockfile:/home/lockfile/.config/lockfile:ro"
-    networks: [lockhub, "egress-docs"]
+    networks: [lockhub, "locknet-docs"]
     depends_on: [lockhub]
     restart: unless-stopped
   lock-mq:
@@ -138,7 +138,7 @@ services:
       - "mq-home:/home/lockmq"
       - hubkey:/run/lockfamily:ro
       - "profile-lockmq:/w/.lockmq:ro"
-    networks: [lockhub, "egress-mq"]
+    networks: [lockhub, "locknet-mq"]
     depends_on: [lockhub, "gw-mq"]
     restart: unless-stopped
   "gw-mq":
@@ -154,7 +154,7 @@ services:
     restart: unless-stopped
     command: ["egress-gateway", "--forward", "443=gwout-mq:20000,sni=amqp.example.com", "--forward", "443=gwout-mq:20001,sni=mgmt.example.com"]
     networks:
-      "egress-mq":
+      "locknet-mq":
         aliases: ["amqp.example.com", "mgmt.example.com"]
       "gwlink-mq": {}
   "gwout-mq":
@@ -288,14 +288,14 @@ networks:
     labels:
       dev.lockfamily.role: "hub"
       dev.lockfamily.workspace: "/w"
-  "egress-db":
+  "locknet-db":
     internal: true
   "gwlink-db":
     internal: true
   "out-db": {}
-  "egress-docs":
+  "locknet-docs":
     internal: true
-  "egress-mq":
+  "locknet-mq":
     internal: true
   "gwlink-mq":
     internal: true

@@ -321,9 +321,9 @@ func Compose(c *Config, p Paths) string {
 			// serves the policy and has no hub network.
 			w("    networks: [%s]", q("egress-"+name))
 		} else {
-			// egress-<name> is internal: the lock reaches the hosts of its
+			// locknet-<name> is internal: the lock reaches the hosts of its
 			// reviewed profile through its gateway only (egress.go).
-			w("    networks: [lockhub, %s]", q("egress-"+name))
+			w("    networks: [lockhub, %s]", q("locknet-"+name))
 			if eg := p.Egress[name]; len(eg.Endpoints) > 0 {
 				w("    depends_on: [lockhub, %s]", q("gw-"+name))
 			} else {
@@ -415,7 +415,7 @@ func Compose(c *Config, p Paths) string {
 			w("  %s: {}", q("egress-"+name))
 			continue
 		}
-		w("  %s:", q("egress-"+name))
+		w("  %s:", q("locknet-"+name))
 		w("    internal: true")
 		if len(p.Egress[name].Endpoints) > 0 {
 			w("  %s:", q("gwlink-"+name))
@@ -466,7 +466,7 @@ func gateway(w func(string, ...any), image, name string, eg Egress) {
 	common()
 	w("    command: [%s]", args(front))
 	w("    networks:")
-	w("      %s:", q("egress-"+name))
+	w("      %s:", q("locknet-"+name))
 	w("        aliases: [%s]", quoteAll(eg.aliases()))
 	w("      %s: {}", q("gwlink-"+name))
 	w("  %s:", q("gwout-"+name))

@@ -19,7 +19,7 @@ import (
 )
 
 // A lock's egress (lockhub#123). Every lock but lockhttp (whose egress is
-// its job, under its own policy) sits on an internal network, egress-<n>:
+// its job, under its own policy) sits on an internal network, locknet-<n>:
 // no route out, no cloud metadata, no host. Its gateway, gw-<n>, is on
 // that network under the names of the endpoints its reviewed profile
 // connects to (network aliases: host names and TLS server names stay the
@@ -397,6 +397,19 @@ func (e Egress) Short() string {
 		s += "; unreachable: " + strings.Join(e.None, "; ")
 	}
 	return s
+}
+
+// formerNets are the lock networks of lox before lockhub#123 (bridges
+// with a route out), named egress-<n>: lox run removes them once no
+// container uses them.
+func formerNets(c *Config) map[string]bool {
+	m := map[string]bool{}
+	for _, n := range c.Instances() {
+		if !Kinds[c.Locks[n].Type].Gate {
+			m["egress-"+n] = true
+		}
+	}
+	return m
 }
 
 // egressLine tells summary lines of a lock's egress from the others.
