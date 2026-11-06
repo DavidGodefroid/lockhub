@@ -49,6 +49,11 @@ type Paths struct {
 	// VaultCASum is its sha256 (hex): a label of the locks that mount it,
 	// so that a changed CA recreates them (a file bind keeps the old inode).
 	VaultCASum string
+	// Seccomp is the copy of LockfileSeccomp (<state>/lockfile-seccomp.json)
+	// the lockfile locks run under; "" until it exists (Docker's default).
+	// SeccompSum is its sha256 (hex): their label, so that a new profile
+	// recreates them (compose sends the content once, at creation).
+	Seccomp, SeccompSum string
 }
 
 // VaultCAPath is where the locks with vault: true see the reviewed CA.
@@ -259,7 +264,14 @@ func Compose(c *Config, p Paths) string {
 		if vaultCA {
 			vsum = p.VaultCASum
 		}
-		if fp != "" || dev || vsum != "" {
+		// lockfile's console runs under the seccomp profile lockfile ships,
+		// as its own launcher runs it, never Docker's default.
+		var sec []string
+		ssum := ""
+		if usesSeccomp(l.Type) && p.Seccomp != "" {
+			sec, ssum = []string{"seccomp=" + p.Seccomp}, p.SeccompSum
+		}
+		if fp != "" || dev || vsum != "" || ssum != "" {
 			w("    labels:")
 			if fp != "" {
 				w("      lockfamily.profile: %s", q(fp))
@@ -270,8 +282,11 @@ func Compose(c *Config, p Paths) string {
 			if vsum != "" {
 				w("      lockfamily.vault-ca: %s", q(vsum))
 			}
+			if ssum != "" {
+				w("      lockfamily.seccomp: %s", q(ssum))
+			}
 		}
-		limits(w, k.Mem, k.Pids)
+		limits(w, k.Mem, k.Pids, sec...)
 		w("    volumes:")
 		w("      - %s", q(name+"-run:/run/"+l.Type))
 		w("      - %s", q(name+"-home:"+home))
@@ -460,10 +475,12 @@ func quoteAll(a []string) string {
 
 func hardening(w func(string, ...any)) { limits(w, "512m", 256) }
 
-func limits(w func(string, ...any), mem string, pids int) {
+// limits writes the hardening every service gets; sec are more
+// security_opt entries (a lockfile lock's seccomp profile).
+func limits(w func(string, ...any), mem string, pids int, sec ...string) {
 	w("    read_only: true")
 	w("    cap_drop: [ALL]")
-	w("    security_opt: [\"no-new-privileges:true\"]")
+	w("    security_opt: [%s]", quoteAll(append([]string{"no-new-privileges:true"}, sec...)))
 	w("    tmpfs: [\"/tmp:size=16m\"]")
 	w("    pids_limit: %d", pids)
 	w("    mem_limit: %s", mem)

@@ -384,3 +384,42 @@ func TestShippedPins(t *testing.T) {
 		}
 	}
 }
+
+// An upgraded lockfile lock (#118) still runs under lockfile's shipped
+// seccomp profile (#45): the upgrade's recreate keeps the security_opt and
+// the lockfamily.seccomp label, and the unchanged profile line asks nothing.
+func TestUpgradeKeepsLockfileSeccomp(t *testing.T) {
+	const fileImgNew = "ghcr.io/davidgodefroid/lockfile@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	w := newWS(t, "version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  docs:\n    type: lockfile\n    image: "+fileImg+"\n")
+	f := seccompFake()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	srv := registry(t, map[string]string{"davidgodefroid/lockfile/manifests/0.7.0": digestOf(fileImgNew)})
+	s := newSigned(&fake{keys: f.keys})
+	s.signedFor[fileImg] = [2]string{"lockfile", "v0.6.0"}
+	s.signedFor[fileImgNew] = [2]string{"lockfile", "v0.7.0"}
+	rel := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: s}
+	var out strings.Builder
+	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: s,
+		In: bufio.NewReader(strings.NewReader("")), Out: &out,
+		Upgrade: &Upgrade{Pins: map[string]string{"lockfile": "v0.7.0"}, Image: rel.ImageVariant}}
+	if err := u.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, want := range []string{
+		"lock docs: image upgraded: lockfile v0.6.0 → v0.7.0 (signature verified)\n",
+		"only the upgraded images changed since the last lox run: applied without a question\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in:\n%s", want, out.String())
+		}
+	}
+	svc := service(s.upCompose, "lock-docs")
+	copyPath := filepath.Join(w.dir, "state", lockfileSeccompFile)
+	for _, want := range []string{`image: "` + fileImgNew + `"`, `"seccomp=` + copyPath + `"`, "lockfamily.seccomp: " + q(LockfileSeccompSum)} {
+		if !strings.Contains(svc, want) {
+			t.Errorf("upgraded lock-docs without %s:\n%s", want, svc)
+		}
+	}
+}
