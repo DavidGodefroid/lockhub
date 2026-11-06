@@ -437,8 +437,17 @@ lock. The token is typed at the console's start (`lox attach`), never
 written anywhere. See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
 set`.
 
-Not yet (lockhub#45): lockfile's shipped seccomp profile (lox run uses
-Docker's default).
+A lockfile lock runs under the seccomp profile lockfile ships
+(`seccomp.json`, beside its launcher in each release), as lockfile's own
+launcher runs its console, not under Docker's default (which varies with the
+engine's version) and never `unconfined`. The image does not carry the
+profile: lox carries a byte-for-byte copy, writes it after the yes to the
+state directory (`lockfile-seccomp.json`), and the lock's service sets
+`security_opt: ["no-new-privileges:true", "seccomp=<that file>"]` with its
+digest as a label, so a new profile recreates the console. The review shows
+`lock NAME seccomp lockfile's shipped profile sha256:…`; `docker inspect`
+shows the profile under `HostConfig.SecurityOpt`. The other locks and the hub
+keep Docker's default.
 
 ## Restoring a hub version, rotating keys
 
