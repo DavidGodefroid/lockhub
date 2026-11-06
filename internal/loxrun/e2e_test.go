@@ -86,7 +86,10 @@ type stopper struct{}
 
 func (stopper) Stop() bool { return true }
 
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T) *world { return newWorldArm(t, -1) }
+
+// newWorldArm is newWorld with lox run's KeyArm (0: the default).
+func newWorldArm(t *testing.T, arm time.Duration) *world {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "loxrun")
 	if err != nil {
@@ -164,7 +167,7 @@ func newWorld(t *testing.T) *world {
 	s := &loxrun.Session{Hub: approve.Dial(sock), Keys: w.keys, Out: w.out, Size: func() (int, int) { return 100, 30 },
 		Style: loxrun.Style{Color: true, Unicode: true}, Workspace: "~/e2e", Locks: 1, Display: "david",
 		LockKeys:  map[string]ed25519.PublicKey{inst: lockPub},
-		QueueWait: 2 * time.Second, StatePoll: 50 * time.Millisecond,
+		QueueWait: 2 * time.Second, StatePoll: 50 * time.Millisecond, KeyArm: arm,
 		Observe: func(e loxrun.Event) { w.events <- e }}
 	go func() { w.runDone <- s.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-w.runDone })
@@ -431,5 +434,36 @@ func TestRunE2E(t *testing.T) {
 	})
 	if !errors.Is(err, hubclient.ErrPending) {
 		t.Errorf("lock may run a ticket after lox run quit: %v", err)
+	}
+}
+
+// The question on top changes under the human's key (the first UPDATE
+// decided, the second one comes up): a y pressed right then is not the
+// second one's approval; it stays pending at the hub until the human
+// answers it once shown (default KeyArm).
+func TestRunE2EKeyGuard(t *testing.T) {
+	w := newWorldArm(t, 0)
+	upd1 := w.submit(ticket.KindWrite, ticket.RiskWrite, "B", "UPDATE customers SET email = ")
+	w.wait(loxrun.EvShown, upd1)
+	upd2 := w.submit(ticket.KindWrite, ticket.RiskWrite, "B", "UPDATE customers SET name = ")
+	w.wait(loxrun.EvQuestion, upd2)
+	time.Sleep(500 * time.Millisecond)
+	w.press(loxrun.R('y'))
+	if d := w.wait(loxrun.EvDecided, upd1); !d.Approved {
+		t.Fatalf("first UPDATE %+v", d)
+	}
+	w.wait(loxrun.EvShown, upd2)
+	w.press(loxrun.R('y')) // meant for the first one
+	time.Sleep(150 * time.Millisecond)
+	if s := w.ticketState(upd2); s != state.Pending {
+		t.Fatalf("second UPDATE %s by a key pressed before it was shown", s)
+	}
+	time.Sleep(400 * time.Millisecond)
+	w.press(loxrun.R('n'))
+	if d := w.wait(loxrun.EvDecided, upd2); d.Approved || d.Rule != "" {
+		t.Fatalf("second UPDATE %+v", d)
+	}
+	if d := w.decision(upd2); d.Decision != ticket.Denied {
+		t.Error("the hub signed an approval of the second UPDATE")
 	}
 }

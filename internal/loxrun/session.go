@@ -35,6 +35,7 @@ const (
 	EvResult   EventKind = "result"   // a decided ticket's result (consumed, expired…)
 	EvMode     EventKind = "mode"     // the mode changed
 	EvHub      EventKind = "hub"      // the hub became reachable or not
+	EvShown    EventKind = "shown"    // another question is on top now (ID; "" none): keys typed before were dropped
 )
 
 // Event is one thing that happened in a session.
@@ -93,6 +94,13 @@ type Session struct {
 	// not send the same credentials on every retry. Default 30s;
 	// negative turns it off.
 	ReconnectAsk time.Duration
+	// KeyArm is how long the question on top must have been shown
+	// before y or n (or Enter on its prompt) answers it: a key pressed
+	// for the question that just went away never answers the one that
+	// took its place. When the top question changes, the keys already
+	// typed are dropped too. Default 400ms; negative turns both off
+	// (tests that answer as soon as a question comes).
+	KeyArm time.Duration
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
@@ -144,6 +152,19 @@ type state struct {
 	bell     bool
 	dirty    bool
 	drawn    int // frames drawn (a terminal's first one clears it)
+	keyGuard
+}
+
+// keyGuard ties the human's keys to the question the screen showed: y
+// and n answer the card on top only once it has been shown (KeyArm),
+// and the keys typed into a prompt whose card went away are dropped
+// until Enter or Esc, never read as answers to the next card.
+type keyGuard struct {
+	shownTop    *tracked  // the card on top as last shown (nil none)
+	shownAt     time.Time // when it came on top
+	shownPrompt bool      // its prompt was open then
+	discard     bool      // the card of an open prompt went away: keys are its input until Enter/Esc
+	flushKeys   bool      // the top card changed: drop the keys already typed
 }
 
 // effect is a call the loop makes outside its state.
@@ -169,6 +190,14 @@ func (s *Session) observe(e Event) {
 	}
 }
 
+func newState(s *Session) *state {
+	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
+		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
+		ran: map[string]time.Time{}, gen: map[string]int{}, dirty: true}
+	st.eng.Rules = s.Rules
+	return st
+}
+
 // Run serves decisions until ctx ends or the human quits (q q, Ctrl-C).
 func (s *Session) Run(ctx context.Context) error {
 	if s.QueueWait == 0 {
@@ -180,13 +209,13 @@ func (s *Session) Run(ctx context.Context) error {
 	if s.IdleConn == 0 {
 		s.IdleConn = 2 * time.Minute
 	}
+	if s.KeyArm == 0 {
+		s.KeyArm = 400 * time.Millisecond
+	}
 	if s.ReconnectAsk == 0 {
 		s.ReconnectAsk = 30 * time.Second
 	}
-	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
-		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
-		ran: map[string]time.Time{}, gen: map[string]int{}, dirty: true}
-	st.eng.Rules = s.Rules
+	st := newState(s)
 	defer st.wipe()
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -268,6 +297,18 @@ func (s *Session) Run(ctx context.Context) error {
 			}()
 		}
 		st.pending = nil
+		st.syncTop()
+		if st.flushKeys {
+			st.flushKeys = false
+			if st.dropTyped() {
+				return nil
+			}
+			ev := Event{Kind: EvShown}
+			if t := st.shownTop; t != nil {
+				ev.Instance, ev.ID = t.instance, t.id
+			}
+			st.s.observe(ev)
+		}
 		st.draw()
 		select {
 		case <-ctx.Done():

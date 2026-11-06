@@ -76,6 +76,14 @@ is typed in the card. The bell rings only when a card appears. `Tab` brings
 the next card up, `a` lists the session's decisions and their rules, `?` the
 keys, `q q` or Ctrl-C quits.
 
+**A key answers the card it was pressed for.** When the card on top changes
+(answered, decided elsewhere, withdrawn, expired, or `Tab`), the keys already
+typed are dropped, and `y`, `n` (or Enter in its prompt) answer the new card
+only once it has been on screen for 400 ms: a key meant for the card that went
+away never approves the one that took its place. If a card goes away while its
+prompt (a password, the instance name) is being typed, what is typed next is
+dropped until Enter or Esc, never read as keys on the next card.
+
 **Quitting fails closed.** Once `lox run` ends, nothing decides: pending and
 new tickets wait at the hub until the next `lox run` (or another facade), and
 the locks close their connections once idle, so the next request asks again.

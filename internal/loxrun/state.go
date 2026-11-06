@@ -651,11 +651,88 @@ func (st *state) onTick() {
 	st.dirty = st.s.Size != nil
 }
 
+// syncTop notes the card on top as the screen is about to show it. When
+// it is another card than the one shown last (the top one was decided,
+// withdrawn, expired, or Tab), the keys already typed are dropped and y
+// and n wait for KeyArm: they were meant for the card that went away.
+// When the card went away with its prompt open, the keys typed next are
+// still that prompt's (a password half typed): they are dropped until
+// Enter or Esc, never read as answers to the next card.
+func (st *state) syncTop() {
+	var top *tracked
+	if len(st.cards) > 0 {
+		top = st.cards[0]
+	}
+	if top != st.shownTop {
+		if st.shownPrompt {
+			st.discard = true
+			st.flash = "the question you were typing into went away: what you type is dropped until Enter or Esc"
+			st.flashTo = st.s.now().Add(10 * time.Second)
+			st.logf("lox run: %s", st.flash)
+		}
+		st.shownTop, st.shownAt = top, st.s.now()
+		if st.s.KeyArm >= 0 {
+			st.flushKeys = true
+		}
+		st.dirty = true
+		if top != nil && st.s.Size == nil && len(st.cards) > 1 {
+			// A log shows the cards as they came: say which one y and n answer.
+			st.logf("lox run: on top now: %s %s (y approve, n deny)", clean(top.profileKey), top.entry.Summary)
+		}
+	}
+	st.shownPrompt = top != nil && top.card.Prompt != nil
+}
+
+// armed: the card on top has been shown long enough to be answered.
+func (st *state) armed() bool {
+	return st.s.KeyArm <= 0 || st.s.now().Sub(st.shownAt) >= st.s.KeyArm
+}
+
+// dropTyped drops the keys already typed (the top card changed under
+// them); Enter or Esc among them ends an orphaned prompt's input. True:
+// one was Ctrl-C or Ctrl-D (quit).
+func (st *state) dropTyped() bool {
+	for st.s.Keys != nil {
+		select {
+		case k, ok := <-st.s.Keys:
+			if !ok {
+				st.s.Keys = nil
+				return false
+			}
+			switch k.Code {
+			case KeyCtrlC, KeyCtrlD:
+				return true
+			case KeyEnter, KeyEsc:
+				st.endDiscard()
+			}
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func (st *state) endDiscard() {
+	if st.discard {
+		st.discard = false
+		st.flash = ""
+		st.dirty = true
+	}
+}
+
 // onKey handles a key; true quits.
 func (st *state) onKey(k Key) bool {
 	st.dirty = true
 	if k.Code == KeyCtrlC || k.Code == KeyCtrlD {
 		return true
+	}
+	st.syncTop()
+	if st.discard {
+		// Input of a prompt whose card went away: dropped up to its end.
+		if k.Code == KeyEnter || k.Code == KeyEsc {
+			st.endDiscard()
+		}
+		return false
 	}
 	var top *tracked
 	if len(st.cards) > 0 {
@@ -663,6 +740,7 @@ func (st *state) onKey(k Key) bool {
 	}
 	if top != nil && top.card.Prompt != nil {
 		st.promptKey(top, k)
+		st.shownPrompt = top.card != nil && top.card.Prompt != nil
 		return false
 	}
 	if st.quitting {
@@ -702,14 +780,21 @@ func (st *state) onKey(k Key) bool {
 		st.overlay = toggle(st.overlay, "audit")
 	case 'q', 'Q':
 		st.quitting = true
-	case 'y', 'Y':
-		if top != nil && !top.sending {
-			st.approve(top)
+	case 'y', 'Y', 'n', 'N':
+		if top == nil || top.sending {
+			break
 		}
-	case 'n', 'N':
-		if top != nil && !top.sending {
+		if !st.armed() {
+			// Pressed before this card was shown: meant for another.
+			st.setFlash("the question on top just changed: read it, then press " + string(k.Rune) + " again")
+			break
+		}
+		if k.Rune == 'y' || k.Rune == 'Y' {
+			st.approve(top)
+		} else {
 			st.send(top, false, "", nil)
 		}
+		st.shownPrompt = top.card.Prompt != nil
 	case 'd', 'D':
 		if top != nil {
 			top.card.Details = !top.card.Details
@@ -801,6 +886,10 @@ func (st *state) promptKey(t *tracked, k Key) {
 			p.Typed = p.Typed[:n-1]
 		}
 	case KeyEnter:
+		if !st.armed() {
+			p.Error = "this question just came on top: read it, then press Enter again"
+			return
+		}
 		// The secret goes from the typed runes to bytes the session
 		// wipes, never through a string.
 		var secret []byte

@@ -157,7 +157,8 @@ func (w lockedWriter) Write(p []byte) (int, error) {
 func start(t *testing.T, hub *fakeHub, keys map[string]ed25519.PublicKey, mod func(*Session)) *harness {
 	h := &harness{t: t, hub: hub, keys: make(chan Key, 8), out: &strings.Builder{}, outMu: &sync.Mutex{}, events: make(chan Event, 128), done: make(chan error, 1)}
 	s := &Session{Hub: hub, Keys: h.keys, Out: lockedWriter{h.outMu, h.out}, Style: Style{}, LockKeys: keys, Display: "david",
-		QueueWait: time.Second, StatePoll: 20 * time.Millisecond, Observe: func(e Event) { h.events <- e }}
+		QueueWait: time.Second, StatePoll: 20 * time.Millisecond, Observe: func(e Event) { h.events <- e },
+		KeyArm: -1} // answers as soon as a question comes (keyguard_test.go sets it)
 	if mod != nil {
 		mod(s)
 	}
