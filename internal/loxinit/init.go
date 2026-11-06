@@ -14,7 +14,7 @@ import (
 )
 
 // EndLine is lox init's last line.
-const EndLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp`."
+const EndLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`."
 
 // Declared is a lock lockfamily.yaml declares already.
 type Declared struct {
@@ -66,6 +66,11 @@ func (in *Init) Do(ctx context.Context) error {
 		return errors.New("prerequisites missing (above): nothing done")
 	}
 	sources, warnings := Detect(in.Root)
+	if in.Env.HostLogs != nil {
+		if s := HostLogs(in.Env.HostLogs()); s != nil {
+			sources = append(sources, *s)
+		}
+	}
 	RenderHints(in.Out, sources)
 	for _, w := range warnings {
 		in.say("  warning: %s", w)

@@ -22,7 +22,21 @@ const (
 	KindMySQL    = "mysql"
 	KindMariaDB  = "mariadb"
 	KindRabbitMQ = "rabbitmq"
+	// The log sources locklog reads: remote ones (Loki, Elasticsearch,
+	// OpenSearch) and this host's own (files, journal, containers).
+	KindLoki       = "loki"
+	KindElastic    = "elasticsearch"
+	KindOpenSearch = "opensearch"
+	KindHostLogs   = "host logs"
 )
+
+// logKind reports a kind locklog serves.
+func logKind(k string) bool {
+	return k == KindLoki || k == KindElastic || k == KindOpenSearch || k == KindHostLogs
+}
+
+// remoteLogKind reports a remote log store (an HTTP API).
+func remoteLogKind(k string) bool { return k == KindLoki || k == KindElastic || k == KindOpenSearch }
 
 // DockerHost is the host machine as a lock's console (a container) names
 // it. lockmq refuses a loopback --url (it would be the console's own
@@ -47,6 +61,8 @@ type Source struct {
 	AMQPPort int
 	// MgmtTLS: RabbitMQ's management API is https.
 	MgmtTLS bool
+	// HTTPS: a log store's API is https.
+	HTTPS bool
 	// TLS is the database TLS mode the files say (locksql's names), "" when
 	// they say none.
 	TLS string
@@ -66,8 +82,11 @@ type Source struct {
 
 // Lock is the lock type that serves the source.
 func (s Source) Lock() string {
-	if s.Kind == KindRabbitMQ {
+	switch {
+	case s.Kind == KindRabbitMQ:
 		return "lockmq"
+	case logKind(s.Kind):
+		return "locklog"
 	}
 	return "locksql"
 }
@@ -83,14 +102,29 @@ func (s Source) Label() string {
 		return "MariaDB"
 	case KindRabbitMQ:
 		return "RabbitMQ"
+	case KindLoki:
+		return "Loki"
+	case KindElastic:
+		return "Elasticsearch"
+	case KindOpenSearch:
+		return "OpenSearch"
 	}
 	return s.Kind
 }
 
 // Target is the source's address as the review shows it.
 func (s Source) Target() string {
-	if s.Kind == KindRabbitMQ {
+	switch {
+	case s.Kind == KindRabbitMQ:
 		return s.MgmtURL()
+	case s.Kind == KindHostLogs:
+		return "this host"
+	case remoteLogKind(s.Kind):
+		scheme := "http"
+		if s.HTTPS {
+			scheme = "https"
+		}
+		return scheme + "://" + net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 	}
 	return net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 }
@@ -121,6 +155,10 @@ func defaultPort(kind string) int {
 		return 3306
 	case KindRabbitMQ:
 		return 15672
+	case KindLoki:
+		return 3100
+	case KindElastic, KindOpenSearch:
+		return 9200
 	}
 	return 0
 }
@@ -373,6 +411,12 @@ func imageKind(image string) string {
 		return KindMySQL
 	case strings.Contains(name, "rabbitmq"):
 		return KindRabbitMQ
+	case name == "loki":
+		return KindLoki
+	case name == "elasticsearch":
+		return KindElastic
+	case name == "opensearch":
+		return KindOpenSearch
 	}
 	return ""
 }
@@ -444,6 +488,8 @@ func (d *detector) readCompose() {
 				if _, ok := pub[15672]; !ok && !strings.Contains(svc.Image, "management") {
 					s.Notes = append(s.Notes, "the management API (port 15672) is not published: lockmq needs it (a *-management image, ports: [\"15672:15672\"])")
 				}
+			case KindLoki, KindElastic, KindOpenSearch:
+				s.Notes = append(s.Notes, remoteLogNote)
 			}
 			if h, ok := pub[cport]; ok && h != 0 {
 				s.Host, s.Port, s.Local = DockerHost, h, true
@@ -518,6 +564,73 @@ func tlsMode(v string) string {
 	return ""
 }
 
+// remoteLogNote is how a remote log store gets into locklog's profile.
+const remoteLogNote = "lox add locklog sets up this host's logs; a remote store goes in .locklog/config.toml by hand (locklog's README, sources)"
+
+// logURLKinds are the env keys whose value is a log store's URL.
+var logURLKinds = map[string]string{
+	"LOKI_URL": KindLoki, "LOKI_ADDR": KindLoki, "LOKI_ENDPOINT": KindLoki,
+	"ELASTICSEARCH_URL": KindElastic, "ELASTICSEARCH_HOSTS": KindElastic, "ELASTIC_URL": KindElastic, "ES_URL": KindElastic,
+	"OPENSEARCH_URL": KindOpenSearch, "OPENSEARCH_HOSTS": KindOpenSearch,
+}
+
+// fromLogURL is the log store an http(s) URL names (the first of a
+// comma-separated list), without its user or password: nil when it does
+// not parse.
+func fromLogURL(kind, raw string) *Source {
+	raw, _, _ = strings.Cut(strings.TrimSpace(raw), ",")
+	u, err := url.Parse(strings.Trim(raw, "[]\"' "))
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	s := &Source{Kind: kind, rawHost: u.Hostname()}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		s.HTTPS = true
+		s.Port = 443
+	case "http":
+		s.Port = 80
+	default:
+		return nil
+	}
+	if p, err := strconv.Atoi(u.Port()); err == nil {
+		s.Port = p
+	}
+	s.Notes = []string{remoteLogNote}
+	return s
+}
+
+// HostLogDirs are this host's log directories locklog reads (Linux only:
+// on macOS the containers' logs live in Docker Desktop's VM), those that
+// exist: the journal's, then /var/log.
+func HostLogDirs(goos string, isDir func(string) bool) []string {
+	if goos != "linux" {
+		return nil
+	}
+	var out []string
+	for _, d := range []string{"/var/log/journal", "/run/log/journal", "/var/log"} {
+		if isDir(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// RealIsDir reports a directory (not a link) on this host.
+func RealIsDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.IsDir()
+}
+
+// HostLogs is the source of this host's logs, nil when dirs is empty.
+func HostLogs(dirs []string) *Source {
+	if len(dirs) == 0 {
+		return nil
+	}
+	return &Source{Kind: KindHostLogs, Local: true, From: slices.Clone(dirs),
+		Notes: []string{"lox add locklog has locklog find this host's log files, journal and containers; lox run binds only what the reviewed profile names, read-only"}}
+}
+
 // urlKeys are the env keys whose value is a source URL.
 func urlKey(k string) bool {
 	switch k {
@@ -538,6 +651,13 @@ func (d *detector) envSources() {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
+		if kind, ok := logURLKinds[k]; ok {
+			if s := fromLogURL(kind, d.env[k]); s != nil {
+				s.From = []string{fmt.Sprintf("%s (%s)", d.envFrom[k], k)}
+				d.add(*s)
+			}
+			continue
+		}
 		if !urlKey(k) {
 			continue
 		}
@@ -742,7 +862,7 @@ func (d *detector) finish() {
 		if s.Kind == KindRabbitMQ && s.User == "guest" {
 			s.Notes = append(s.Notes, "guest: RabbitMQ refuses it from outside localhost; the lock needs another user")
 		}
-		if s.Kind != KindRabbitMQ && s.User == "" {
+		if s.Kind != KindRabbitMQ && !logKind(s.Kind) && s.User == "" {
 			s.Notes = append(s.Notes, "no user in the files: the lock's default applies")
 		}
 	}

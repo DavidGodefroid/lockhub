@@ -166,3 +166,51 @@ func TestSecretKey(t *testing.T) {
 		}
 	}
 }
+
+// The log stores a project names (compose images, .env URLs) and this
+// host's logs are locklog's sources: never a user or a password kept.
+func TestDetectLogSources(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "compose.yaml", `services:
+  loki:
+    image: grafana/loki:3.5.0
+    ports: ["3100:3100"]
+  search:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.0
+  dash:
+    image: opensearchproject/opensearch-dashboards:3
+`)
+	write(t, root, ".env", "OPENSEARCH_URL=https://admin:"+secret+"@search.example.com:9200,https://b.example.com\nLOKI_ADDR=http://localhost:3100\n")
+	got, _ := Detect(root)
+	var lines []string
+	for _, s := range got {
+		lines = append(lines, fmt.Sprintf("%s %s %s %v", s.Lock(), s.Kind, s.Target(), s.From))
+		if strings.Contains(fmt.Sprintf("%+v", s), secret) || s.User != "" {
+			t.Errorf("a secret or a user kept: %+v", s)
+		}
+		if !strings.Contains(strings.Join(s.Notes, " "), ".locklog/config.toml by hand") {
+			t.Errorf("%s: no note on the remote source: %v", s.Kind, s.Notes)
+		}
+	}
+	want := []string{
+		"locklog loki http://host.docker.internal:3100 [compose.yaml (service loki) .env (LOKI_ADDR)]",
+		"locklog elasticsearch http://search:9200 [compose.yaml (service search)]",
+		"locklog opensearch https://search.example.com:9200 [.env (OPENSEARCH_URL)]",
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Errorf("sources:\n%s\nwant:\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+	isDir := func(d string) bool { return d == "/var/log" || d == "/run/log/journal" }
+	if d := HostLogDirs("linux", isDir); strings.Join(d, " ") != "/run/log/journal /var/log" {
+		t.Errorf("linux: %v", d)
+	}
+	if d := HostLogDirs("darwin", isDir); d != nil {
+		t.Errorf("darwin: %v", d)
+	}
+	if HostLogs(nil) != nil {
+		t.Error("no directory, a source")
+	}
+	if s := HostLogs([]string{"/var/log"}); s.Lock() != "locklog" || s.Target() != "this host" || !s.Local {
+		t.Errorf("host logs: %+v", s)
+	}
+}

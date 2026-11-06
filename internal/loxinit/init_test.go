@@ -41,7 +41,7 @@ func golden(t *testing.T, name, root, got string) {
 }
 
 // endLine is lox init's last line, verbatim.
-const endLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp`."
+const endLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`."
 
 // hubRef is a pinned hub image, as lox init writes it.
 const hubRef = "ghcr.io/davidgodefroid/lockhub@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -59,7 +59,7 @@ type harness struct {
 
 func newHarness(root string) *harness {
 	h := &harness{created: true}
-	found := map[string]bool{"docker": true, "cosign": true, "lea": true, "locksql": true, "lockmq": true, "lockfile": true, "lockhttp": true}
+	found := map[string]bool{"docker": true, "cosign": true, "lea": true, "locksql": true, "lockmq": true, "lockfile": true, "lockhttp": true, "locklog": true}
 	h.in = &Init{
 		Root: root, Out: &h.out,
 		Env: Env{GOOS: "linux", Types: []string{"locksql", "lockmq", "lockfile", "lockhttp"}, UID: 1000,
@@ -86,6 +86,7 @@ func newHarness(root string) *harness {
 func TestInitHubOnly(t *testing.T) {
 	root := shopProject(t)
 	h := newHarness(root)
+	h.in.Env.HostLogs = func() []string { return []string{"/var/log/journal", "/var/log"} }
 	if err := h.in.Do(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, h.out.String())
 	}
@@ -101,6 +102,7 @@ func TestInitHubOnly(t *testing.T) {
 		"found: postgres on host.docker.internal:55432 (compose.yaml, .env) → `lox add locksql`",
 		"found: rabbitmq on http://host.docker.internal:55672 (compose.yaml) → `lox add lockmq`",
 		"found: mysql on inventory.internal:3307 (config/inventory.yaml) → `lox add locksql`",
+		"found: host logs on this host (/var/log/journal, /var/log) → `lox add locklog`",
 	} {
 		if !strings.Contains(out, w) {
 			t.Errorf("no hint %q in\n%s", w, out)

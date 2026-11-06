@@ -4,4 +4,4 @@ Prerequisites
   !!  Docker does not answer: start Docker Desktop (open -a Docker), then run lox init again
   !!  cosign not found: install cosign: brew install cosign
   --  lea not found (the locks run without it; lockhttp needs it): install lea: curl -fsSL https://leadeck.dev/install.sh | sh
-  ok  launchers: locksql, lockmq, lockfile, lockhttp
+  ok  launchers: locksql, lockmq, lockfile, lockhttp, locklog

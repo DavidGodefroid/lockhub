@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -59,6 +60,7 @@ var answerFlags = []struct{ name, usage string }{
 	{"region", "lockfile: the S3 region"},
 	{"dir", "lockfile: the local directory, an absolute path"},
 	{"auth", "lockfile sftp: key or password (password: the console asks for it at start)"},
+	{"only", "locklog: only the log files under these directories, comma-separated absolute paths (empty: every log this host shows)"},
 	{"key", "lockfile sftp: the private key file, an absolute path"},
 	{"known-hosts", "lockfile sftp: the known hosts file"},
 	{"base-dir", "lockfile sftp: the base directory (empty: the login directory)"},
@@ -229,6 +231,11 @@ func addDefaults(abs, ws, typ, draftPath string, nonInteractive bool, stderr io.
 	if len(warnings) > 0 {
 		// The warnings name files, never values.
 		fmt.Fprintln(stderr, "lox add: hints:", strings.Join(warnings, "; "))
+	}
+	if typ == "locklog" {
+		if s := loxinit.HostLogs(loxinit.HostLogDirs(runtime.GOOS, loxinit.RealIsDir)); s != nil {
+			sources = append(sources, *s)
+		}
 	}
 	for _, s := range sources {
 		if s.Lock() == typ {

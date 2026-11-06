@@ -88,6 +88,7 @@ func fakeReleases(t *testing.T) (digests map[string]string, cos *okRunner) {
 		"locksql:1.2.3-vault": strings.Repeat("c", 64),
 		"lockhub:1.2.3":       strings.Repeat("b", 64),
 		"lockfile:1.2.3":      strings.Repeat("d", 64),
+		"locklog:1.2.3":       strings.Repeat("e", 64),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
@@ -204,6 +205,49 @@ func TestAddNonInteractiveDeclares(t *testing.T) {
 	draft := filepath.Join(stateDir(family.Project(ws)), "add-locksql.json")
 	if _, err := os.Stat(draft); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("draft left after success: %v", err)
+	}
+}
+
+// lox add locklog (the guided form, no instance): its profile add on this
+// host's logs (--only narrows it), init claude, its doctor (advisory: its
+// --fix wires agents, nothing lox run needs), the lock declared with lea's
+// uid allowed.
+func TestAddLocklogNonInteractive(t *testing.T) {
+	digests, _ := fakeReleases(t)
+	ws, file, verbs := addWorld(t)
+	var out, errb bytes.Buffer
+	code := run([]string{"add", "locklog", "--non-interactive", "--file", file, "--only", "/var/log/nginx,/var/log/app", "--name", "web-logs"},
+		devNull(t), &out, &errb)
+	if code != 0 {
+		t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	var got []string
+	for _, c := range verbs.calls {
+		got = append(got, strings.Join(c, " "))
+	}
+	want := []string{
+		"locklog profile add --non-interactive --json --project " + ws + " --profile web-logs --only /var/log/nginx,/var/log/app",
+		"locklog init claude",
+		"locklog doctor --json",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("verbs\n got %q\nwant %q", got, want)
+	}
+	c, err := family.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Locks["web-logs"]
+	if l.Type != "locklog" || l.Profile != "web-logs" || l.Image != "ghcr.io/davidgodefroid/locklog@sha256:"+digests["locklog:1.2.3"] || l.Vault {
+		t.Fatalf("lock = %+v", l)
+	}
+	if len(l.AllowedUIDs) != 1 || l.AllowedUIDs[0] != os.Getuid() {
+		t.Fatalf("allowed_uids = %v, want lea's uid", l.AllowedUIDs)
+	}
+	// --only takes absolute directories only.
+	code = run([]string{"add", "locklog", "--non-interactive", "--file", file, "--only", "var/log", "--name", "x"}, devNull(t), &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "only: absolute directories") {
+		t.Fatalf("relative --only: code %d\n%s", code, errb.String())
 	}
 }
 

@@ -179,3 +179,62 @@ func TestEngineProfileRules(t *testing.T) {
 	check(req(ticket.KindWrite, ticket.RiskWrite, "local"), Question, "ask:write")
 	check(req(ticket.KindDDL, ticket.RiskWrite, "prod"), Refuse, "deny:ddl")
 }
+
+// A locklog profile's auto rules: read for its scans (risk read), the
+// stricter of unmask and lookup for its read-pii tickets, which name no
+// other action; a ticket the console signed never-auto is asked whatever
+// they say.
+func TestEngineLocklogRules(t *testing.T) {
+	rules := map[string]map[string]string{
+		"app":  {"read": "auto", "unmask": "auto", "lookup": "ask"},
+		"prod": {"read": "ask", "unmask": "deny", "lookup": "auto"},
+		"odd":  {"read": "yes"},
+	}
+	e := NewEngine(Auto)
+	e.Rules = func(instance, profile string) ProfileRules {
+		if instance != "logs" {
+			return nil
+		}
+		r, ok := rules[profile]
+		if !ok {
+			return nil
+		}
+		return LocklogRules(func(a string) string { return r[a] })
+	}
+	lr := func(risk ticket.Risk, profile string) Request {
+		r := req(ticket.KindRead, risk, profile)
+		r.Instance, r.Lock = "logs", "locklog"
+		return r
+	}
+	cases := []struct {
+		name string
+		r    Request
+		want Outcome
+		rule string
+	}{
+		{"app scan", lr(ticket.RiskRead, "app"), Approve, "profile:read"},
+		{"app unmask (lookup ask is stricter)", lr(ticket.RiskReadPII, "app"), Question, "ask:read-pii"},
+		{"prod scan", lr(ticket.RiskRead, "prod"), Question, "ask:read"},
+		{"prod unmask denied", lr(ticket.RiskReadPII, "prod"), Refuse, "deny:read-pii"},
+		{"unknown value asks", lr(ticket.RiskRead, "odd"), Question, "ask:read"},
+		{"odd read-pii asks", lr(ticket.RiskReadPII, "odd"), Question, "ask:read-pii"},
+		// A profile with no rules keeps the defaults; another lock's
+		// read-pii read is ruled as read.
+		{"no rules", lr(ticket.RiskRead, "other"), Approve, "default:read"},
+		{"locksql pii", req(ticket.KindRead, ticket.RiskReadPII, "app"), Approve, "default:read"},
+	}
+	for _, c := range cases {
+		got := e.Decide(c.r)
+		if got.Outcome != c.want || got.Rule != c.rule {
+			t.Errorf("%s: %+v, want outcome %d rule %s", c.name, got, c.want, c.rule)
+		}
+	}
+	never := lr(ticket.RiskRead, "app")
+	never.NeverAuto = true
+	if v := e.Decide(never); v.Outcome != Question {
+		t.Errorf("never-auto scan: %+v", v)
+	}
+	if r := LocklogRules(func(string) string { return "" }); r[ActRead] != Ask || r[ActReadPII] != Ask {
+		t.Errorf("empty rules: %v", r)
+	}
+}

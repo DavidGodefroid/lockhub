@@ -22,6 +22,9 @@ type Env struct {
 	Types []string
 	// UID is the uid lea's agents run as (os.Getuid).
 	UID int
+	// HostLogs are this host's log directories locklog reads
+	// (HostLogDirs); nil: none.
+	HostLogs func() []string
 }
 
 // RealDockerVersion asks the Docker engine its version.

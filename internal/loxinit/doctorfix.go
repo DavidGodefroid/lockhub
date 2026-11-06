@@ -33,6 +33,10 @@ type doctorFix struct {
 //   - lockfile is left out: its only repair (v0.6.0) wires every installed
 //     agent for the user's account, nothing lox up needs, so lox add does
 //     not make it behind the user's back (lockfile doctor --fix does it).
+//   - locklog is left out for the same reason: its doctor --fix (v0.2.0,
+//     its first hub-only release) wires the agents not wired yet, and
+//     lox add has run `locklog init claude` already; its .locklog/ is
+//     the user's from profile add on (lox run copies it as it is).
 var doctorFixes = map[string]doctorFix{
 	"locksql":  {Min: "0.13.1", Notice: "locksql doctor --fix also wires your installed agents for your account"},
 	"lockmq":   {Min: "0.6.1"},

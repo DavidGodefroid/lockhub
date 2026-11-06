@@ -117,6 +117,7 @@ type Applied struct {
 // (nil: none listed).
 func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs map[string]string) []string {
 	var s []string
+	routes := Routes(c)
 	s = append(s, "hub image "+c.Hub.Image, "hub key "+hubPub, "hub facades "+strings.Join(c.Hub.Facades, ","))
 	for _, f := range HostFacades {
 		if k, ok := facadePubs[f]; ok {
@@ -172,10 +173,18 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 				}
 			}
 		}
-		if fs, ok := c.Hub.Routing[n]; ok {
-			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(fs, ",")))
-		} else if l.Type == "locklog" {
-			s = append(s, fmt.Sprintf("lock %s routed only to %s (locklog's default: no chat facade)", n, strings.Join(LocklogFacades, ",")))
+		_, set := c.Hub.Routing[n]
+		switch {
+		case l.Type == "locklog":
+			// What the hub applies: Routes' narrowing (mobile without
+			// devices) and the facades this hub runs.
+			why := "hub.routing"
+			if !set {
+				why = "locklog's default: no chat facade"
+			}
+			s = append(s, fmt.Sprintf("lock %s routed only to %s (%s)", n, facadeList(effectiveRoute(routes, n)), why))
+		case set:
+			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(c.Hub.Routing[n], ",")))
 		}
 	}
 	return s
@@ -542,6 +551,20 @@ func (u *Up) Do(ctx context.Context) error {
 		pl, err := DeriveLogPlan(ctx, u.Run, u.LogHost, out, LogMapDir(u.State, n))
 		if err != nil {
 			return fmt.Errorf("lock %s: %w", n, err)
+		}
+		// Its auto rules, from the same copy: rules lox run cannot read
+		// leave every ticket asked (the console enforces its own anyway).
+		ro, err := u.runSetup(ctx, project, composeYAML, profiles[l.Type].Tar, "rules-"+n)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			pl.Rules = &LogRules{Profile: pl.Profile, Unknown: "locklog profile rules failed"}
+		} else {
+			pl.Rules = DeriveLogRules(ro, pl.Profile)
+		}
+		if pl.Rules.Unknown != "" {
+			pl.Warnings = append(pl.Warnings, "auto rules unknown ("+pl.Rules.Unknown+"): lox run asks every ticket of this lock")
 		}
 		for _, w := range pl.Warnings {
 			fmt.Fprintf(u.Out, "warning: lock %s: %s\n", n, w)
@@ -1065,6 +1088,29 @@ func privateDir(d string) error {
 		return err
 	}
 	return checkPrivate(d)
+}
+
+// effectiveRoute is the facades that may answer instance n under r: its
+// Only list (every facade without one), less those the hub does not run.
+func effectiveRoute(r route.Rules, n string) []string {
+	fs, ok := r.Only[n]
+	if !ok {
+		fs = route.Facades()
+	}
+	var out []string
+	for _, f := range fs {
+		if r.On(f) && !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func facadeList(fs []string) string {
+	if len(fs) == 0 {
+		return "no facade"
+	}
+	return strings.Join(fs, ",")
 }
 
 // Routes is the hub's routing for c: hub.routing, and a lock that pins no

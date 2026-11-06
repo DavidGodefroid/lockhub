@@ -88,6 +88,14 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		}
 		return []byte("profile default false\n"), nil
 	}
+	// locklog profile rules: keys["rules/<instance>"], or every action
+	// asked for the profiles the tests name.
+	if i := strings.Index(line, " --no-deps rules-"); i >= 0 {
+		if r, ok := f.keys["rules/"+line[i+len(" --no-deps rules-"):]]; ok {
+			return []byte(r), nil
+		}
+		return []byte(rulesJSON("ask", "ask", "ask", "default", "a", "app", "ctr", "files", "rem")), nil
+	}
 	if strings.HasSuffix(line, " --no-deps profile-locklog") {
 		return []byte("2049:131074\n"), nil
 	}
@@ -135,6 +143,26 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		return []byte(f.keys[line[i+len("hub-key --instance "):]] + "\n"), nil
 	}
 	return nil, nil
+}
+
+// rulesJSON is locklog profile rules --json for profiles, each with the
+// rules read, unmask, lookup.
+func rulesJSON(read, unmask, lookup string, profiles ...string) string {
+	type pr struct {
+		Profile string            `json:"profile"`
+		Rules   map[string]string `json:"rules"`
+		Source  string            `json:"source"`
+	}
+	o := struct {
+		Lock     string   `json:"lock"`
+		Actions  []string `json:"actions"`
+		Profiles []pr     `json:"profiles"`
+	}{Lock: "locklog", Actions: []string{"read", "unmask", "lookup"}}
+	for _, p := range profiles {
+		o.Profiles = append(o.Profiles, pr{p, map[string]string{"read": read, "unmask": unmask, "lookup": lookup}, "files"})
+	}
+	b, _ := json.Marshal(o)
+	return string(b) + "\n"
 }
 
 func (f *fake) ran(s string) bool {

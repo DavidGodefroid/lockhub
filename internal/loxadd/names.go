@@ -5,8 +5,10 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/loxinit"
 )
 
@@ -55,9 +57,11 @@ func uniqueName(name string, taken func(string) bool) string {
 }
 
 // UIDsFor are lox up's allowed_uids of a lock lea's agents reach: lea's
-// uid, when it is one a console takes (not root, not nobody).
+// uid, when it is one a console takes (not root, not nobody, not the
+// console's own account).
 func UIDsFor(lock string, lea bool, uid int) []int {
-	if !lea || uid <= 0 || uid == 65534 || !slices.Contains([]string{"locksql", "lockmq", "lockfile"}, lock) {
+	if !lea || uid <= 0 || uid == 65534 || !slices.Contains([]string{"locksql", "lockmq", "lockfile", "locklog"}, lock) ||
+		strconv.Itoa(uid) == family.Kinds[lock].UID {
 		return nil
 	}
 	return []int{uid}

@@ -226,7 +226,9 @@ func TestLocklogRouting(t *testing.T) {
 	if r := Routes(c); !slices.Equal(r.Only["logs"], LocklogFacades) || r.Only["crm-prod"] != nil {
 		t.Errorf("default: %v", r.Only)
 	}
-	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to tty,deck,mobile (locklog's default: no chat facade)") {
+	// The review line is what the hub applies: this hub runs tty, deck
+	// and slack, so mobile is not in it, and slack never is.
+	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to tty,deck (locklog's default: no chat facade)") {
 		t.Errorf("review:\n%s", s)
 	}
 	// With mobile on and no device pinned: mobile narrowed away too.
@@ -235,6 +237,29 @@ func TestLocklogRouting(t *testing.T) {
 	}
 	if r := Routes(c); !slices.Equal(r.Only["logs"], []string{"tty", "deck"}) {
 		t.Errorf("mobile, no device: %v", r.Only)
+	}
+	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to tty,deck (locklog's default: no chat facade)") {
+		t.Errorf("mobile, no device: review:\n%s", s)
+	}
+	// Mobile on and the lock pins the devices: mobile is in it.
+	if c, err = load(strings.Replace(logConf("    devices: true\n"), "locks:\n", plainMobile+"locks:\n", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to tty,deck,mobile (locklog's default: no chat facade)") {
+		t.Errorf("mobile, devices: review:\n%s", s)
+	}
+	// An explicit entry, narrowed the same way: no device pinned.
+	if c, err = load(strings.Replace(logConf(""), "locks:\n", plainMobile+"  routing:\n    logs: [deck, mobile]\nlocks:\n", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to deck (hub.routing)") {
+		t.Errorf("explicit: review:\n%s", s)
+	}
+	if c, err = load(strings.Replace(logConf(""), "locks:\n", plainMobile+"  routing:\n    logs: [mobile]\nlocks:\n", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if s := strings.Join(Summary(c, "k", nil, nil), "\n"); !strings.Contains(s, "lock logs routed only to no facade (hub.routing)") {
+		t.Errorf("nothing left: review:\n%s", s)
 	}
 }
 
