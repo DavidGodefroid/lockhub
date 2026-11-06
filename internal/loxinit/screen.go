@@ -29,9 +29,6 @@ func RenderPrereqs(w io.Writer, p Prereqs, goos string) {
 	}
 	var have, miss []string
 	for _, l := range Locks {
-		if l == "locklog" {
-			continue
-		}
 		if p.Launchers[l] != "" {
 			have = append(have, l)
 		} else {

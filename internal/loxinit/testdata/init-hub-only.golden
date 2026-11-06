@@ -4,14 +4,16 @@ Prerequisites
   ok  Docker 29.0.0
   ok  cosign (lox add and lox run verify every image's signature)
   ok  lea
-  ok  launchers: locksql, lockmq, lockfile, lockhttp
+  ok  launchers: locksql, lockmq, lockfile, lockhttp, locklog
 
   found: postgres on host.docker.internal:55432 (compose.yaml, .env) → `lox add locksql`
   found: rabbitmq on http://host.docker.internal:55672 (compose.yaml) → `lox add lockmq`
   found: mysql on inventory.internal:3307 (config/inventory.yaml) → `lox add locksql`
+  found: host logs on this host (/var/log/journal, /var/log) → `lox add locklog`
+    note: lox add locklog has locklog find this host's log files, journal and containers; lox run binds only what the reviewed profile names, read-only
 
 lockfamily.yaml written: the hub alone
 
 [lox up]
 
-Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp`.
+Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`.

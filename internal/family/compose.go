@@ -500,20 +500,32 @@ func Compose(c *Config, p Paths) string {
 		if l.Profile != "" {
 			args = append(args, "--profile", l.Profile)
 		}
-		w("  %s:", q("mounts-"+name))
-		w("    image: %s", q(l.Image))
-		w("    profiles: [setup]")
-		w("    user: %s", q(agentAccount))
-		w("    environment:")
-		w("      HOME: \"/tmp\"")
-		w("    entrypoint: [%s]", quoteAll(args))
-		w("    network_mode: none")
-		w("    read_only: true")
-		w("    cap_drop: [ALL]")
-		w("    security_opt: [\"no-new-privileges:true\"]")
-		w("    tmpfs: [\"/tmp:size=16m\", %s]", q(p.Workspace+":size=2m,uid=10052,gid=10050,mode=0700"))
-		w("    pids_limit: 64")
-		w("    mem_limit: 256m")
+		// rules-<instance> reads the profiles' auto rules from the same
+		// copy, the same way (locklog profile rules --json): no network,
+		// no volume, so the rules are the reviewed file's.
+		rules := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s profile rules --json "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
+		if l.Profile != "" {
+			rules = append(rules, "--profile", l.Profile)
+		}
+		for _, s := range []struct {
+			svc  string
+			args []string
+		}{{"mounts-" + name, args}, {"rules-" + name, rules}} {
+			w("  %s:", q(s.svc))
+			w("    image: %s", q(l.Image))
+			w("    profiles: [setup]")
+			w("    user: %s", q(agentAccount))
+			w("    environment:")
+			w("      HOME: \"/tmp\"")
+			w("    entrypoint: [%s]", quoteAll(s.args))
+			w("    network_mode: none")
+			w("    read_only: true")
+			w("    cap_drop: [ALL]")
+			w("    security_opt: [\"no-new-privileges:true\"]")
+			w("    tmpfs: [\"/tmp:size=16m\", %s]", q(p.Workspace+":size=2m,uid=10052,gid=10050,mode=0700"))
+			w("    pids_limit: 64")
+			w("    mem_limit: 256m")
+		}
 	}
 	for _, name := range p.Rotate {
 		l, ok := c.Locks[name]

@@ -63,7 +63,8 @@ func initCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	ini := &loxinit.Init{
 		Root: ws, Out: stdout, Terminal: terminal, Review: *review, HubImageGiven: *hubImage != "",
 		Env: loxinit.Env{GOOS: runtime.GOOS, LookPath: exec.LookPath, DockerVersion: loxinit.RealDockerVersion,
-			Types: family.Types, UID: os.Getuid()},
+			Types: family.Types, UID: os.Getuid(),
+			HostLogs: func() []string { return loxinit.HostLogDirs(runtime.GOOS, loxinit.RealIsDir) }},
 		Declared: func() ([]loxinit.Declared, error) { return declared(abs) },
 		Hub: func(ctx context.Context) (bool, error) {
 			img := *hubImage

@@ -71,7 +71,8 @@ It runs in **auto mode** by default:
 
 | Ticket | Auto mode |
 |---|---|
-| read (SELECT, MQ peek, file read, log search) | approved by the rule, no question |
+| read (SELECT, MQ peek, file read) | approved by the rule, no question |
+| locklog: a scan, an unmask, an approved lookup | as the profile's auto rules say (`auto`, `ask`, `deny`; locklog's default: asked), shown in the review |
 | locksql write, DDL | asked, every time |
 | connect (a lock opens a profile's connection on its agent's first request) | asked once per profile per `lox run` session; the password of an `ask` profile, or a Vault token that expired, is typed here and sealed to the lock |
 | another profile | its own question, once per session |
@@ -113,6 +114,23 @@ port). The review shows the allowlist; `lox doctor` checks it. See
 `lox up` is deprecated: it prints "use lox run" and only starts the hub and
 the locks. See [docs/lox-run.md](docs/lox-run.md).
 
+## Supported locks
+
+| Lock | Source | `lox add` | Since |
+|---|---|---|---|
+| [locksql](https://github.com/DavidGodefroid/locksql) | PostgreSQL, MySQL, MariaDB, SQLite | `lox add locksql` | v0.11.0 |
+| [lockmq](https://github.com/DavidGodefroid/lockmq) | RabbitMQ | `lox add lockmq` | v0.3.0 |
+| [lockfile](https://github.com/DavidGodefroid/lockfile) | S3, SFTP, a local directory | `lox add lockfile` | v0.4.0 |
+| [lockhttp](https://github.com/DavidGodefroid/lockhttp) | HTTP, through lea's gate | `lox add lockhttp` | v0.3.0 |
+| [locklog](https://github.com/DavidGodefroid/locklog) | this host's log files, journal and containers; Loki, Elasticsearch, OpenSearch | `lox add locklog` | v0.2.0 |
+
+"Since" is each lock's first release that runs under `lox run` (hub mode);
+`lox run` upgrades a pinned image older than the release this lox ships
+with. A locklog lock reads host logs through the mount plan its image
+derives from the reviewed profile, bound read-only, and is answered on the
+local facades only (its unmasks are `read-pii`): see
+[docs/lox-run.md](docs/lox-run.md#locklog-the-mount-plan-and-the-containers-map).
+
 ## Status
 
 Early development. This repository holds:
@@ -151,7 +169,7 @@ Then, in lea's projects directory, run `lox init` — or go straight to
 serves the decisions. Later, one source at a time, in that directory:
 
 ```sh
-lox add locksql      # or lockmq, lockfile, lockhttp
+lox add locksql      # or lockmq, lockfile, lockhttp, locklog
 lea stop             # a lock added while lea runs reaches it at lea's next start
 lea
 ```

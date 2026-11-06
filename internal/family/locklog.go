@@ -121,6 +121,9 @@ type LogPlan struct {
 	// Remote: the profile reads a remote source (Loki, Elasticsearch,
 	// OpenSearch).
 	Remote bool `json:"remote,omitempty"`
+	// Rules are the profile's auto rules (locklog profile rules on the
+	// reviewed copy), nil in a plan from before lox run read them.
+	Rules *LogRules `json:"rules,omitempty"`
 	// Warnings are files or directories the console will not reach.
 	Warnings []string `json:"-"`
 	notes    map[string]string
@@ -145,6 +148,9 @@ func (p *LogPlan) Review(n string) []string {
 	}
 	if p.MapDir != "" {
 		s = append(s, fmt.Sprintf("%scontainers map %s at %s (read-only): written by lox run and lox refresh %s, not while the console runs", pre, p.MapDir, LocklogMapTarget, n))
+	}
+	if p.Rules != nil {
+		s = append(s, p.Rules.Line(n))
 	}
 	return s
 }
@@ -765,7 +771,7 @@ func updateLogMap(ctx context.Context, run Runner, p *LogPlan) (int, bool, error
 
 // logPlanLine is a review line a mount plan derives (LogPlan.Review):
 // from the profile, not from lockfamily.yaml.
-var logPlanLine = regexp.MustCompile(`^lock \S+ (mount plan of profile|plan|bind|groups|containers map|network) `)
+var logPlanLine = regexp.MustCompile(`^lock \S+ (mount plan of profile|plan|bind|groups|containers map|network|auto rules of profile) `)
 
 // Refresh is `lox refresh <instance>`: it rewrites the containers map of
 // a locklog lock once, from the approved globs of the plan the last

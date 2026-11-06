@@ -9,6 +9,7 @@ lox add locksql      # a database
 lox add lockmq       # a RabbitMQ broker
 lox add lockfile     # a file store: S3, SFTP or a local directory
 lox add lockhttp     # the HTTP policy of lea's LockHTTP gate
+lox add locklog      # this host's logs: files under /var/log, the journal, containers
 ```
 
 `lox add TYPE INSTANCE` (two arguments) is the older form: it only declares
@@ -26,15 +27,16 @@ At a terminal, `lox add TYPE` runs these steps in order:
    doctor's repairs and what still fails are shown; a failure of the doctor
    never stops `lox add` (the console is not running yet). The doctor runs
    with `--fix --yes` for locksql, lockmq and lockhttp, without `--fix` for
-   lockfile (its only repair wires your agents). locksql's `--fix` also
+   lockfile and locklog (their only repair wires your agents, which `init
+   claude` did). locksql's `--fix` also
    wires your installed agents for your account: before it runs, `lox add`
    says `locksql doctor --fix also wires your installed agents for your
    account`.
 3. **The declaration** in `.lockfamily/lockfamily.yaml`: the lock's image,
    pinned by digest and cosign-verified (the `-vault` image variant for a
-   lock that takes its credentials from Vault), and, for locksql, lockmq and
-   lockfile when lea is on `PATH`, your uid in `allowed_uids` (lea's agents
-   run as it). A `lockfamily.yaml` that does not exist yet is created with the
+   lock that takes its credentials from Vault), and, for locksql, lockmq,
+   lockfile and locklog when lea is on `PATH`, your uid in `allowed_uids`
+   (lea's agents run as it). A `lockfamily.yaml` that does not exist yet is created with the
    hub alone.
 4. **The start (what `lox run` does before it serves decisions), with the short review of this lock**: one block with its
    image, target, environment, credentials, production flag and profile
@@ -157,6 +159,22 @@ and `tls_server_name` are set in locksql's profile file.
 
 Only `Name (required) [web]: `. A lockhttp lock takes no credentials and no
 `allowed_uids`: lea's gate reaches it, so lea must be installed.
+
+### locklog
+
+| Prompt | Flag, notes |
+|---|---|
+| `Log directories, comma-separated absolute paths (optional: empty = every log this host shows: files under /var/log, the journal, the containers): ` | `--only`: `locklog profile add --only` |
+| `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
+| `Name (required) [logs]: ` | `--name` |
+
+`locklog profile add --non-interactive` finds this host's logs itself (the
+files under `/var/log`, the journal, the containers), from facts its launcher
+gathers; it never takes a secret. A remote store (Loki, Elasticsearch,
+OpenSearch) is written in `.locklog/config.toml` by hand (locklog's README).
+`lox run` then derives the lock's mount plan and auto rules from the reviewed
+copy and shows both ([lox-run.md](lox-run.md#locklog-the-mount-plan-and-the-containers-map)).
+Local sources need Linux with a rootful Docker engine 19.03 or later.
 
 ## Non-interactive
 

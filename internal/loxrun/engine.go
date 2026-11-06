@@ -54,6 +54,10 @@ const (
 	ActAction   Action = "action"
 	ActEndpoint Action = "endpoint"
 	ActPolicy   Action = "policy"
+	// ActReadPII is a read of risk read-pii (a locklog unmask or approved
+	// lookup): a profile rule for it takes the place of read's for such
+	// a ticket. With none, a read-pii read is ruled as read.
+	ActReadPII Action = "read-pii"
 )
 
 // Value is a profile rule's answer for an action.
@@ -177,9 +181,20 @@ func NewEngine(m Mode) *Engine {
 	return &Engine{Mode: m, connected: map[string]bool{}, endpoints: map[string]bool{}}
 }
 
+// ruleAction is the action of r a profile rule decides: read-pii for a
+// read of risk read-pii whose profile has a rule for it, else a.
+func (e *Engine) ruleAction(r Request, a Action) Action {
+	if a == ActRead && r.Risk == ticket.RiskReadPII && e.Rules != nil {
+		if _, ok := e.Rules(r.Instance, r.Profile())[ActReadPII]; ok {
+			return ActReadPII
+		}
+	}
+	return a
+}
+
 func (e *Engine) rule(r Request, a Action) Value {
 	if e.Rules != nil {
-		if v, ok := e.Rules(r.Instance, r.Profile())[a]; ok {
+		if v, ok := e.Rules(r.Instance, r.Profile())[e.ruleAction(r, a)]; ok {
 			return v
 		}
 	}
@@ -207,14 +222,15 @@ func endpointKey(r Request) string {
 // deny rule holds in both modes; manual asks the rest.
 func (e *Engine) Decide(r Request) Verdict {
 	a := r.Action()
+	ra := e.ruleAction(r, a) // the action named in the rule
 	v := e.rule(r, a)
 	if a == ActPolicy && v == Allow {
 		v = Ask // a loosening of the policy is the human's, always
 	}
 	if v == Deny && r.V >= ticket.VersionKinds && r.Verified {
-		return Verdict{Outcome: Refuse, Rule: "deny:" + string(a), Why: fmt.Sprintf("the profile denies %s", a)}
+		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra)}
 	}
-	ask := func(why string) Verdict { return Verdict{Outcome: Question, Rule: "ask:" + string(a), Why: why} }
+	ask := func(why string) Verdict { return Verdict{Outcome: Question, Rule: "ask:" + string(ra), Why: why} }
 	switch {
 	case e.Mode == Manual:
 		return ask("manual mode: every ticket is asked")
@@ -244,18 +260,40 @@ func (e *Engine) Decide(r Request) Verdict {
 			return ask("new endpoint in this session")
 		}
 	}
-	return ask(string(a) + " is always asked")
+	return ask(string(ra) + " is always asked")
 }
 
 // autoRule names the rule of an auto approval: the profile's own rule
 // when it set the action, the default otherwise.
 func autoRule(e *Engine, r Request, a Action) string {
 	if e.Rules != nil {
-		if _, ok := e.Rules(r.Instance, r.Profile())[a]; ok {
-			return "profile:" + string(a)
+		ra := e.ruleAction(r, a)
+		if _, ok := e.Rules(r.Instance, r.Profile())[ra]; ok {
+			return "profile:" + string(ra)
 		}
 	}
 	return "default:" + string(a)
+}
+
+// LocklogRules are the engine's rules for a locklog profile whose auto
+// rules (`locklog profile rules`) give get(action) for its actions read
+// (an approved scan, risk read), unmask and lookup (both risk read-pii,
+// which a ticket does not tell apart: the stricter of the two). A value
+// that is not auto, ask or deny is ask.
+func LocklogRules(get func(action string) string) ProfileRules {
+	val := func(a string) Value {
+		switch v := Value(get(a)); v {
+		case Allow, Ask, Deny:
+			return v
+		}
+		return Ask
+	}
+	rank := map[Value]int{Deny: 0, Ask: 1, Allow: 2}
+	pii := val("unmask")
+	if l := val("lookup"); rank[l] < rank[pii] {
+		pii = l
+	}
+	return ProfileRules{ActRead: val("read"), ActReadPII: pii}
 }
 
 // Answered records the human's answer on r: an approved connection or

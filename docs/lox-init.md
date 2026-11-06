@@ -20,7 +20,7 @@ start, when its projects directory has no `.lockfamily/up.json`, lea runs
 It ends with:
 
 ```
-Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp`.
+Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`.
 ```
 
 ## Flags
@@ -38,16 +38,20 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
    (`lox add` and `lox run` verify every image's signature); otherwise
    `lox init` prints the install command for your system and stops with
    nothing done. lea and each lock's launcher (`locksql`, `lockmq`,
-   `lockfile`, `lockhttp`) are looked up on `PATH`: the locks run without
+   `lockfile`, `lockhttp`, `locklog`) are looked up on `PATH`: the locks run without
    lea, lockhttp needs it, and a missing launcher is listed with where to
    install it.
 2. **Hints**, read only, project files only: `.env` and `.env.*`,
    `compose*.yaml` / `docker-compose*.yaml` (and `.yml`) at the project root,
    and `config/` (yaml, yml, toml, json, env, ini, conf, properties; three
    levels deep). No link is followed and no file over 256 KiB is read. It
-   finds PostgreSQL, MySQL, MariaDB and RabbitMQ, and prints one line for
-   each with the files that name it (never a key's value) and the `lox add`
-   that serves it. Detection skips every key named like a secret
+   finds PostgreSQL, MySQL, MariaDB and RabbitMQ, the log stores locklog
+   reads (a Loki, Elasticsearch or OpenSearch compose service, or a
+   `LOKI_URL`, `LOKI_ADDR`, `ELASTICSEARCH_URL`, `ES_URL`, `OPENSEARCH_URL`...
+   in `.env*`), and on Linux this host's own logs (`/var/log/journal`,
+   `/run/log/journal`, `/var/log`), and prints one line for each with the
+   files that name it (never a key's value) and the `lox add` that serves it
+   (`lox add locklog` for the logs). Detection skips every key named like a secret
    (`*PASSWORD*`, `*_PASS`, `*SECRET*`, `*TOKEN*`, `*_KEY`, ...) and keeps
    only the user name of a URL, never its password. A source on this machine
    is shown as `host.docker.internal` at its published port: the console

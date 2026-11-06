@@ -74,7 +74,8 @@ func TestDoctorArgsNeedsFixedLauncher(t *testing.T) {
 
 // lockmq's fixed release is v0.6.1: v0.6.0 gets the advisory doctor.
 // lockhttp's --fix needs no version; lockfile's doctor never runs with
-// --fix (its only repair wires every installed agent for the account).
+// --fix (its only repair wires every installed agent for the account),
+// nor does locklog's (the same repair).
 func TestDoctorArgsPerLock(t *testing.T) {
 	run := &versionRunner{version: map[string]string{"lockmq": "lockmq launcher 0.6.0 (image x)\nlockmq v0.6.0\n"}}
 	args, note := DoctorArgs(context.Background(), run, "/project", "lockmq", nil)
@@ -84,6 +85,7 @@ func TestDoctorArgsPerLock(t *testing.T) {
 	for lock, want := range map[string][]string{
 		"lockhttp": {"doctor", "--fix", "--yes", "--json"},
 		"lockfile": {"doctor", "--json"},
+		"locklog":  {"doctor", "--json"},
 	} {
 		run.calls = nil
 		args, note := DoctorArgs(context.Background(), run, "/project", lock, nil)
@@ -101,6 +103,7 @@ func TestFixNotice(t *testing.T) {
 		"lockmq":   "",
 		"lockhttp": "",
 		"lockfile": "",
+		"locklog":  "",
 	} {
 		if got := FixNotice(lock); got != want {
 			t.Errorf("%s: %q, want %q", lock, got, want)

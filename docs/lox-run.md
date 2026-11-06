@@ -3,8 +3,9 @@
 `lox run` runs the hub and a workspace's locks with Docker Compose. Agents
 reach the locks' sockets, never the hub: lea's agents in their containers,
 and a host agent (Claude Code, Codex... run in a terminal) through the
-locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, as
-`<lock> init` writes them in `.mcp.json`). This page is the contract
+locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, `locklog
+mcp`, as `<lock> init` writes them in `.mcp.json`). The locks `lox run` runs:
+locksql, lockmq, lockfile, lockhttp and locklog. This page is the contract
 between `lox run` and both.
 
 ## Serving decisions
@@ -38,8 +39,10 @@ applied to a version-2 ticket: the hub signs its decision with the rule
 record), refuses a rule's approval of a never-auto ticket or of one whose
 approval needs a typed name (`needs_human`), and accepts a rule from the
 terminal facade only. Per-profile auto rules (`auto`/`ask`/`deny` per action,
-`Engine.Rules`) are applied when a lock provides them (locksql#185, lockmq);
-until then the defaults above hold. A `deny` rule holds in both modes.
+`Engine.Rules`) are applied when a lock provides them: locklog's (below,
+[locklog: auto rules](#locklog-auto-rules)); for the other locks (locksql#185,
+lockmq) the defaults above hold until they do. A `deny` rule holds in both
+modes.
 
 **Connections.** A lock starts disconnected (lockkit `lazyconn`): an agent's
 first request for a profile reaches the lock over its socket, the lock sends a
@@ -134,7 +137,7 @@ per-profile rules through `Session.Rules`.
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lox add`, `lox import`) | `lox` |
 | `<workspace>/.lockfamily/up.json` | `lox run`, after a confirmed apply | lea; the locks' launchers (host agents) |
-| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
+| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`, `.locklog`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox run` | `lox` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox run` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
@@ -313,7 +316,11 @@ phase 2 on every pull request) drives both launchers as `.mcp.json` starts
 them, over MCP on stdio, against the images `lox add` pins: `locksql mcp`
 plans and runs a query and, once the ticket is approved at `lox approve`,
 gets its rows; `lockmq mcp` reads a stream (RabbitMQ) and, once approved,
-gets its message. It also checks the launcher's refusals of a tampered
+gets its message. `ci/e2e/locklog-agent.sh` does the same for locklog:
+`locklog init claude` writes `.mcp.json`, and the `locklog mcp` it names
+counts the records of a log file (masked, no ticket), then asks to unmask
+one e-mail address of a record: pending on the hub, approved at `lox
+approve`, then run with the ticket. It also checks the launcher's refusals of a tampered
 up.json and of a squatted socket volume (with locksql's launcher; lockmq's
 makes the same checks).
 
@@ -548,7 +555,10 @@ on the host:
   Docker, and on an engine older than 19.03 (it ignores a bind's
   non-recursive option). Fail closed: an engine whose `docker info` or
   `docker version` does not answer, or whose version cannot be read, is
-  refused too.
+  refused too. That includes Podman's Docker-compatible API: it reports
+  Podman's own version (such as `4.9.3`), whose major is below 19, so
+  local sources are refused under Podman; a remote-only profile is not
+  (lox run asks the engine nothing for it).
 
 Every directory is bound read-only and non-recursive (Compose
 `bind: {recursive: disabled}`: no submount of it appears) at its own path.
@@ -592,9 +602,39 @@ A locklog ticket is a read of masked logs, and an unmask or a lookup is
 `read-pii`: a locklog lock is answered on the local facades only. A
 `hub.routing` entry of it naming `slack` or `telegram` is refused, and with
 no entry it is routed to `tty`, `deck` and `mobile` (narrowed away from mobile
-when it pins no device, as every lock). The review shows that default. `lox
-doctor` compares the hub's `routing.json` with that routing, as lox run writes
-it.
+when it pins no device, as every lock). The review shows the facades that
+can answer it in effect, those of that routing the hub runs (`hub.facades`):
+`lock NAME routed only to tty,deck (locklog's default: no chat facade)`, or
+`(hub.routing)` for an entry. `lox doctor` compares the hub's `routing.json`
+with that routing, as lox run writes it.
+
+### locklog: auto rules
+
+A locklog profile says what `lox run`'s auto mode does with each action that
+becomes a ticket (locklog#126): `read` (an approved scan, risk `read`),
+`unmask` and `lookup` (with `lookup = "approved"`; both `read-pii`), each
+`auto`, `ask` or `deny` (locklog's default: `ask` for all three). Before the
+review, lox run runs `locklog profile rules --json [--profile P]` in the
+lock's image on the reviewed copy (setup service `rules-<instance>`, as
+`mounts-<instance>`: the image's agent, no network, no volume) and shows the
+served profile's rules:
+
+```
+lock logs auto rules of profile files: read ask · unmask ask · lookup ask (locklog profile rules, on the reviewed copy)
+```
+
+A change of rules is a change to confirm. The rules are kept with the applied
+plan (`plan.json`), where `lox run --no-start` reads them. The engine applies
+`read` to a locklog scan and the stricter of `unmask` and `lookup` to its
+`read-pii` tickets (a ticket does not tell them apart; rule `read-pii`). Rules
+lox run cannot read (an error, an answer it does not parse, a profile not
+listed) leave every ticket of the lock asked, with a warning before the
+review. The console enforces its own side whatever lox run does: an action
+its rules deny is refused before any ticket, and the ticket of an `ask` is
+signed never-auto, which lox run always asks and the lock refuses an auto
+approval of. A `read-pii` decision is taken on `tty`, `deck` or `mobile`
+only: the routing above, and the console refuses one from any other
+facade.
 
 ## Upgrading the images
 

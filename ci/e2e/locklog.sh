@@ -114,7 +114,9 @@ for want in \
 	"lock rem network lockhub and ${p}_locknet-rem, its own, which no agent joins" \
 	"only loki.invalid:3100" \
 	"local log sources only: the console is on the hub's network alone, with no route out" \
-	"lock logs routed only to tty,deck,mobile (locklog's default: no chat facade)"; do
+	"lock logs routed only to tty,deck (locklog's default: no chat facade)" \
+	"lock logs auto rules of profile files: read ask · unmask ask · lookup ask (locklog profile rules, on the reviewed copy)" \
+	"lock rem auto rules of profile rem: read ask · unmask ask · lookup ask"; do
 	grep -qF "$want" run.out || die "the review lacks: $want"
 done
 

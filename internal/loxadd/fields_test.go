@@ -36,7 +36,7 @@ func TestFieldsUnknownLock(t *testing.T) {
 }
 
 func TestPromptMarkers(t *testing.T) {
-	for _, lock := range []string{"locksql", "lockmq", "lockfile", "lockhttp"} {
+	for _, lock := range []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog"} {
 		for _, d := range []Defaults{{}, {Source: &shopDB}, {Source: &shopMQ}} {
 			for _, f := range fieldsOf(t, lock, d) {
 				p := Prompt(f)
@@ -107,6 +107,23 @@ func TestPromptsVerbatim(t *testing.T) {
 	web := fieldsOf(t, "lockhttp", Defaults{})
 	if len(web) != 1 || Prompt(web[0]) != "Name (required) [web]: " {
 		t.Errorf("lockhttp: %+v", web)
+	}
+	logs := fieldsOf(t, "locklog", Defaults{Declared: []string{"logs"}})
+	for key, want := range map[string]string{
+		"only":       "Log directories, comma-separated absolute paths (optional: empty = every log this host shows: files under /var/log, the journal, the containers): ",
+		"production": "Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ",
+		"name":       "Name (required) [logs-2]: ",
+	} {
+		if got := Prompt(find(t, logs, key, Answers{})); got != want {
+			t.Errorf("locklog %s: %q, want %q", key, got, want)
+		}
+	}
+	only := find(t, logs, "only", Answers{})
+	for v, ok := range map[string]bool{"/var/log/nginx": true, "/var/log/nginx,/var/log/app": true, "var/log": false, "/var/log/../etc": false,
+		"/var/log,": false, "/a:b": false} {
+		if _, r := Answer(only, v, Answers{}); (r == "") != ok {
+			t.Errorf("only %q: reason %q", v, r)
+		}
 	}
 	v := Answers{"credentials": "vault"}
 	for key, want := range map[string]string{

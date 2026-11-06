@@ -40,6 +40,7 @@ var lockKinds = map[string]string{
 	"lockmq":   "broker",
 	"lockfile": "file store",
 	"lockhttp": "HTTP policy for lea's LockHTTP gate",
+	"locklog":  "log reader (this host's log files, journal and containers)",
 }
 
 // Run asks each field in order. For a key, the first field whose When holds

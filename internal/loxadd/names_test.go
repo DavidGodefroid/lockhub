@@ -51,6 +51,8 @@ func TestUIDsFor(t *testing.T) {
 		{"lockmq", true, 1000, []int{1000}},
 		{"lockfile", true, 1000, []int{1000}},
 		{"lockhttp", true, 1000, nil},
+		{"locklog", true, 1000, []int{1000}},
+		{"locklog", true, 10051, nil},
 		{"locksql", false, 1000, nil},
 		{"locksql", true, 0, nil},
 		{"locksql", true, 65534, nil},

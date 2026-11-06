@@ -79,8 +79,10 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		}
 	}
 	locks := 0
+	var rules func(instance, profile string) loxrun.ProfileRules
 	if c, err := family.Load(abs); err == nil {
 		locks = len(c.Locks)
+		rules = profileRules(family.AppliedLogRules(stateDir(family.Project(family.Workspace(abs))), c))
 	}
 	lockKeys, err := keys.LoadLocks(filepath.Join(*keysDir, family.LockKeysFile))
 	if err != nil {
@@ -102,7 +104,7 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		mode = loxrun.Manual
 	}
 	s := &loxrun.Session{Hub: approve.Dial(*sock), Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
-		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode}
+		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules}
 	// The a key: the hub's audit, as lox audit lists it. The session
 	// journal places this session (who, when, its mode switches) in it.
 	state := stateDir(family.Project(family.Workspace(abs)))
@@ -133,6 +135,24 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "lox run stopped: no decision is served any more; tickets wait at the hub for the next lox run (fail closed), and the locks close their connections once idle")
 	return 0
+}
+
+// profileRules are the engine's per-profile rules from the locks' own
+// auto rules as lox run applied them: a locklog lock's (by instance), for
+// the profile its console serves; for any other of its profiles, and
+// rules lox run could not read, every read is asked. The other locks keep
+// the defaults (nil).
+func profileRules(logs map[string]*family.LogRules) func(instance, profile string) loxrun.ProfileRules {
+	return func(instance, profile string) loxrun.ProfileRules {
+		r, ok := logs[instance]
+		if !ok {
+			return nil
+		}
+		if r.Profile != profile {
+			r = &family.LogRules{Profile: profile, Unknown: "not the profile lox run applied"}
+		}
+		return loxrun.LocklogRules(r.Get)
+	}
 }
 
 // upgrader is lox run's automatic upgrade: to the releases this lox

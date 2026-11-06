@@ -28,13 +28,14 @@ var targetKeys = map[string][]string{
 	"lockmq":   {"url", "user", "vhost", "amqp-url"},
 	"lockfile": {"source", "bucket", "endpoint", "region", "path", "host", "port", "user", "auth", "key", "known-hosts", "base-dir"},
 	"lockhttp": nil,
+	"locklog":  {"only"},
 }
 
 // Build is the lock the answers describe. An empty answer gives no flag.
 func Build(lock string, a Answers) (Lock, error) {
 	keys, ok := targetKeys[lock]
 	if !ok {
-		return Lock{}, fmt.Errorf("lock: want locksql, lockmq, lockfile or lockhttp")
+		return Lock{}, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp or locklog")
 	}
 	name := a["name"]
 	if name == "" {
@@ -68,11 +69,12 @@ func Build(lock string, a Answers) (Lock, error) {
 	return l, nil
 }
 
-// takesCredentials: lockhttp, a sqlite file and a local directory hold no
+// takesCredentials: lockhttp, locklog (its non-interactive profile add
+// takes the host's own logs), a sqlite file and a local directory hold no
 // secret, and their profile add refuses --credentials and --vault-path.
 func takesCredentials(lock string, a Answers) bool {
 	switch lock {
-	case "lockhttp":
+	case "lockhttp", "locklog":
 		return false
 	case "locksql":
 		return a["engine"] != "sqlite"

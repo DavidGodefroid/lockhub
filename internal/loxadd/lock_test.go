@@ -39,6 +39,10 @@ func TestProfileArgs(t *testing.T) {
 			[]string{"--profile", "local", "--source", "local", "--path", "/srv/files"}, ""},
 		{"lockhttp", "lockhttp", Answers{"name": "web", "production": "y"},
 			[]string{"--profile", "web", "--production"}, ""},
+		{"locklog, its host's logs", "locklog", Answers{"name": "logs", "production": "n", "credentials": "vault", "vault-path": "a/b"},
+			[]string{"--profile", "logs"}, ""},
+		{"locklog, some directories", "locklog", Answers{"name": "web-logs", "production": "y", "only": "/var/log/nginx,/var/log/app"},
+			[]string{"--profile", "web-logs", "--production", "--only", "/var/log/nginx,/var/log/app"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -95,8 +95,10 @@ func Fields(lock string, d Defaults) ([]Field, error) {
 		fs = fileFields(d)
 	case "lockhttp":
 		fs = []Field{nameField(d, "web")}
+	case "locklog":
+		fs = logFields(d)
 	default:
-		return nil, fmt.Errorf("lock: want locksql, lockmq, lockfile or lockhttp")
+		return nil, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp or locklog")
 	}
 	for i := range fs {
 		f := &fs[i]
@@ -492,4 +494,33 @@ func fileFields(d Defaults) []Field {
 	}
 	fs = append(fs, vaultFields(d, "secret/data/lockfile/", name.Default, src("s3", "sftp"))...)
 	return append(fs, name)
+}
+
+// checkDirs accepts absolute directories separated by commas (locklog
+// profile add --only).
+func checkDirs(key string) func(string, Answers) string {
+	return func(v string, _ Answers) string {
+		if r := text(key)(v, nil); r != "" {
+			return r
+		}
+		for _, d := range strings.Split(v, ",") {
+			if d = strings.TrimSpace(d); !filepath.IsAbs(d) || filepath.Clean(d) != d {
+				return key + ": absolute directories, separated by commas, such as /var/log/nginx,/var/log/app"
+			}
+		}
+		return ""
+	}
+}
+
+// logFields are locklog's: its profile add detects this host's logs (the
+// files under /var/log, the journal, the containers) by itself; --only
+// narrows it to some directories. A remote source (Loki, Elasticsearch,
+// OpenSearch) is written in .locklog/config.toml by hand.
+func logFields(d Defaults) []Field {
+	return []Field{
+		{Key: "only", Label: "Log directories, comma-separated absolute paths", Empty: "every log this host shows: files under /var/log, the journal, the containers",
+			Check: checkDirs("only")},
+		productionField(nil),
+		nameField(d, "logs"),
+	}
 }
