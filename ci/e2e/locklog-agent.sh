@@ -70,6 +70,7 @@ version = 1
 
 [profiles.files]
 production = false
+unmask = "approved"
 
 [profiles.files.sources.app]
 kind = "file"
@@ -133,7 +134,8 @@ say "a host agent: locklog_status through up.json's socket volume"
 hostlog locklog_status '{}' >status.json 2>status.err || { cat status.json status.err; locklog136 status.json; locklog136 status.err; die "locklog_status failed"; }
 cat status.json
 locklog136 status.json
-grep -q "console running" status.json || die "locklog_status: the console is not running"
+jq -e '[.data[] | select(.profile == "files" and .running == true)] | length == 1' status.json >/dev/null || die "locklog_status: the console of profile files is not running"
+jq -e '.data[0].status.product.auto == {"read":"ask","unmask":"ask","lookup":"ask"}' status.json >/dev/null || die "locklog_status: the console's auto rules are not the reviewed ones"
 
 say "a host agent: a count, masked, with no ticket"
 range='"from":"2026-11-06T09:00:00Z","to":"2026-11-06T11:00:00Z"'
