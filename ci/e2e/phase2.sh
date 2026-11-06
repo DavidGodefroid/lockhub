@@ -37,6 +37,7 @@
 # it) are an administrator's. The script creates the vhost e2e, the
 # read-only user mqro and a stream orders with one message in it, and
 # deletes the vhost and the user at exit, only if it created them.
+# LOCKMQ_VERSION, when set, is the lockmq release lox add pins (vX.Y.Z).
 #
 # The deck facade (lea's deck, lea#182/#200) is not driven here: lea
 # routes a hub ticket only to the deck of the lea container whose agent
@@ -95,9 +96,11 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-say "lox add: each lock pinned to its latest signed release"
+say "lox add: each lock pinned to its latest signed release (LOCKMQ_VERSION: lockmq's)"
 for l in $LOCKS; do
-	"$lox" add "${l#*:}" "${l%%:*}"
+	set --
+	if [ "${l#*:}" = lockmq ] && [ -n "${LOCKMQ_VERSION:-}" ]; then set -- --version "$LOCKMQ_VERSION"; fi
+	"$lox" add "$@" "${l#*:}" "${l%%:*}"
 done
 local_hub .lockfamily/lockfamily.yaml
 # lea's agents run as the host user's uid, which has no account in the

@@ -111,6 +111,12 @@ jobs:
           PGPORT: "5432"
           PGPASSWORD: e2e-only
           LOCKS: db:locksql web:lockhttp api:lockhttp mq:lockmq
+          # lockmq v0.8.0 (per-profile auto mode, lockmq#49, released
+          # after main's last green run): the host agent's lockmq_read of
+          # this lox up + lox approve scenario never answers (mcp.py's
+          # 120 s timeout). Pinned to the release before it until the
+          # scenario follows lockmq's new flow.
+          LOCKMQ_VERSION: v0.7.0
           MQ_ADMIN_USER: admin
           MQ_ADMIN_PASSWORD: e2e-admin-only
         run: |
