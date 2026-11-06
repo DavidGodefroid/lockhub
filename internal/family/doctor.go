@@ -224,8 +224,9 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	}
 	noKeys := func(s []string) []string {
 		return slices.DeleteFunc(slices.Clone(s), func(l string) bool {
-			// The allowlists derive from the profiles, not from the yaml.
-			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l)
+			// The allowlists and the mount plans derive from the
+			// profiles, not from the yaml.
+			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l) || logPlanLine.MatchString(l)
 		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {

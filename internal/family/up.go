@@ -846,6 +846,15 @@ func (u *Up) Do(ctx context.Context) error {
 			}
 		}
 	}
+	// The consoles just created are containers too: the maps exclude
+	// them ("x" lines) from now on.
+	for _, n := range c.Instances() {
+		if pl := plans[n]; pl != nil && len(pl.DockerGlobs) > 0 {
+			if _, _, err := updateLogMap(ctx, u.Run, pl); err != nil {
+				return fmt.Errorf("containers map of %s: %w (lox refresh %s writes it again)", n, err, n)
+			}
+		}
+	}
 	for _, n := range c.Instances() {
 		fmt.Fprintf(u.Out, "lock %s: started\n", n)
 	}

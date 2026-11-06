@@ -560,7 +560,9 @@ A docker source's containers map (`map.v<N>`: the names and ids of the
 containers its approved globs name, json-file only, locklog consoles
 excluded, 0644 in a 0755 directory) lives in the state directory,
 `$XDG_STATE_HOME/lockfamily/<project>/locklog/<instance>/map`. It is bound
-read-only at `/run/locklog-map`. lox run writes it; `lox refresh <instance>`
+read-only at `/run/locklog-map`, the last two versions kept. lox run writes
+it before the consoles start and again once they exist (their ids are
+excluded); `lox refresh <instance>`
 rewrites it from the globs lox run applied (the console re-reads it). No loop
 follows `docker events` under lox run, and `lox doctor` says when the map is
 stale.

@@ -686,6 +686,41 @@ func WriteLogMap(dir string, m LogMap) (int, error) {
 	return n, nil
 }
 
+// newestLogMap is the content of dir's newest map version, and its N
+// (0: none).
+func newestLogMap(dir string) (string, int, error) {
+	vs := mapVersions(dir)
+	if len(vs) == 0 {
+		return "", 0, nil
+	}
+	b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("map.v%d", vs[0])))
+	return string(b), vs[0], err
+}
+
+// updateLogMap writes a new version of p's map when the containers its
+// globs name changed since the newest one: lox run, once the consoles it
+// created exist (they are excluded from then on). It returns the newest
+// version and whether it wrote it.
+func updateLogMap(ctx context.Context, run Runner, p *LogPlan) (int, bool, error) {
+	m, err := BuildLogMap(ctx, run, p.DockerGlobs)
+	if err != nil {
+		return 0, false, err
+	}
+	have, v, err := newestLogMap(p.MapDir)
+	if err != nil {
+		return 0, false, err
+	}
+	if v > 0 && have == m.Content {
+		return v, false, nil
+	}
+	v, err = WriteLogMap(p.MapDir, m)
+	return v, err == nil, err
+}
+
+// logPlanLine is a review line a mount plan derives (LogPlan.Review):
+// from the profile, not from lockfamily.yaml.
+var logPlanLine = regexp.MustCompile(`^lock \S+ (mount plan of profile|plan|bind|groups|containers map) `)
+
 // Refresh is `lox refresh <instance>`: it rewrites the containers map of
 // a locklog lock once, from the approved globs of the plan the last
 // confirmed lox run applied (the running console re-reads it).
@@ -728,20 +763,19 @@ func logMapStale(ctx context.Context, run Runner, state, inst string) (msg strin
 		return "", false, nil
 	}
 	dir := LogMapDir(state, inst)
-	vs := mapVersions(dir)
-	if len(vs) == 0 {
-		return "", false, fmt.Errorf("no containers map in %s: run lox refresh %s", dir, inst)
-	}
-	have, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("map.v%d", vs[0])))
+	have, v, err := newestLogMap(dir)
 	if err != nil {
 		return "", false, err
+	}
+	if v == 0 {
+		return "", false, fmt.Errorf("no containers map in %s: run lox refresh %s", dir, inst)
 	}
 	m, err := BuildLogMap(ctx, run, p.DockerGlobs)
 	if err != nil {
 		return "", false, err
 	}
-	if string(have) != m.Content {
-		return fmt.Sprintf("map.v%d is stale: containers its globs name were created, removed or renamed since (run lox refresh %s)", vs[0], inst), true, nil
+	if have != m.Content {
+		return fmt.Sprintf("map.v%d is stale: containers its globs name were created, removed or renamed since (run lox refresh %s)", v, inst), true, nil
 	}
-	return fmt.Sprintf("map.v%d current: %d mapped", vs[0], m.Mapped), false, nil
+	return fmt.Sprintf("map.v%d current: %d mapped", v, m.Mapped), false, nil
 }

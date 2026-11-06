@@ -122,26 +122,38 @@ for c in "$p-lock-logs-1" "$p-lock-ctrs-1"; do
 		{ docker inspect -f '{{json .State}} restarts {{.RestartCount}}' "$c"; die "$c does not stay up (its mount check refused?)"; }
 done
 
-say "the containers map: map.v1, names and ids only, read by the console"
-[ -f "$mapdir/map.v1" ] || die "no $mapdir/map.v1"
-cat "$mapdir/map.v1"
+say "the containers map: names and ids only, read by the console"
+# v1 is written before the consoles start (each reads one at its start),
+# v2 once compose created them: their ids are excluded ("x" lines).
+for v in 1 2; do
+	[ -f "$mapdir/map.v$v" ] || { ls -la "$mapdir"; die "no $mapdir/map.v$v"; }
+	echo "map.v$v:"
+	cat "$mapdir/map.v$v"
+done
+[ ! -e "$mapdir/map.v3" ] || die "lox run wrote more than two versions"
 grep -qxF "c $id1 $web-1 3 1" "$mapdir/map.v1" || die "map.v1 does not map $web-1 (max-file 3, compressed)"
-docker exec "$p-lock-ctrs-1" cat /run/locklog-map/map.v1 | cmp - "$mapdir/map.v1" || die "the console does not read map.v1"
+grep -qxF "c $id1 $web-1 3 1" "$mapdir/map.v2" || die "map.v2 does not map $web-1"
+for c in "$p-lock-logs-1" "$p-lock-ctrs-1"; do
+	grep -qxF "x $(docker inspect -f '{{.Id}}' "$c")" "$mapdir/map.v2" || die "map.v2 does not exclude the console $c"
+done
+docker exec "$p-lock-ctrs-1" cat /run/locklog-map/map.v2 | cmp - "$mapdir/map.v2" || die "the console does not read map.v2"
 "$lox" doctor >doctor1.out 2>&1 || true
-grep -F "lock ctrs containers map: map.v1 current: 1 mapped" doctor1.out || { cat doctor1.out; die "lox doctor does not say map.v1 is current"; }
+grep -F "lock ctrs containers map: map.v2 current: 1 mapped" doctor1.out || { cat doctor1.out; die "lox doctor does not say map.v2 is current"; }
+grep -F "changed since the last lox run" doctor1.out && die "lox doctor takes the mount plans for a change of lockfamily.yaml"
 
 say "a new container its glob names: lox doctor says the map is stale, lox refresh rewrites it"
 docker run -d --name "$web-2" --log-driver json-file alpine:3.22 sleep 900 >/dev/null
 id2=$(docker inspect -f '{{.Id}}' "$web-2")
 "$lox" doctor >doctor2.out 2>&1 || true
-grep -F "warn lock ctrs containers map: map.v1 is stale" doctor2.out || { cat doctor2.out; die "lox doctor does not say map.v1 is stale"; }
+grep -F "warn lock ctrs containers map: map.v2 is stale" doctor2.out || { cat doctor2.out; die "lox doctor does not say map.v2 is stale"; }
 "$lox" refresh ctrs >refresh.out 2>&1 || { cat refresh.out; die "lox refresh ctrs failed"; }
 cat refresh.out
-grep -qF "containers map v2 of ctrs" refresh.out || die "lox refresh did not write v2"
-grep -qxF "c $id2 $web-2 1 0" "$mapdir/map.v2" || { cat "$mapdir/map.v2"; die "map.v2 does not map $web-2"; }
-docker exec "$p-lock-ctrs-1" cat /run/locklog-map/map.v2 | cmp - "$mapdir/map.v2" || die "the console does not see map.v2"
+grep -qF "containers map v3 of ctrs" refresh.out || die "lox refresh did not write v3"
+grep -qxF "c $id2 $web-2 1 0" "$mapdir/map.v3" || { cat "$mapdir/map.v3"; die "map.v3 does not map $web-2"; }
+[ ! -e "$mapdir/map.v1" ] || die "map.v1 kept: only the last two versions are"
+docker exec "$p-lock-ctrs-1" cat /run/locklog-map/map.v3 | cmp - "$mapdir/map.v3" || die "the console does not see map.v3"
 "$lox" doctor >doctor3.out 2>&1 || true
-grep -F "lock ctrs containers map: map.v2 current: 2 mapped" doctor3.out || { cat doctor3.out; die "lox doctor does not say map.v2 is current"; }
+grep -F "lock ctrs containers map: map.v3 current: 2 mapped" doctor3.out || { cat doctor3.out; die "lox doctor does not say map.v3 is current"; }
 rc=0
 "$lox" refresh logs >refresh-logs.out 2>&1 || rc=$?
 [ "$rc" = 1 ] && grep -qF "has no docker source" refresh-logs.out || { cat refresh-logs.out; die "lox refresh of a lock with no docker source: exit $rc"; }

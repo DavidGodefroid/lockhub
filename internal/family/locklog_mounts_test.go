@@ -259,8 +259,28 @@ func TestWriteLogMapVersions(t *testing.T) {
 	}
 }
 
+// afterUp is f until compose up ran, then answers the docker commands of
+// after (the containers compose created).
+type afterUp struct {
+	*fake
+	after map[string]string
+	up    bool
+}
+
+func (a *afterUp) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	line := name + " " + strings.Join(args, " ")
+	out, err := a.fake.Run(ctx, stdin, name, args...)
+	if strings.Contains(line, " up -d") {
+		a.up = true
+	}
+	if v, ok := a.after["docker/"+line]; ok && a.up {
+		return []byte(v), nil
+	}
+	return out, err
+}
+
 // upLog is w.up with a log host.
-func upLog(w ws, h *LogHost, input string, f *fake) (string, error) {
+func upLog(w ws, h *LogHost, input string, f Runner) (string, error) {
 	var out strings.Builder
 	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: f,
 		In: bufio.NewReader(strings.NewReader(input)), Out: &out, LogHost: h}
@@ -342,15 +362,26 @@ func TestUpLocklogDockerMapRefreshDoctor(t *testing.T) {
 	}
 	f.keys["logs"] = pubKey()
 	f.keys["plan/logs"] = "profile ctr false\ndocker shop-*\n"
-	out, err := upLog(w, h, "y\n", f)
+	// compose up creates the console: from then on, docker ps lists it.
+	console := mapFake(map[string]string{
+		cid('a'): inspectJSON(cid('a'), "shop-api-1", "json-file", nil, nil),
+		cid('c'): inspectJSON(cid('c'), "lockfamily-x-lock-logs-1", "json-file", nil, map[string]string{LocklogConsoleLabel: "1"}),
+	})
+	out, err := upLog(w, h, "y\n", &afterUp{fake: f, after: console.keys})
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	state := filepath.Join(w.dir, "state")
 	dir := LogMapDir(state, "logs")
+	// v1 before the consoles start (the console reads one at its start),
+	// v2 once they exist: their ids excluded.
 	b, err := os.ReadFile(filepath.Join(dir, "map.v1"))
 	if err != nil || string(b) != "locklog-map 1\nc "+cid('a')+" shop-api-1 1 0\n" {
-		t.Fatalf("map: %v\n%s", err, b)
+		t.Fatalf("map.v1: %v\n%s", err, b)
+	}
+	b, err = os.ReadFile(filepath.Join(dir, "map.v2"))
+	if err != nil || string(b) != "locklog-map 1\nc "+cid('a')+" shop-api-1 1 0\nx "+cid('c')+"\n" {
+		t.Fatalf("map.v2: %v\n%s", err, b)
 	}
 	svc := block(f.upCompose, "lock-logs")
 	for _, want := range []string{`group_add: ["0"]`, "LOCKLOG_DOCKER_ROOT: \"/var/lib/docker/containers\"", "        source: \"" + dir + "\"\n        target: \"/run/locklog-map\"\n        read_only: true\n", "        source: \"/var/lib/docker/containers\""} {
@@ -362,30 +393,43 @@ func TestUpLocklogDockerMapRefreshDoctor(t *testing.T) {
 		t.Errorf("review:\n%s", out)
 	}
 	c, _ := Load(w.file)
-	d := &Doctor{State: state, Run: f}
+	d := &Doctor{State: state, Run: console}
 	var lines []string
 	rec := func(p string) func(string, ...any) {
 		return func(fm string, a ...any) { lines = append(lines, p+fmt.Sprintf(fm, a...)) }
 	}
 	d.logMaps(context.Background(), c, rec("ok "), rec("warn "), rec("fail "))
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "ok lock logs containers map: map.v1 current") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "ok lock logs containers map: map.v2 current") {
 		t.Errorf("doctor: %v", lines)
 	}
+	// The mount plan derives from the profile: not a change of
+	// lockfamily.yaml for the doctor.
+	lines = nil
+	d.applied(c, rec("warn "))
+	if slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "changed since") }) {
+		t.Errorf("doctor, applied: %v", lines)
+	}
 	// A container created since: stale until lox refresh.
-	g := mapFake(map[string]string{cid('a'): inspectJSON(cid('a'), "shop-api-1", "json-file", nil, nil), cid('b'): inspectJSON(cid('b'), "shop-api-2", "json-file", nil, nil)})
+	g := mapFake(map[string]string{cid('a'): inspectJSON(cid('a'), "shop-api-1", "json-file", nil, nil), cid('b'): inspectJSON(cid('b'), "shop-api-2", "json-file", nil, nil),
+		cid('c'): inspectJSON(cid('c'), "lockfamily-x-lock-logs-1", "json-file", nil, map[string]string{LocklogConsoleLabel: "1"})})
 	d.Run, lines = g, nil
 	d.logMaps(context.Background(), c, rec("ok "), rec("warn "), rec("fail "))
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "warn lock logs containers map: map.v1 is stale") || !strings.Contains(lines[0], "lox refresh logs") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "warn lock logs containers map: map.v2 is stale") || !strings.Contains(lines[0], "lox refresh logs") {
 		t.Errorf("doctor, stale: %v", lines)
 	}
 	msg, err := Refresh(context.Background(), g, state, c, "logs")
-	if err != nil || !strings.Contains(msg, "containers map v2 of logs") || !strings.Contains(msg, "2 mapped") {
+	if err != nil || !strings.Contains(msg, "containers map v3 of logs") || !strings.Contains(msg, "2 mapped") {
 		t.Errorf("refresh: %q %v", msg, err)
 	}
 	lines = nil
 	d.logMaps(context.Background(), c, rec("ok "), rec("warn "), rec("fail "))
-	if len(lines) != 1 || !strings.Contains(lines[0], "map.v2 current: 2 mapped") {
+	if len(lines) != 1 || !strings.Contains(lines[0], "map.v3 current: 2 mapped") {
 		t.Errorf("doctor after refresh: %v", lines)
+	}
+	// Nothing changed: updateLogMap writes no new version.
+	p, _ := ReadLogPlan(state, "logs")
+	if v, wrote, err := updateLogMap(context.Background(), g, p); v != 3 || wrote || err != nil {
+		t.Errorf("update, unchanged: v%d %v %v", v, wrote, err)
 	}
 	// No map at all: a failure.
 	os.RemoveAll(dir)
