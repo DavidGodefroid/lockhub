@@ -39,6 +39,7 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output while starting (default: only when a step fails)")
 	review := fs.Bool("review", false, "show everything, the profiles line by line, and ask before starting")
 	pin := fs.String("pin", "", "the hub image by digest (sha256:…, or the whole ghcr.io/davidgodefroid/lockhub@sha256:… reference)")
+	noUpgrade := fs.Bool("no-upgrade", false, "keep the pinned images: do not upgrade those older than this lox's releases")
 	var rotate stringsFlag
 	fs.Var(&rotate, "rotate", "replace a key before starting: hub, a lock instance, or all (repeatable, or comma-separated)")
 	if err := fs.Parse(args); err != nil {
@@ -69,6 +70,9 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout,
 			Pin: *pin, Rotate: rotate, Review: *review}
+		if !*noUpgrade {
+			u.Upgrade = upgrader(r)
+		}
 		if err := u.Do(ctx); err != nil {
 			return failed(ctx, stderr, "run", err)
 		}
@@ -111,6 +115,14 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "lox run stopped: no decision is served any more; tickets wait at the hub for the next lox run (fail closed), and the locks close their connections once idle")
 	return 0
+}
+
+// upgrader is lox run's automatic upgrade: to the releases this lox
+// ships with (the hub at lox's own version), each image resolved by
+// digest in ghcr.io and verified with cosign as lox add does.
+func upgrader(r family.Runner) *family.Upgrade {
+	rel := family.DefaultReleases(r)
+	return &family.Upgrade{Pins: family.ShippedPins(version), Image: rel.ImageVariant}
 }
 
 // tildeHome shows a path under the home directory as ~/….

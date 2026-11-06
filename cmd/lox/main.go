@@ -44,14 +44,16 @@ Usage:
                                           start the project's hub alone, without a question: prerequisites, the
                                           data sources its files name as hints (read only, no secret; lox add
                                           sets a lock up), lockfamily.yaml with the hub, then lox run
-  lox run [--manual] [--theme light|dark] [--no-start] [--file lockfamily.yaml] [-v] [--review] [--pin sha256:DIGEST] [--rotate hub|INSTANCE|all]
+  lox run [--manual] [--theme light|dark] [--no-start] [--file lockfamily.yaml] [-v] [--review] [--pin sha256:DIGEST] [--no-upgrade] [--rotate hub|INSTANCE|all]
                                           in a terminal of its own, outside the agent: start (or reuse) the hub
                                           and the workspace's locks, then show every ticket and decision live
                                           (masked) and serve decisions: auto mode by default (reads auto, writes
                                           and DDL asked, a connection asked once per profile per session), the
                                           rest asked in a question card; Shift+Tab switches auto/manual; quitting
                                           stops decisions (tickets wait: fail closed). --no-start only serves
-                                          decisions; --pin, --rotate, --review, -v as they were on lox up
+                                          decisions; --pin, --rotate, --review, -v as they were on lox up;
+                                          an image older than this lox's release is upgraded first, verified
+                                          with cosign (--no-upgrade keeps the pins)
   lox up                                  deprecated: use lox run (it still starts the hub and the locks)
   lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
                                           one source (TYPE: locksql, lockmq, lockfile, lockhttp), guided (or
