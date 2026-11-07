@@ -1,120 +1,165 @@
-# lockhub
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+    <img alt="lockhub: one hub approves for every Lock." src="docs/assets/banner-light.svg" width="600">
+  </picture>
+</p>
 
-The approval hub of the [Lock Family](https://github.com/DavidGodefroid/lockfamily),
-harness security for AI agents (locksql, lockmq, lockfile, lockhttp).
+<p align="center">
+  <a href="https://github.com/DavidGodefroid/lockhub/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DavidGodefroid/lockhub/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/DavidGodefroid/lockhub/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/DavidGodefroid/lockhub?include_prereleases&sort=semver&label=release&color=1f4a9c"></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-575146"></a>
+  <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/DavidGodefroid/lockhub?color=575146&logo=go&logoColor=white"></a>
+</p>
 
-Each Lock keeps a human between an AI agent and a production system. With the
-hub, a Lock no longer needs a human at its own terminal: it sends an approval
-ticket (a masked screen of the request) to the hub, `lox run` decides it (the
-auto mode's rules, or the human in its terminal; also `lox approve`, the lea
-deck, Slack, Telegram or a paired phone), and the hub signs the decision. The Lock executes only on a signed
-decision bound to the exact plan that was approved.
+<p align="center">
+  <b>One hub approves for every Lock: <code>lox run</code> decides outside your<br>
+  AI agent's harness, signs every decision, and never sees a value in clear.</b>
+</p>
 
-The hub never runs a request, never sees its results, and never sees values in
-clear.
+<p align="center">
+  <img src="docs/lox-run.svg" alt="lox run: a connection asked once, reads approved on their own, a production write asked" width="900">
+</p>
 
-Chat facades (Slack, Telegram) show masked screens only and answer only non-
-production reads and writes; production tickets and policy loosening are
-answered in the terminal, the deck or a paired phone, unlocks and grants in
-the terminal or the deck (`hub.Decide`, `internal/route`). A grant (risk
-`grant`) is one approval for a bounded read scope (tables, duration, read
-budget) that the lock then runs reads inside without a ticket each: `lox
-approve` marks it and shows the lock's scope lines before the prompt, the
-signed decision binds the scope's hash (`plan_hash`), and the hub's audit
-records carry `"risk":"grant"`. The lock ends a grant (`:revoke`, end of
-session, expiry); a revoke sent from the hub is not there yet. A production ticket is
-flagged on every facade (`PRODUCTION` in `lox approve`, red and `· production`
-on the phone, `flags.production` in the queue's ticket). `y` approves it: no current Lock sets
-lockkit's `flags.retype`, so approving a production ticket needs no typed name.
-The hub would ask for the instance name only on a ticket whose lock sets that
-flag, in the terminal, the deck and on the phone alike (the hub checks it). The
-queue's `retype` field gives the name to type, empty when none is needed, so
-every facade applies the hub's rule. To approve many reads at
-once, approve a grant: one decision for a read scope and a time window,
-then the reads inside it need no ticket. A
-workspace's `lockfamily.yaml` can narrow this routing, never widen it.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="#the-lock-family">Lock Family</a>
+</p>
 
-In `lox approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
-not on macOS, which keeps ^O) shows a ticket's clear values:
-the terminal sends an ephemeral key signed by its facade key (which every lock
-pins, written by `lox run`), the lock seals the clear screen to it and signs
-the answer, and only the terminal opens it. The hub relays ciphertext, and
-never offers this on Slack, Telegram or mobile. An expired ticket is listed for
-re-approval (`r`, approve again): the lock asks again, and when nothing changed
-in the plan since then (and it is not for production) the hub approves it in
-that one step; otherwise the new ticket shows what changed and waits for `y`.
+---
 
-Threat model of the facade socket: whoever can open it is the host's human (one
-user). The facade name a client sends for `decide` and `renew` is self-declared
-by that same user; a reveal is bound by the facade's own signed key, which the
-lock checks against the key it pinned.
+lockhub is the approval hub of the [Lock Family](https://github.com/DavidGodefroid/lockfamily),
+harness security for AI agents. Each Lock sends it a masked ticket; `lox run`
+decides it, and the hub signs the decision.
 
-## lox run
+The Lock executes only on a signed decision bound to the exact plan that was
+approved. The hub never runs a request, never sees its results, and never
+sees values in clear.
 
-`lox run` is the one terminal you keep open, **outside lea and any agent
-harness**: an agent's own tool is never where its approvals are shown or
-answered.
+> [!NOTE]
+> **Early development.** This repository holds the hub server (`lockhub serve`)
+> and the host CLI `lox` (`lox init`, `lox add`, `lox run`, `lox approve`, `lox audit`, …).
 
-![lox run: a connection asked once, reads approved on their own, a production write asked](docs/lox-run.svg)
+## Why lockhub
+
+- **Approvals live outside the agent's harness.** `lox run` is the one
+  terminal you keep open, outside lea and any agent: an agent's own tool is
+  never where its approvals are shown or answered.
+- **One place for every Lock.** locksql, lockmq, lockfile, lockhttp and
+  locklog all send their tickets to the same hub.
+- **Reads flow, risky actions wait.** Auto mode approves reads by rule and
+  asks you for writes, connections, dangerous actions and policy loosening.
+- **Every decision is signed and audited,** without a value in clear.
+
+## Install
 
 ```sh
-lox run              # in its own terminal, in the workspace (or a parent)
+brew trust davidgodefroid/tap
+brew install davidgodefroid/tap/lox
 ```
 
-It starts (or reuses) the hub and the workspace's locks, then shows, live,
-every message passing through the hub: each ticket (agent, lock, profile,
-masked request), its decision (auto, you, denied, error) and its result (ran,
-expired, withdrawn) — never a value in clear. Flow: agent → lock (socket) →
-hub (masked ticket) → `lox run` → hub (signed decision) → lock → agent.
+Or everything at once (lea, `lox` and the Locks' launchers):
 
-It runs in **auto mode** by default:
+```sh
+brew trust davidgodefroid/tap
+brew install davidgodefroid/tap/lockfamily
+```
 
-| Ticket | Auto mode |
-|---|---|
-| read (SELECT, MQ peek, file read) | approved by the rule, no question |
-| locklog: a scan, an unmask, an approved lookup | as the profile's auto rules say (`auto`, `ask`, `deny`; locklog's default: asked), shown in the review |
-| locksql write, DDL | asked, every time |
-| connect (a lock opens a profile's connection on its agent's first request) | asked once per profile per `lox run` session; the password of an `ask` profile, or a Vault token that expired, is typed here and sealed to the lock |
-| another profile | its own question, once per session |
-| lockhttp: a new endpoint | asked once per session, then auto |
-| dangerous MQ / file / HTTP actions | asked |
-| policy loosening, grants, never-auto tickets, a production name to type | always asked |
+Homebrew asks you to trust a third-party tap once before it loads its
+formulas. Other ways:
 
-A lock starts disconnected and closes an idle connection (lockkit `lazyconn`):
-the next request asks again, and `lox run` approves it on the session's earlier
-answer. **Shift+Tab** switches to manual (every ticket asked) and back; the mode
-is the coloured badge in the header. The terminal **bell rings only when a
-question waits**. A question is a framed card above the feed (`y` approve, `n`
-deny, `d` the whole masked screen); masked values look like `‹j***(20)›`.
-`a` shows the hub's audit, as `lox audit` lists it, `?` shows the keys. **Quitting** (`q q`, Ctrl-C) stops
-serving decisions: pending and new tickets wait at the hub for the next `lox
-run` (fail closed).
+- the Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
+  installs the static `lox` archives (cosign-signed `checksums.txt`) into `~/.local/bin`;
+- the hub ships as the cosign-signed image `ghcr.io/davidgodefroid/lockhub`,
+  pinned by digest (`lox run` starts it for you).
 
-It respects `NO_COLOR`, reads a light background from `COLORFGBG` (or
-`--theme light`), draws ASCII where the locale is not UTF-8, and redraws on
-resize down to 40 columns; with stdout not a terminal it logs one plain line
-per ticket. Light theme:
+Details: [docs/getting-started.md](docs/getting-started.md#what-a-release-ships).
 
-![lox run on a light terminal](docs/lox-run-light.svg)
+## Quick start
 
-`lox audit` lists every exchange the hub keeps (each ticket and its answer,
-masked by its lock, the rule or human that decided, its outcome) in the same
-columns and colours, with filters (`--agent`, `--lock`, `--profile`,
-`--since`, `--decision denied|human|auto|pending`, `--writes`), `--follow`
-and `--json`; `lox audit show ID` draws one exchange: its masked plan, the
-deciding rule, timings and signatures.
+1. In your project (or lea's projects directory), check the prerequisites
+   and write a `lockfamily.yaml` with the hub alone:
 
-Each lock (but lockhttp, whose egress is its own policy) reaches only the
-endpoints of its **reviewed** profile: its network is internal, and a small
-gateway forwards to its database, broker or source, and its Vault when it has
-`vault: true`, nothing else (no internet, no cloud metadata, no other host
-port). The review shows the allowlist; `lox doctor` checks it. See
-[docs/lox-run.md](docs/lox-run.md#egress-each-lock-reaches-its-reviewed-endpoints-only).
+   ```sh
+   lox init
+   ```
 
-`lox up` is deprecated: it prints "use lox run" and only starts the hub and
-the locks. See [docs/lox-run.md](docs/lox-run.md).
+2. Add one data source, guided and applied at once:
 
-## Supported locks
+   ```sh
+   lox add locksql      # or lockmq, lockfile, lockhttp, locklog
+   ```
+
+3. Keep `lox run` open in a terminal of its own: it serves the decisions.
+
+   ```sh
+   lox run
+   ```
+
+4. Start your agent (claude, codex, gemini, …) in the project, or `lea`.
+   A lock added while lea runs reaches it at lea's next start (`lea stop`, then `lea`).
+
+Where to run each command, with or without lea:
+[docs/getting-started.md](docs/getting-started.md).
+
+## Highlights
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**🧭 Outside the harness**<br>
+`lox run` starts (or reuses) the hub and the workspace's locks, then shows
+every ticket live: agent, lock, profile, masked request, decision, result.
+
+</td>
+<td width="50%" valign="top">
+
+**⚡ Auto mode by default**<br>
+Reads pass by rule; writes, DDL, dangerous actions, grants and policy
+loosening are asked. A connection is asked once per profile per session.
+**Shift+Tab** switches to manual.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**✍️ Signed, bound decisions**<br>
+The lock signs its ticket, the hub signs the decision. `lox audit` lists
+every exchange with both signatures; `lox audit verify` checks the whole chain.
+
+</td>
+<td valign="top">
+
+**🙈 Never in clear**<br>
+Masked screens everywhere. A reveal is sealed to your terminal (the hub
+relays ciphertext); a paired phone signs its own decisions (WebAuthn).
+
+</td>
+</tr>
+</table>
+
+## How it works
+
+```
+agent → lock (socket) → hub (masked ticket) → lox run → hub (signed decision) → lock → agent
+```
+
+- A Lock no longer needs a human at its own terminal: it sends the hub an
+  approval ticket, a masked screen of the request.
+- `lox run` decides it: by its auto-mode rules, or by you in its terminal.
+  `lox approve`, the lea deck, Slack, Telegram or a paired phone can answer too.
+- The hub signs the decision, and the Lock checks the signature before it runs anything.
+- Each lock (but lockhttp, whose egress is its own policy) reaches only the
+  endpoints of its reviewed profile; `lox doctor` checks it.
+
+The auto-mode rules, the keys of `lox run`, grants, production tickets and
+reveals: [docs/approvals.md](docs/approvals.md).
+
+### Supported locks
 
 | Lock | Source | `lox add` | Since |
 |---|---|---|---|
@@ -126,199 +171,67 @@ the locks. See [docs/lox-run.md](docs/lox-run.md).
 
 "Since" is each lock's first release that runs under `lox run` (hub mode);
 `lox run` upgrades a pinned image older than the release this lox ships
-with. A locklog lock reads host logs through the mount plan its image
-derives from the reviewed profile, bound read-only, and is answered on the
-local facades only (its unmasks are `read-pii`): see
+with. locklog's mount plan:
 [docs/lox-run.md](docs/lox-run.md#locklog-the-mount-plan-and-the-containers-map).
 
-## Status
+## Safety model
 
-Early development. This repository holds:
+- The hub never runs a request, never sees its results, and never sees values in clear.
+- A Lock executes only on a decision signed by the hub key it pinned, bound
+  to the exact plan that was approved.
+- Chat facades (Slack, Telegram) show masked screens only and answer only
+  non-production reads and writes; a `lockfamily.yaml` can narrow this routing, never widen it.
+- Quitting `lox run` stops serving decisions: pending tickets wait at the
+  hub for the next `lox run` (fail closed).
+- Whoever can open the facade socket is the host's human: your host
+  account, never an agent container.
 
-- `lockhub`: the hub server (`lockhub serve`), shipped as a cosign-signed image
-  `ghcr.io/davidgodefroid/lockhub`, pinned by digest;
-- `lox`: the host CLI (`lox run`, `lox approve`, `lox audit verify`, …),
-  shipped in the same image and release, and as static archives
-  (`lox_X.Y.Z_<os>_<arch>.tar.gz`, cosign-signed `checksums.txt`) that the
-  Lock Family [install.sh](https://github.com/DavidGodefroid/lockfamily)
-  installs into `~/.local/bin`. Each release tag also bumps the `lox` formula
-  of the [Homebrew tap](https://github.com/DavidGodefroid/homebrew-tap):
+Details and limits: [docs/approvals.md](docs/approvals.md),
+[docs/mobile.md](docs/mobile.md#limits), [docs/design-notes.md](docs/design-notes.md).
+
+## Documentation
+
+| Doc | What it covers |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | First run with or without lea, where to run each command, what a release ships |
+| [docs/approvals.md](docs/approvals.md) | Tickets and facades, grants, production tickets, reveals, `lox run`'s auto mode and keys, `lox audit` |
+| [docs/lox-init.md](docs/lox-init.md) | `lox init`: flags, steps, re-running, secrets |
+| [docs/lox-add.md](docs/lox-add.md) | `lox add`: the questions per lock, rollback, non-interactive use, Vault, removing a lock |
+| [docs/lox-run.md](docs/lox-run.md) | The contract between `lox run` and lea: files, `up.json`, host agents, egress, upgrades, key rotation |
+| [docs/mobile.md](docs/mobile.md) | Approving from a phone: pairing, exposure, routing, limits, notifications |
+| [docs/design-notes.md](docs/design-notes.md) | Where the code deliberately departs from the hub's design plan |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+
+## The Lock Family
+
+Every Lock is built on the same console, separation and approval model, and
+one hub approves for all of them. Start at [lockfamily.dev](https://lockfamily.dev).
+
+| Repo | What it does |
+|---|---|
+| [lockfamily](https://github.com/DavidGodefroid/lockfamily) | The family site and `install.sh`: everything in one install |
+| [locksql](https://github.com/DavidGodefroid/locksql) | SQL databases: the agent queries, PII comes back masked; connections and writes wait for you |
+| [lockmq](https://github.com/DavidGodefroid/lockmq) | RabbitMQ: masked queue inspection; connections, peeks and unmasked reads wait for you |
+| [lockfile](https://github.com/DavidGodefroid/lockfile) | Files (S3, SFTP, disk): the agent asks yes/no questions about files it never reads |
+| [lockhttp](https://github.com/DavidGodefroid/lockhttp) | Outbound HTTP(S): reads of trusted hosts pass; anything that sends data or reaches an unknown host waits for you |
+| [locklog](https://github.com/DavidGodefroid/locklog) | Logs: masked, bounded log search; the agent reads the logs, not the people in them |
+| [lockssh](https://github.com/DavidGodefroid/lockssh) | Commands over SSH: allow-listed commands run at once, the rest waits for you; the SSH key never leaves the console |
+| [lockhub](https://github.com/DavidGodefroid/lockhub) | The approval hub and its `lox` CLI: `lox run` approves outside the agent's harness |
+| [lockkit](https://github.com/DavidGodefroid/lockkit) | The shared Go core of every Lock: console, policies, masking, signed tickets, audit, MCP wiring |
+| [lea](https://github.com/DavidGodefroid/lea) | Runs many agents in containers, wired to the Locks |
+
+## Contributing · Security · License
+
+- **Contributing:** issues and pull requests are welcome. The ticket and
+  decision formats live in [lockkit](https://github.com/DavidGodefroid/lockkit)
+  (`ticket` package), shared with every Lock. Build and test:
 
   ```sh
-  brew trust davidgodefroid/tap
-  brew install davidgodefroid/tap/lox
+  go test ./...
+  docker build -t lockhub .
+  docker run --rm --read-only --cap-drop ALL lockhub version
   ```
 
-  Homebrew asks you to trust a third-party tap once before it loads its
-  formulas; trusting the whole tap also covers dependencies from it.
-
-The ticket and decision formats live in
-[lockkit](https://github.com/DavidGodefroid/lockkit) (`ticket` package), shared
-with every Lock.
-
-## First run
-
-```sh
-brew trust davidgodefroid/tap
-brew install davidgodefroid/tap/lockfamily   # lea, lox and the Locks' launchers
-lea                                          # starts lea; it runs no lox command
-```
-
-Then, in lea's projects directory, run `lox init` — or go straight to
-`lox add locksql` — and keep `lox run` open in a terminal of its own: it
-serves the decisions. Later, one source at a time, in that directory:
-
-```sh
-lox add locksql      # or lockmq, lockfile, lockhttp, locklog
-lea stop             # a lock added while lea runs reaches it at lea's next start
-lea
-```
-
-Without lea (`claude` on the host): `lox init` in the project, then
-`lox add locksql`. Either way, keep `lox run` open in a terminal of its own:
-it serves the decisions.
-
-`lox init` asks nothing. It checks the prerequisites (Docker, cosign, lea,
-the locks' launchers), lists the data sources the project's files name as
-hints (`.env*`, `compose*.yaml`, `config/`: read only, never a secret),
-writes a `lockfamily.yaml` with the hub alone and starts it, as `lox run` does. With no lock
-declared yet, that first start asks no question (`--review` shows
-everything and asks). It ends with a pointer to `lea` and to `lox add`.
-
-`lox add TYPE` sets one source up, guided and applied at once: its
-questions, the lock's `profile add`, `init claude` and `doctor`, the
-declaration in `lockfamily.yaml`, a short review of that lock as it starts, and the
-console's own questions at your terminal. A failure, a `n` or Ctrl-C keeps
-nothing. Run it again for the next source; `lox remove NAME` takes one out.
-See [docs/lox-add.md](docs/lox-add.md).
-
-Where to run them: with lea, in lea's projects directory, not a project
-inside it (lea reads `.lockfamily/up.json` only at the root of its projects
-directory); with `claude` on the host, in the project or a parent (the
-launchers walk up from the current directory to the nearest
-`.lockfamily/up.json`). A lock added while lea runs reaches it at lea's next
-start: `lea stop`, then `lea`.
-
-See [docs/lox-init.md](docs/lox-init.md) for `lox init`.
-
-[docs/lox-run.md](docs/lox-run.md) is the contract between `lox run` and lea;
-[docs/design-notes.md](docs/design-notes.md) records where the code
-deliberately departs from the hub's design plan.
-
-## Mobile facade
-
-A phone can approve tickets through an installable web app the hub serves.
-Each decision taken on the phone is signed by the phone itself (a WebAuthn
-credential, user verification required) over the decision and the lock's own
-signed ticket, and every lock checks that signature against the phones it
-pins: the hub's key alone cannot make a decision pass for one taken on the
-phone. With `seal_clear`, each lock also seals its clear screen to the
-paired phones (X25519, AES-256-GCM): the hub relays ciphertext only.
-
-```yaml
-hub:
-  facades: [tty, deck, mobile]
-  mobile:
-    origin: https://hub.example.ts.net   # what the phone opens
-    port: 8444                           # host loopback port (default)
-    seal_clear: true                     # clear values, end to end to the phone
-    require_device: [prod-write]         # locks refuse other approvals of these
-locks:
-  crm-prod:
-    type: locksql
-    image: ghcr.io/davidgodefroid/locksql@sha256:…
-    devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
-    reveal: true                         # Ctrl-O reveals on tty/deck (lockkit ≥ v0.5.0)
-```
-
-A lock without `devices: true` pins no phone: `lox run` routes it away from
-mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
-hub's approvals from the other facades as before). The review names what each
-lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
-For a lockhttp lock, lea's gate pins the devices, which `lox run` hands it in
-`.lockfamily/up.json` (lockhttp v0.4.0 or later, lea v0.3.0 or later); when
-lea cannot, it stops, says why, and says to run `lox run` (since lea v0.4.0
-there is no standalone gate).
-Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
-lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lox
-approve` or lea's deck can show its clear screen; without it the lock refuses
-reveals.
-
-**Exposure.** `lox run` publishes the mobile listener on `127.0.0.1:8444`
-only. The phone reaches it through a TLS reverse proxy or tunnel that you run
-on the host and that forwards `origin` to that port: Tailscale Serve
-(`tailscale serve --bg --https=443 http://127.0.0.1:8444`), Caddy, cloudflared,
-… WebAuthn needs https, and the origin's host is the WebAuthn relying party.
-The listener serves the web app and `/m/v1` only: never the lock API, never
-the facade socket. The hub trusts no forwarded header; the origin comes from
-`lockfamily.yaml`. The hub joins its own `mobile-hub` network for that port
-(a bridge, so the hub container has a route out there; the lock API stays on
-the internal `lockhub` network, which agents never join).
-
-**Pairing.** `lox mobile pair --name phone` prints a one-time code (5 min,
-wrong codes cancel it). Open the origin on the phone, enter the code,
-register; then compare the fingerprint the phone shows (computed from its own
-keys) with the one at the terminal and answer `y`. Run `lox run` to pin the
-phone at the locks: `lox run` reviews the device like any key and recreates
-the locks with it. `lox mobile list`, `lox mobile revoke NAME` (then `lox
-up`). The confirmation is only as strong as the facade socket: whoever can
-open it (your host account, never an agent container) can confirm a device.
-`require_device` needs a paired device: `lox run` refuses it otherwise, so
-revoking the last phone leaves the locks pinning it (the hub refuses it) until
-you remove `require_device` and run `lox run`. `lox mobile pair` checks the
-phone's origin against the one the last `lox run` applied.
-
-**Routing.** The phone answers every risk class but `unlock` (no facade types
-secrets yet) and `grant` (a wider approval than one read); production tickets need no typed name (no current Lock sets `flags.retype`); `hub.routing`
-narrows it per instance.
-
-**Limits.** The web app's code comes from the hub. A hub that serves
-malicious code could ask you to verify yourself for another pending ticket of
-the same lock than the one it shows, and could read the clear values sealed to
-the phone while they are on screen. Locks still refuse anything not signed by
-the phone over a ticket they signed themselves. A synced passkey also lives in
-your platform account.
-
-**Notifications.** Off by default: the app long-polls the queue while it is
-open. With `hub.mobile.push: true`, the hub wakes the paired phones with Web
-Push when a ticket they may answer (the same routing as the queue) becomes
-pending: tap "Enable notifications" in the app, allow notifications, and the
-browser's push subscription is recorded for that device (at most 4 per device;
-dropped by `lox mobile revoke`, or when the push service answers 404/410).
-Pushes carry no payload: the service worker shows "A Lock approval is pending"
-and the app reads the ticket from the hub as usual. The hub signs each push
-with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
-data directory, 0600) and POSTs only to the known push services
-(`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`,
-`wns2-*.notify.windows.com`, https on the default port, public addresses only
-(no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
-redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
-offline phone, `TTL` 30 min). The hub logs only the push service's host, never
-an endpoint. `lox run` reviews the change and gives the hub its `egress-hub`
-network for it. That network gives the hub general outbound access, as with
-the chat facades: the restriction to the push services above is enforced by
-the hub's code, not by the network. Signing out of the app keeps the device's
-push subscription (it belongs to the device, not to the session): tap "Disable
-notifications" before signing out to stop them on that phone, or revoke the
-device. What remains exposed: the push service (Google, Mozilla, Apple,
-Microsoft) learns when a ticket waits and which subscription is woken, though
-nothing of the ticket.
-
-```yaml
-hub:
-  mobile:
-    origin: https://hub.example.ts.net
-    push: true
-```
-
-## Build
-
-```sh
-go test ./...
-docker build -t lockhub .
-docker run --rm --read-only --cap-drop ALL lockhub version
-```
-
-## License
-
-Apache-2.0, see [LICENSE](LICENSE).
+- **Security:** report vulnerabilities privately through
+  [GitHub security advisories](https://github.com/DavidGodefroid/lockhub/security/advisories/new).
+- **License:** Apache-2.0, see [LICENSE](LICENSE).

@@ -1,0 +1,118 @@
+# Mobile facade
+
+Approving tickets from a phone: the web app the hub serves, pairing,
+exposure, routing, limits and notifications.
+
+A phone can approve tickets through an installable web app the hub serves.
+Each decision taken on the phone is signed by the phone itself (a WebAuthn
+credential, user verification required) over the decision and the lock's own
+signed ticket, and every lock checks that signature against the phones it
+pins: the hub's key alone cannot make a decision pass for one taken on the
+phone. With `seal_clear`, each lock also seals its clear screen to the
+paired phones (X25519, AES-256-GCM): the hub relays ciphertext only.
+
+```yaml
+hub:
+  facades: [tty, deck, mobile]
+  mobile:
+    origin: https://hub.example.ts.net   # what the phone opens
+    port: 8444                           # host loopback port (default)
+    seal_clear: true                     # clear values, end to end to the phone
+    require_device: [prod-write]         # locks refuse other approvals of these
+locks:
+  crm-prod:
+    type: locksql
+    image: ghcr.io/davidgodefroid/locksql@sha256:…
+    devices: true                        # pins the paired phones (lockkit ≥ v0.4.0)
+    reveal: true                         # Ctrl-O reveals on tty/deck (lockkit ≥ v0.5.0)
+```
+
+A lock without `devices: true` pins no phone: `lox run` routes it away from
+mobile, and `seal_clear` and `require_device` do not apply to it (it takes the
+hub's approvals from the other facades as before). The review names what each
+lock does. Its image must take `--devices-file` (lockkit v0.4.0 or later).
+For a lockhttp lock, lea's gate pins the devices, which `lox run` hands it in
+`.lockfamily/up.json` (lockhttp v0.4.0 or later, lea v0.3.0 or later); when
+lea cannot, it stops, says why, and says to run `lox run` (since lea v0.4.0
+there is no standalone gate).
+Likewise `reveal: true` pins the terminal's and the deck's facade keys in the
+lock (`--facade-keys-file`, lockkit v0.5.0 or later), so `o`/Ctrl-O in `lox
+approve` or lea's deck can show its clear screen; without it the lock refuses
+reveals.
+
+## Exposure
+
+ `lox run` publishes the mobile listener on `127.0.0.1:8444`
+only. The phone reaches it through a TLS reverse proxy or tunnel that you run
+on the host and that forwards `origin` to that port: Tailscale Serve
+(`tailscale serve --bg --https=443 http://127.0.0.1:8444`), Caddy, cloudflared,
+… WebAuthn needs https, and the origin's host is the WebAuthn relying party.
+The listener serves the web app and `/m/v1` only: never the lock API, never
+the facade socket. The hub trusts no forwarded header; the origin comes from
+`lockfamily.yaml`. The hub joins its own `mobile-hub` network for that port
+(a bridge, so the hub container has a route out there; the lock API stays on
+the internal `lockhub` network, which agents never join).
+
+## Pairing
+
+ `lox mobile pair --name phone` prints a one-time code (5 min,
+wrong codes cancel it). Open the origin on the phone, enter the code,
+register; then compare the fingerprint the phone shows (computed from its own
+keys) with the one at the terminal and answer `y`. Run `lox run` to pin the
+phone at the locks: `lox run` reviews the device like any key and recreates
+the locks with it. `lox mobile list`, `lox mobile revoke NAME` (then `lox
+up`). The confirmation is only as strong as the facade socket: whoever can
+open it (your host account, never an agent container) can confirm a device.
+`require_device` needs a paired device: `lox run` refuses it otherwise, so
+revoking the last phone leaves the locks pinning it (the hub refuses it) until
+you remove `require_device` and run `lox run`. `lox mobile pair` checks the
+phone's origin against the one the last `lox run` applied.
+
+## Routing
+
+ The phone answers every risk class but `unlock` (no facade types
+secrets yet) and `grant` (a wider approval than one read); production tickets need no typed name (no current Lock sets `flags.retype`); `hub.routing`
+narrows it per instance.
+
+## Limits
+
+ The web app's code comes from the hub. A hub that serves
+malicious code could ask you to verify yourself for another pending ticket of
+the same lock than the one it shows, and could read the clear values sealed to
+the phone while they are on screen. Locks still refuse anything not signed by
+the phone over a ticket they signed themselves. A synced passkey also lives in
+your platform account.
+
+## Notifications
+
+ Off by default: the app long-polls the queue while it is
+open. With `hub.mobile.push: true`, the hub wakes the paired phones with Web
+Push when a ticket they may answer (the same routing as the queue) becomes
+pending: tap "Enable notifications" in the app, allow notifications, and the
+browser's push subscription is recorded for that device (at most 4 per device;
+dropped by `lox mobile revoke`, or when the push service answers 404/410).
+Pushes carry no payload: the service worker shows "A Lock approval is pending"
+and the app reads the ticket from the hub as usual. The hub signs each push
+with VAPID (RFC 8292; its P-256 key `vapid.key` is created once in the hub's
+data directory, 0600) and POSTs only to the known push services
+(`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `*.push.apple.com`,
+`wns2-*.notify.windows.com`, https on the default port, public addresses only
+(no private, loopback, CGNAT, NAT64 or other special-purpose ranges), no
+redirects), at most one round per 30 s (`Topic` coalesces pushes queued for an
+offline phone, `TTL` 30 min). The hub logs only the push service's host, never
+an endpoint. `lox run` reviews the change and gives the hub its `egress-hub`
+network for it. That network gives the hub general outbound access, as with
+the chat facades: the restriction to the push services above is enforced by
+the hub's code, not by the network. Signing out of the app keeps the device's
+push subscription (it belongs to the device, not to the session): tap "Disable
+notifications" before signing out to stop them on that phone, or revoke the
+device. What remains exposed: the push service (Google, Mozilla, Apple,
+Microsoft) learns when a ticket waits and which subscription is woken, though
+nothing of the ticket.
+
+```yaml
+hub:
+  mobile:
+    origin: https://hub.example.ts.net
+    push: true
+```
