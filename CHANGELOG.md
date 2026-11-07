@@ -3,6 +3,56 @@
 lockhub has no stability promise before v1: pin an exact version (by image
 digest).
 
+## v0.10.0 (2026-11-07)
+
+Supported locks: locklog joins `lox run` (locklog v0.2.0 or later).
+`lox run` upgrades older images to locksql v0.17.0, lockmq v0.8.0,
+lockfile v0.8.0, lockhttp v0.8.0 and locklog v0.2.1
+(`family.ShippedLocks`); `lox add` still pins each lock's latest signed
+release. lockkit v0.13.0.
+
+New: locklog under `lox run` (lockhub#84, #87, #132):
+
+- `lox add locklog <instance>` is guided (`--only`, `--production`,
+  `--name`): locklog's profile add on this host's logs, `locklog init
+  claude`, then its doctor. `lox init` lists the locklog launcher and
+  hints at log stores and this host's logs. Profiles take `allowed_uids`.
+  The console is capped at 2 CPUs (or the Docker host's count, if lower).
+- `lox run` mounts what a locklog lock's profile reads: the plan `locklog
+  mounts` derives from the reviewed copy, checked on the host, shown in
+  the review, and bound read-only and non-recursive. A docker source's
+  containers map lives in the state directory, is rewritten by the new
+  `lox refresh <instance>` and is checked by `lox doctor`.
+- Networks and routing: a locklog lock with local sources only joins the
+  hub's network, with no route out; with a remote source it is on its own
+  locknet behind its gateway (`LOCKLOG_NETWORK`), which no agent joins.
+  Its routing defaults to tty, deck and mobile, and a `hub.routing` entry
+  naming slack or telegram is refused. Local log sources are refused on an
+  engine older than 19.03, or one whose version or rootless status cannot
+  be read.
+- `lox run` reads each locklog lock's auto rules from the reviewed copy
+  (`locklog profile rules`), shows them in the review and applies them.
+  Fail closed: a ticket whose rules are unknown (lock file not readable,
+  instance or profile without applied rules) is always asked, never
+  auto-approved (lockhub#138). The locklog routing line shows the facades
+  in effect.
+
+Fixes:
+
+- `lox doctor` compared the hub's routing with `hub.routing` instead of
+  what `lox run` writes.
+- `lox doctor` no longer fails a locklog lock with no applied plan; it
+  warns to rerun `lox run`.
+- `lox add locklog --only` passes the directories trimmed (lockhub#138).
+
+Other changes:
+
+- README and docs list locklog with the supported locks; the README's
+  first line uses the harness-security category (lockfamily#19).
+- e2e: locklog mounts and a host agent reaching a `lox run` locklog lock
+  (a masked count, then an unmask approved at the terminal facade), with
+  locklog's host launcher at the release `ShippedLocks` pins (v0.2.1).
+
 ## v0.9.0 (2026-11-06)
 
 Supported locks: `lox run` upgrades older images to locksql v0.17.0,
