@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/creack/pty"
+
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 )
 
@@ -81,9 +83,18 @@ func (d Exec) Question(ctx context.Context, id, dir string) (string, error) {
 }
 
 func (d Exec) Attach(ctx context.Context, id string) *exec.Cmd {
-	// --sig-proxy=false: stopping lox run never signals the console.
-	return exec.CommandContext(ctx, "docker", "attach", "--sig-proxy=false", id)
+	// --sig-proxy=false: stopping lox run never signals the console; the
+	// bridge leaves with the detach keys.
+	return exec.CommandContext(ctx, "docker", "attach", "--sig-proxy=false", "--detach-keys", "ctrl-p,ctrl-q", id)
 }
+
+// detachKeys end a docker attach as Ctrl-P Ctrl-Q does: the console keeps
+// running.
+const detachKeys = "\x10\x11"
+
+// detachWait is how long the attach has to end on the detach keys before
+// it is killed.
+var detachWait = 2 * time.Second
 
 func cmdErr(err error) error {
 	var ee *exec.ExitError
@@ -260,8 +271,10 @@ func (b *Bridge) lastLine(c *console) string {
 // attach follows c's console through one docker attach, until the
 // container stops or ctx ends.
 func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
-	master, slave, err := openPTY()
-	if err != nil {
+	master, slave, err := pty.Open()
+	if errors.Is(err, pty.ErrUnsupported) {
+		return ErrUnsupported
+	} else if err != nil {
 		return err
 	}
 	if err := prepare(slave); err != nil {
@@ -269,7 +282,9 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 		slave.Close()
 		return err
 	}
-	actx, cancel := context.WithCancel(ctx)
+	// The attach outlives ctx by the detach: it is killed only when it
+	// does not end on the detach keys.
+	actx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 	cmd := b.d.Attach(actx, id)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
@@ -315,8 +330,15 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			cancel()
-			<-exited
+			b.mu.Lock()
+			_, _ = master.WriteString(detachKeys)
+			b.mu.Unlock()
+			select {
+			case <-exited:
+			case <-time.After(detachWait):
+				cancel()
+				<-exited
+			}
 			b.detach(c, master)
 			<-done
 			return nil

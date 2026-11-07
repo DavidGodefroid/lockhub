@@ -6,7 +6,7 @@ import (
 	"os"
 	"syscall"
 
-	"golang.org/x/sys/unix"
+	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
@@ -22,7 +22,7 @@ func prepare(slave *os.File) error {
 	if _, err := term.MakeRaw(int(slave.Fd())); err != nil {
 		return err
 	}
-	return unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &unix.Winsize{Row: ptyRows, Col: ptyCols})
+	return pty.Setsize(slave, &pty.Winsize{Rows: ptyRows, Cols: ptyCols})
 }
 
 // ownTerminal runs the attach in a session of its own with the slave as

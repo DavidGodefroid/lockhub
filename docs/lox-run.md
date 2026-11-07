@@ -451,8 +451,13 @@ the question file is the console account's, and lox run types only what
 the human typed in its own terminal.
 
 `lox attach NAME` stays as a fallback for debugging: it attaches your
-terminal to the console (detach: Ctrl-P Ctrl-Q); a question answered there
-takes lox run's card away. The consoles have no log, so attaching replays
+terminal to the console and, at a terminal, detaches by itself once a
+console that did not serve yet listens on its socket: `lock NAME serves:
+detached, its console keeps running`. Attached to a console that already
+serves (to use its commands), it stays. Ctrl-P Ctrl-Q detaches at any time
+and exits 0 (`detached from NAME`); Ctrl-C at the console stops it. The
+attach does not proxy signals (`--sig-proxy=false`): closing the terminal
+only detaches. A question answered there takes lox run's card away. The consoles have no log, so attaching replays
 nothing: lox run's card is where the question shows. A console that
 printed its policy review before lox run attached to it (the first start,
 during lox run's own start) shows the question without the lines above it;

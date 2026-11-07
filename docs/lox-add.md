@@ -45,8 +45,9 @@ At a terminal, `lox add TYPE` runs these steps in order:
    review. `--review` shows this lock's whole profile, line by line, and asks.
 5. **The console's questions**, attached at your terminal (what `lox attach
    NAME` does): its policy on a first start and, for a lock whose
-   credentials are `ask`, the password; for `vault`, the Vault token. Detach
-   with Ctrl-P Ctrl-Q once it says Listening.
+   credentials are `ask`, the password; for `vault`, the Vault token. Once
+   the console serves, lox detaches by itself (`lock NAME serves: detached,
+   its console keeps running`); Ctrl-P Ctrl-Q detaches sooner.
 
 When a lea container runs for the project, `lox add` says `lea gets lock NAME
 at its next start: lea stop, then lea`: lea mounts the locks' sockets when its
