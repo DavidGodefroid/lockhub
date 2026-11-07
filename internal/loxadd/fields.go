@@ -1,6 +1,7 @@
 package loxadd
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -205,6 +206,10 @@ func checkHost(v string, _ Answers) string {
 		return bad
 	}
 	if net.ParseIP(strings.Trim(v, "[]")) != nil {
+		// lockhub#145: refused here, not at the console's first connection.
+		if r := family.IPHost(v); r != "" {
+			return "host: " + r
+		}
 		return ""
 	}
 	if strings.ContainsAny(v, ":[]") {
@@ -230,6 +235,9 @@ func checkURL(key, reason string, schemes ...string) func(string, Answers) strin
 		u, err := url.Parse(v)
 		if err != nil || u.Host == "" || !slices.Contains(schemes, u.Scheme) {
 			return key + ": " + reason
+		}
+		if r := family.IPHost(u.Hostname()); r != "" {
+			return key + ": " + r
 		}
 		return ""
 	}
@@ -308,6 +316,20 @@ func checkVault(key string, rule func(string) error) func(string, Answers) strin
 	}
 }
 
+// vaultAddress is family.ValidateVaultAddress, and an IP address refused
+// as the lock's egress refuses it (lockhub#145).
+func vaultAddress(v string) error {
+	if err := family.ValidateVaultAddress(v); err != nil {
+		return err
+	}
+	if u, err := url.Parse(v); err == nil {
+		if r := family.IPHost(u.Hostname()); r != "" {
+			return errors.New("vault-address: " + r)
+		}
+	}
+	return nil
+}
+
 func checkYesNo(v string, _ Answers) string {
 	switch strings.ToLower(v) {
 	case "y", "yes", "n", "no":
@@ -364,7 +386,7 @@ func vaultFields(d Defaults, prefix, suggested string, when func(Answers) bool) 
 		return fs
 	}
 	return append(fs,
-		Field{Key: "vault-address", Label: "Vault address, such as https://vault.example.com:8200", Check: checkVault("vault-address", family.ValidateVaultAddress), When: w},
+		Field{Key: "vault-address", Label: "Vault address, such as https://vault.example.com:8200", Check: checkVault("vault-address", vaultAddress), When: w},
 		Field{Key: "vault-namespace", Label: "Vault namespace", Empty: "the root namespace", Check: checkVault("vault-namespace", family.ValidateVaultNamespace), When: w},
 		Field{Key: "vault-ca", Label: "Vault CA file", Empty: "the system's CA certificates", Check: checkVault("vault-ca", family.ValidateVaultCAFile), When: w},
 	)
