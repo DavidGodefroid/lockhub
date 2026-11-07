@@ -106,6 +106,10 @@ type Session struct {
 	// sessions): the a key shows it, read again every second while it is
 	// open. Unset, a shows this session's decisions only.
 	Audit func() ([]Exchange, []RunEvent, error)
+	// Consoles, if set, reaches the locks' consoles at their terminals:
+	// their questions (policy review, production name, passwords) are
+	// asked in a card here and answered there.
+	Consoles Consoles
 	// Sound calls the human when a question waits (nil: the terminal
 	// bell only, and the header shows no sound state).
 	Sound *Sound
@@ -124,8 +128,11 @@ type tracked struct {
 	card         *Card
 	decided      bool // lox run's decision is signed (or not lox run's to take)
 	sending      bool // a decision is on its way
+	unreadable   bool // it does not verify: lox run refuses it
 	profileKey   string
 	gen          int // the profile's generation when it came: x bumps it
+	// cq is set on a console's question (no ticket: tk is nil).
+	cq *consoleQ
 	answer
 }
 
@@ -149,20 +156,26 @@ type state struct {
 	// gen counts, per profile, the times the human dropped the session's
 	// connection (x): a connect that comes back from before does not
 	// put back what was dropped.
-	gen      map[string]int
-	hubOK    bool
-	hubErr   string
-	overlay  string
-	audit    auditView
-	flash    string
-	flashTo  time.Time
-	quitting bool
-	pending  []effect
-	bell     bool
-	muted    bool      // the sound is off (Sound.Off, the s key)
-	calledAt time.Time // when the human was last called for the questions waiting
-	dirty    bool
-	drawn    int // frames drawn (a terminal's first one clears it)
+	gen map[string]int
+	// consoles are the locks' consoles by instance; consoleCards the card
+	// of the question each one waits for; consoleAnswers the values typed
+	// to them this session (wiped when Run returns, or by x).
+	consoles       map[string]*LockConsole
+	consoleCards   map[string]*tracked
+	consoleAnswers map[string]*consoleAnswer
+	hubOK          bool
+	hubErr         string
+	overlay        string
+	audit          auditView
+	flash          string
+	flashTo        time.Time
+	quitting       bool
+	pending        []effect
+	bell           bool
+	dirty          bool
+	muted          bool      // the sound is off (Sound.Off, the s key)
+	calledAt       time.Time // when the human was last called for the questions waiting
+	drawn          int       // frames drawn (a terminal's first one clears it)
 	keyGuard
 }
 
@@ -204,7 +217,8 @@ func (s *Session) observe(e Event) {
 func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
-		ran: map[string]time.Time{}, gen: map[string]int{}, dirty: true}
+		ran: map[string]time.Time{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
+		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.muted = s.Sound != nil && s.Sound.Off
 	return st
@@ -286,6 +300,11 @@ func (s *Session) Run(ctx context.Context) error {
 	stateCh := make(chan stateMsg, 64)
 	polling := false
 
+	var consoleCh <-chan ConsoleEvent
+	if s.Consoles != nil {
+		consoleCh = s.Consoles.Events()
+	}
+
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	statePoll := time.NewTicker(s.StatePoll)
@@ -335,6 +354,12 @@ func (s *Session) Run(ctx context.Context) error {
 			if st.onKey(k) {
 				return nil
 			}
+		case e, ok := <-consoleCh:
+			if !ok {
+				consoleCh = nil
+				continue
+			}
+			st.onConsole(e)
 		case <-s.Resize:
 			st.dirty = true
 		case m := <-decideCh:

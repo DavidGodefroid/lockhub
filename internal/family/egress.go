@@ -30,8 +30,11 @@ import (
 // that edits .locksql changes nothing until the human reviews it again.
 //
 // Fail closed: what the allowlist cannot name exactly (a value it cannot
-// read, an IP address, a proxy command) is reached by nothing, and the
-// review says why.
+// read, a proxy command) is reached by nothing, and the review says why.
+// An IP address is refused outright (lockhub#145): the gateway answers by
+// host name only, so the lock could never reach it, and lox run stops
+// before anything starts instead of the console failing at connection
+// time with a bare "network is unreachable".
 
 // Endpoint is one host:port a lock may reach.
 type Endpoint struct {
@@ -57,6 +60,19 @@ type Egress struct {
 	// None are the reasons something the profile names is reached by
 	// nothing (fail closed).
 	None []string
+	// Refused are the values the egress can never reach and lox run
+	// refuses to apply (an IP address): each names its key and the fix.
+	Refused []string
+}
+
+// IPHost is the refusal of host when it is an IP address a lock's egress
+// cannot reach (any but loopback, the lock's own container), else "".
+func IPHost(host string) string {
+	h := strings.Trim(strings.TrimSuffix(host, "."), "[]")
+	if ip := net.ParseIP(h); ip == nil || ip.IsLoopback() {
+		return ""
+	}
+	return fmt.Sprintf("%s is an IP address, which a lock cannot reach: its egress gateway answers by host name only; name the host instead (a DNS name that resolves to it, or host.docker.internal for this machine)", host)
 }
 
 // gwBase is the first port of gwout-<n>: endpoint i (in Endpoints order)
@@ -73,6 +89,9 @@ func Egresses(c *Config, profiles map[string]*Profile) (map[string]Egress, error
 	out := map[string]Egress{}
 	for _, n := range c.Instances() {
 		e, err := lockEgress(c, n, profiles[c.Locks[n].Type])
+		if err == nil && len(e.Refused) > 0 {
+			err = errors.New(strings.Join(e.Refused, "; "))
+		}
 		if err != nil {
 			return nil, fmt.Errorf("egress of lock %s: %w", n, err)
 		}
@@ -87,7 +106,8 @@ func lockEgress(c *Config, name string, p *Profile) (Egress, error) {
 		return Egress{Own: true}, nil
 	}
 	var e Egress
-	add := func(host string, port int, tls bool, what string) {
+	// key names where host is set, for a refusal ("profiles.p.ssh.host").
+	add := func(host string, port int, tls bool, what, key string) {
 		h := strings.ToLower(strings.TrimSuffix(host, "."))
 		switch ip := net.ParseIP(strings.Trim(h, "[]")); {
 		case h == "":
@@ -95,7 +115,7 @@ func lockEgress(c *Config, name string, p *Profile) (Egress, error) {
 		case h == "localhost" || (ip != nil && ip.IsLoopback()):
 			// The lock's own container: no egress involved.
 		case ip != nil:
-			e.None = append(e.None, fmt.Sprintf("%s %s: an IP address, which the gateway cannot answer for (name the host instead, or host.docker.internal for this machine)", what, host))
+			e.Refused = append(e.Refused, fmt.Sprintf("%s (%s): %s", key, what, IPHost(host)))
 		case !hostName.MatchString(h):
 			e.None = append(e.None, fmt.Sprintf("%s: host %q is not a plain DNS name", what, host))
 		case port < 1 || port > 65535:
@@ -115,7 +135,7 @@ func lockEgress(c *Config, name string, p *Profile) (Egress, error) {
 	}
 	if l.Vault && c.Vault != nil {
 		if u, err := url.Parse(c.Vault.Address); err == nil {
-			add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), u.Scheme == "https", "vault")
+			add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), u.Scheme == "https", "vault", "vault.address in lockfamily.yaml")
 		} else {
 			e.None = append(e.None, "vault: the address cannot be read")
 		}
@@ -202,7 +222,7 @@ func configTOML(p *Profile) ([]byte, error) {
 // profileEndpoints reads the endpoints of the lock's profile (or of every
 // profile of config.toml when the lock names none: the human picks one at
 // the console) from the reviewed copy.
-func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string), none func(string)) error {
+func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string, string), none func(string)) error {
 	b, err := configTOML(p)
 	if err != nil {
 		return fmt.Errorf("the reviewed profile cannot be read: %v", err)
@@ -233,12 +253,15 @@ func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string), n
 			none(fmt.Sprintf("profile %s: not in config.toml", n))
 			continue
 		}
-		readProfile(l.Type, n, pr, add, none)
+		readProfile(l.Type, n, pr, func(h string, port int, tls bool, what, key string) {
+			add(h, port, tls, what, "profiles."+n+"."+key+" in config.toml")
+		}, none)
 	}
 	return nil
 }
 
-func readProfile(typ, name string, pr map[string]any, add func(string, int, bool, string), none func(string)) {
+// add's last argument is the key that sets the host, under the profile.
+func readProfile(typ, name string, pr map[string]any, add func(string, int, bool, string, string), none func(string)) {
 	str := func(k string) (string, bool) {
 		v, ok := pr[k]
 		if !ok {
@@ -269,7 +292,7 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 		if port == 0 {
 			port = 22
 		}
-		add(h, port, false, "ssh")
+		add(h, port, false, "ssh", "ssh.host")
 		return
 	}
 	if _, ok := pr["proxy_command"]; ok {
@@ -291,7 +314,7 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 		if port == 0 {
 			port = map[string]int{"postgres": 5432, "mysql": 3306, "mariadb": 3306}[eng]
 		}
-		add(h, port, false, "database")
+		add(h, port, false, "database", "host")
 	case "lockmq":
 		for _, k := range []struct {
 			key, what string
@@ -315,7 +338,7 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 				bad(k.key)
 				continue
 			}
-			add(u.Hostname(), urlPort(u, k.def), slices.Contains(k.tls, strings.ToLower(u.Scheme)), k.what)
+			add(u.Hostname(), urlPort(u, k.def), slices.Contains(k.tls, strings.ToLower(u.Scheme)), k.what, k.key)
 		}
 	case "lockfile":
 		src, ok := str("source")
@@ -338,11 +361,11 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 					bad("endpoint")
 					return
 				}
-				add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), strings.EqualFold(u.Scheme, "https"), "s3")
+				add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), strings.EqualFold(u.Scheme, "https"), "s3", "endpoint")
 				return
 			}
 			// Virtual-hosted style, as the AWS SDK addresses a bucket.
-			add(bucket+".s3."+region+".amazonaws.com", 443, true, "s3")
+			add(bucket+".s3."+region+".amazonaws.com", 443, true, "s3", "bucket")
 		case "sftp":
 			h, hok := str("host")
 			port, pok := num(pr, "port")
@@ -353,7 +376,7 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 			if port == 0 {
 				port = 22
 			}
-			add(h, port, false, "sftp")
+			add(h, port, false, "sftp", "host")
 		case "local", "":
 		default:
 			bad("source")
@@ -391,7 +414,7 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 				bad("sources." + n + ".url")
 				continue
 			}
-			add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), scheme == "https", kind+" source "+n)
+			add(u.Hostname(), urlPort(u, map[string]int{"http": 80, "https": 443}), scheme == "https", kind+" source "+n, "sources."+n+".url")
 		}
 	}
 }
@@ -415,7 +438,8 @@ func (e Egress) Lines(n string) []string {
 	return s
 }
 
-// Short is the egress row of the short review.
+// Short is the egress row of the short review; the None reasons are
+// rows of their own (Facts.Unreachable).
 func (e Egress) Short() string {
 	if e.Own {
 		return "its own policy (lockhttp)"
@@ -427,9 +451,6 @@ func (e Egress) Short() string {
 	s := "only " + strings.Join(a, ", ")
 	if len(a) == 0 {
 		s = "none"
-	}
-	if len(e.None) > 0 {
-		s += "; unreachable: " + strings.Join(e.None, "; ")
 	}
 	return s
 }

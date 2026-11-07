@@ -19,6 +19,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/family"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
+	"github.com/DavidGodefroid/lockhub/internal/lockconsoles"
 	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 )
@@ -83,9 +84,13 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// Without the lock file, no lock's rules are known: the engine's
 	// defaults, and a locklog ticket's reads are asked (fail closed).
 	var rules func(lock, instance, profile string) loxrun.ProfileRules
+	var consoleLocks []lockconsoles.Lock
 	if c, err := family.Load(abs); err == nil {
 		locks = len(c.Locks)
 		rules = profileRules(family.AppliedLogRules(stateDir(family.Project(family.Workspace(abs))), c))
+		for _, name := range c.Instances() {
+			consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
+		}
 	}
 	lockKeys, err := keys.LoadLocks(filepath.Join(*keysDir, family.LockKeysFile))
 	if err != nil {
@@ -116,7 +121,16 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	s.Sound = snd
 	// The a key: the hub's audit, as lox audit lists it. The session
 	// journal places this session (who, when, its mode switches) in it.
-	state := stateDir(family.Project(family.Workspace(abs)))
+	project := family.Project(family.Workspace(abs))
+	state := stateDir(project)
+	// The consoles' own questions (policy review, production name,
+	// passwords) are asked here and typed at their terminals: lox attach
+	// is a fallback only.
+	if len(consoleLocks) > 0 {
+		b := lockconsoles.Start(ctx, lockconsoles.Exec{Compose: composeArgs(project, state)}, consoleLocks)
+		defer b.Close()
+		s.Consoles = b
+	}
 	src := auditSource(auditDirs{data: filepath.Join(state, "hub"), state: state}, "", *keysDir)
 	src.Limit = 500
 	s.Audit = func() ([]loxrun.Exchange, []loxrun.RunEvent, error) { return loxaudit.Load(ctx, src) }

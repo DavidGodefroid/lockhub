@@ -42,8 +42,13 @@ func Dial(path string) *Client {
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
-		b, _ := json.Marshal(in)
-		body = bytes.NewReader(b)
+		// No HTML escaping: the signed payloads it carries (a sealed
+		// secret, a reveal key) must reach the hub byte for byte (#147).
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(in)
+		body = &b
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://lockhub"+path, body)
 	if err != nil {

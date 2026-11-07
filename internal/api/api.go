@@ -301,5 +301,15 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = encodeJSON(w, v)
+}
+
+// encodeJSON writes v as JSON without encoding/json's HTML escaping: it
+// rewrites <, > and & even inside a json.RawMessage, so a signed ticket
+// or decision holding them (a SQL <, >=, <>, &) would reach its reader
+// out of its canonical form and fail verification (#147).
+func encodeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(v)
 }

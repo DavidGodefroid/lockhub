@@ -133,17 +133,6 @@ func TestSoundOffAndToggle(t *testing.T) {
 	}
 }
 
-// waitOutput waits for the session's log to show want.
-func waitOutput(t *testing.T, h *harness, want string) {
-	t.Helper()
-	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
-		if strings.Contains(h.output(), want) {
-			return
-		}
-	}
-	t.Fatalf("the log never showed %q:\n%s", want, h.output())
-}
-
 func TestSoundHeader(t *testing.T) {
 	st := Style{Unicode: true}
 	for state, want := range map[SoundState]string{SoundNone: "", SoundOn: "🔔", SoundOff: "🔕"} {
@@ -304,5 +293,20 @@ func TestSoundSettings(t *testing.T) {
 	s.Notify(`x"; do shell script "rm`, "write")
 	if got := strings.Join(f.started[0], " "); strings.Count(got, `"`) != 4 {
 		t.Fatalf("osascript text not kept plain: %s", got)
+	}
+}
+
+// A lock console's question (policy review, password) plays the sound too.
+func TestSoundConsoleQuestion(t *testing.T) {
+	cons := newFakeConsoles()
+	p := &fakePlayer{}
+	h := start(t, newFakeHub(), nil, func(s *Session) {
+		s.Consoles = cons
+		s.Sound = &Sound{Question: "q.oga", Production: "p.oga", Play: p.Play}
+	})
+	cons.ask("shop", "Apply these changes? [y/N]", "profile shop")
+	h.wait(EvQuestion, "")
+	if got := p.played(); !slices.Equal(got, []string{"q.oga"}) {
+		t.Fatalf("console question played %v, want [q.oga]", got)
 	}
 }

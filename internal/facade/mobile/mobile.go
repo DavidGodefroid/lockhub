@@ -274,7 +274,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	// No HTML escaping: it would rewrite <, > and & inside the signed
+	// tickets (json.RawMessage) the phone verifies (#147).
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.Encode(v)
 }
 
 func writeErr(w http.ResponseWriter, code int, kind, msg string) {

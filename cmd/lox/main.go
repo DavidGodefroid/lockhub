@@ -82,8 +82,9 @@ Usage:
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
   lox attach INSTANCE [--file lockfamily.yaml]
-                                          answer a lock console's start-up questions (policy, credentials);
-                                          detach with Ctrl-P Ctrl-Q
+                                          a lock console's terminal, for debugging: lox run asks its questions
+                                          (policy, credentials) in cards; detaches by itself once the console
+                                          serves; Ctrl-P Ctrl-Q detaches sooner, closing the terminal only detaches
   lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lox refresh INSTANCE [--file lockfamily.yaml]
                                           rewrite a locklog lock's containers map once (its docker source's
@@ -498,8 +499,36 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 	// The console has no log (it would keep its screens): attaching
 	// replays nothing, and lox cannot tell which question it waits for.
 	fmt.Fprintf(stdout, "attached to lock %s (its pending question is not shown again: the policy review, \"Apply these changes? [y/N]\", on a first start or after a loosening; for a production profile, \"Type the profile name %q to continue:\"; or a password its profile does not take from Vault; detach with Ctrl-P Ctrl-Q)\n", name, name)
-	cmd := exec.Command("docker", "compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
-		"-f", filepath.Join(state, "compose.yaml"), "attach", "lock-"+name)
+	fmt.Fprintln(stdout, detachLine)
+	compose := []string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
+		"-f", filepath.Join(state, "compose.yaml")}
+	// --sig-proxy=false: a hang-up (the terminal closed) or a signal to lox
+	// only ends the attach; it never reaches the console.
+	cmd := exec.Command("docker", slices.Concat(compose, []string{"attach", "--sig-proxy=false", "--detach-keys", "ctrl-p,ctrl-q", "lock-" + name})...)
+	// At a terminal, lox detaches by itself once a console that did not
+	// serve yet serves (its start questions answered); attached to a
+	// serving console, the user leaves it with Ctrl-P Ctrl-Q.
+	if out, ok := stdout.(*os.File); ok && isTerminal(stdin) && isTerminal(out) {
+		tool := ""
+		if c, err := family.Load(abs); err == nil {
+			tool = c.Locks[name].Type
+		}
+		serves := func() bool { return consoleListens(compose, name, tool) }
+		if tool != "" && !serves() {
+			shown := &escapeWatch{w: out}
+			served, err := attachUntilServes(cmd, stdin, out, shown, serves)
+			switch {
+			case served:
+				fmt.Fprintf(stdout, "lock %s serves: detached, its console keeps running\n", name)
+				return nil
+			case err != nil && shown.seen:
+				fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
+				return nil
+			case !errors.Is(err, errNoPty):
+				return err
+			}
+		}
+	}
 	detach := &escapeWatch{w: stderr}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, detach
 	err := cmd.Run()
@@ -510,6 +539,12 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		return nil
 	}
 	return err
+}
+
+// composeArgs name the compose project lox run applied, from its state
+// directory (never a compose file of the workspace).
+func composeArgs(project, state string) []string {
+	return []string{"-p", project, "--project-directory", state, "--env-file", os.DevNull, "-f", filepath.Join(state, "compose.yaml")}
 }
 
 // escapeSequence is docker's message when the terminal detaches.

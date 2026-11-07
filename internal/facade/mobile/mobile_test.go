@@ -341,6 +341,39 @@ func TestRouting(t *testing.T) {
 	}
 }
 
+// A read with <, >, & and non-ASCII in its SQL and requester, answered
+// on the phone with a reason holding them too: the phone checks the
+// ticket as the lock signed it, and the lock verifies the hub's decision
+// (the facades do not HTML-escape signed payloads, #147).
+func TestHTMLCharsRoundTrip(t *testing.T) {
+	e := newEnv(t, route.Rules{})
+	phone := e.phone("phone")
+	dev := e.pair(phone)
+	l := e.lock(dev)
+	if err := phone.Login(); err != nil {
+		t.Fatal(err)
+	}
+	sql := "SELECT id FROM b WHERE b.id >= 'a' AND b.id < 'z' AND b.source <> 'manual' AND b.flags & 4 = 4 AND b.name = 'Zoé'"
+	_, ok := l.submitSQL(t, ticket.RiskRead, "dev-1 <&> ü", sql)
+	it := item(t, phone, ok)
+	if !strings.Contains(it.Ticket, "b.id < 'z'") {
+		t.Errorf("ticket not shown as the lock signed it: %s", it.Ticket)
+	}
+	if err := phone.Answer(it, true, "ok: id < 'z' & é", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, d, err := l.run(t, ok); err != nil || d.Reason != "ok: id < 'z' & é" {
+		t.Fatalf("lock on the phone's approval: %+v, %v", d, err)
+	}
+	_, no := l.submitSQL(t, ticket.RiskRead, "dev-1", sql)
+	if err := phone.Answer(item(t, phone, no), false, "no: <script> & co", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, d, err := l.run(t, no); d == nil || d.Reason != "no: <script> & co" {
+		t.Fatalf("lock on the phone's denial: %+v, %v", d, err)
+	}
+}
+
 // Agent text reaches the phone as data in the lock's JSON, never as
 // markup: the web app sets it with textContent only.
 func TestAgentTextIsData(t *testing.T) {
