@@ -17,14 +17,18 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
 	lkaudit "github.com/DavidGodefroid/lockkit/audit"
+	"github.com/DavidGodefroid/lockkit/ipc"
+	"github.com/DavidGodefroid/lockkit/sanitize"
 
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
@@ -492,11 +496,40 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) error {
 	project := family.Project(family.Workspace(abs))
 	state := stateDir(project)
+	compose := func(args ...string) *exec.Cmd {
+		return exec.Command("docker", append([]string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
+			"-f", filepath.Join(state, "compose.yaml")}, args...)...)
+	}
 	// The console has no log (it would keep its screens): attaching
-	// replays nothing, and lox cannot tell which question it waits for.
-	fmt.Fprintf(stdout, "attached to lock %s (its pending question is not shown again: the policy review, \"Apply these changes? [y/N]\", on a first start or after a loosening; for a production profile, \"Type the profile name %q to continue:\"; or a password its profile does not take from Vault; detach with Ctrl-P Ctrl-Q)\n", name, name)
-	cmd := exec.Command("docker", "compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
-		"-f", filepath.Join(state, "compose.yaml"), "attach", "lock-"+name)
+	// replays nothing. A console that records its question (lockkit's
+	// question file, next to its socket) is asked for it first.
+	var who console
+	if c, err := family.Load(abs); err == nil {
+		l := c.Locks[name]
+		who = console{typ: l.Type, profile: l.Profile, key: "user"}
+		if l.Type == "lockfile" && who.profile == "" {
+			who.profile = "default" // lox up starts it with --profile default
+		}
+		if k, ok := family.Kinds[l.Type]; ok {
+			who.uid = k.UID
+			if k.Project {
+				who.key = strings.TrimPrefix(project, "lockfamily-") // the hash of the workspace, the console's project
+			}
+		}
+	}
+	ask := func() pending {
+		p := pendingQuestion(who, func(args ...string) (string, error) {
+			out, err := compose(append([]string{"exec", "-T", "lock-" + name}, args...)...).Output()
+			return string(out), err
+		})
+		if p.question == "" && !p.serving {
+			out, _ := compose("ps", "-a", "--format", "{{.State}} {{.ExitCode}}", "lock-"+name).Output()
+			p.state, p.exit = containerState(string(out))
+		}
+		return p
+	}
+	fmt.Fprintln(stdout, attachLine(name, ask()))
+	cmd := compose("attach", "lock-"+name)
 	detach := &escapeWatch{w: stderr}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, detach
 	err := cmd.Run()
@@ -506,7 +539,206 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
 		return nil
 	}
+	// The console ended (a wrong answer, an error): its container restarts
+	// it, and the next attach must not be blind. Its next question, once
+	// it asks one, is shown now.
+	if err != nil {
+		fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
+	}
 	return err
+}
+
+// attachTries and attachStep are how long lox attach waits for a console
+// that ended to ask its next question: its container restarts it.
+var (
+	attachTries = 10
+	attachStep  = 500 * time.Millisecond
+)
+
+// afterExit tells, once the console of lock name ended under the attach,
+// what it does now: ask is polled up to tries times for its next question
+// or its serving.
+func afterExit(name string, ask func() pending, tries int) string {
+	var p pending
+	for i := 0; i < tries; i++ {
+		// No container to wait for (state unknown): asking again tells no more.
+		if p = ask(); p.question != "" || p.serving || p.state == "" {
+			break
+		}
+		if i < tries-1 {
+			time.Sleep(attachStep)
+		}
+	}
+	return "the console of lock " + name + " ended; now " + attachHint(name, p) + "\n  lox attach " + name + " to answer it once it asks"
+}
+
+// pending is what a console waits for, as lox attach found it.
+type pending struct {
+	// question is the question it records, "" when none.
+	question string
+	// serving: no question recorded, and the console listens on its socket.
+	serving bool
+	// state and exit are its container's state (docker's: running,
+	// restarting, exited, created, ...) and last exit status, read when it
+	// neither asks nor serves; state "" is unknown.
+	state, exit string
+}
+
+// console is the lock console lox attach asks for its question: its type,
+// the profile it serves ("" when lockfamily.yaml names none), the project
+// key of its socket (lockkit's ProjectKeyOf: the workspace's hash, or
+// "user") and its account's uid.
+type console struct{ typ, profile, key, uid string }
+
+// questionScript prints, in a console's container, each regular file of
+// directory $1 named $2 (a find -name pattern), owned by uid $3 with mode
+// 0600 exactly, as one "question: " line: its first line, at most 512
+// bytes. Any other file is not the console's question.
+const questionScript = `find "$1" -maxdepth 1 -name "$2" -type f -user "$3" -perm 0600 ` +
+	`-exec sh -c 'printf "question: "; head -n 1 "$1" | head -c 512; echo' q {} \; 2>/dev/null; true`
+
+// maxQuestion bounds the question shown, in characters.
+const maxQuestion = 200
+
+// pendingQuestion asks, in the lock's container (exec runs a command
+// there), what console c waits for. A console that listens on its socket
+// in /run/<typ>/ serves: whatever file is left there is stale. Otherwise
+// its question is the file lockkit's QuestionPath names for its socket
+// (<key>-<profile>.question), a regular file of the console's account,
+// mode 0600; with no profile named, the only <key>-*.question file. Nothing
+// known (an older console, a container not running, an unknown type, two
+// candidates) is the zero pending.
+func pendingQuestion(c console, exec func(args ...string) (string, error)) pending {
+	if !typeName.MatchString(c.typ) || !uidRe.MatchString(c.uid) || !keyRe.MatchString(c.key) ||
+		c.profile != "" && !profileRe.MatchString(c.profile) {
+		return pending{}
+	}
+	dir := "/run/" + c.typ
+	if table, err := exec("cat", "/proc/net/unix"); err == nil && unixListening(table, c.typ) {
+		return pending{serving: true}
+	}
+	name := c.key + "-*.question"
+	if c.profile != "" {
+		sock, err := ipc.SharedSocketPath(dir, c.key, c.profile)
+		if err != nil {
+			return pending{}
+		}
+		name = strings.TrimSuffix(filepath.Base(sock), ".sock") + ".question"
+	}
+	out, err := exec("sh", "-c", questionScript, "lox", dir, name, c.uid)
+	if err != nil {
+		return pending{}
+	}
+	var qs []string
+	for _, ln := range strings.Split(out, "\n") {
+		if q, ok := strings.CutPrefix(ln, "question: "); ok {
+			qs = append(qs, q)
+		}
+	}
+	if len(qs) != 1 {
+		return pending{}
+	}
+	q := []rune(strings.TrimSpace(qs[0]))
+	if len(q) == 0 {
+		return pending{}
+	}
+	if len(q) > maxQuestion {
+		q = append(q[:maxQuestion], '…')
+	}
+	return pending{question: terminalText(string(q))}
+}
+
+var (
+	// typeName is a lock type, safe in a path.
+	typeName = regexp.MustCompile(`^[a-z]+$`)
+	// uidRe, keyRe and profileRe are what may name a console's file: no
+	// glob or shell character.
+	uidRe     = regexp.MustCompile(`^[0-9]+$`)
+	keyRe     = regexp.MustCompile(`^(user|[0-9a-f]{8})$`)
+	profileRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+)
+
+// unixListening is whether /proc/net/unix (table) holds a listening socket
+// in /run/<tool>/: the flag __SO_ACCEPTCON (00010000), state 01.
+func unixListening(table, tool string) bool {
+	for _, ln := range strings.Split(table, "\n") {
+		f := strings.Fields(ln)
+		if len(f) == 8 && f[3] == "00010000" && f[5] == "01" && strings.HasPrefix(f[7], "/run/"+tool+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// terminalText escapes s, text from the lock's container, for the user's
+// terminal: lockkit's sanitize.Terminal (controls, bidi and directional
+// marks), and the invisible characters it keeps (zero-width, word joiner,
+// byte order mark, line and paragraph separators) as \uNNNN.
+func terminalText(s string) string {
+	var b strings.Builder
+	for _, r := range sanitize.Terminal(s, false) {
+		switch {
+		case r >= 0x200b && r <= 0x200d, r == 0x2060, r == 0xfeff, r == 0x2028, r == 0x2029:
+			fmt.Fprintf(&b, "\\u%04x", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// containerState reads docker compose ps's "{{.State}} {{.ExitCode}}"
+// line: "" when there is none (no container) or it is not that shape.
+func containerState(out string) (state, exit string) {
+	f := strings.Fields(out)
+	if len(f) != 2 || !typeName.MatchString(f[0]) || !exitRe.MatchString(f[1]) {
+		return "", ""
+	}
+	return f[0], f[1]
+}
+
+var (
+	// exitRe is an exit status.
+	exitRe = regexp.MustCompile(`^-?[0-9]{1,3}$`)
+	// secretQuestion is a question whose answer the console reads without
+	// echo: a passphrase, a password, a token or a secret.
+	secretQuestion = regexp.MustCompile(`(?i)\b(passphrase|password|token|secret)\b`)
+)
+
+// attachHint is what lox attach tells of lock name: the question its
+// console waits for, or that it serves, or its container's state. Never a
+// list of what it may ask: that list was taken for the question, and a
+// policy answer was typed as an SSH passphrase (#143).
+func attachHint(name string, p pending) string {
+	switch {
+	case p.question != "":
+		typed := ""
+		if secretQuestion.MatchString(p.question) {
+			typed = " (typed, not shown)"
+		}
+		return fmt.Sprintf("lock %s waits for: %s%s", name, p.question, typed)
+	case p.serving:
+		return fmt.Sprintf("lock %s is serving: nothing to answer", name)
+	case p.state == "running":
+		return fmt.Sprintf("lock %s is starting: its console asks nothing yet", name)
+	case p.state == "restarting", p.state == "exited", p.state == "dead":
+		return fmt.Sprintf("lock %s is stopped (%s, exit status %s): its console keeps no log, its last error showed only on an attached terminal", name, p.state, p.exit)
+	case p.state != "":
+		return fmt.Sprintf("lock %s is %s: its console asks nothing yet", name, p.state)
+	}
+	return fmt.Sprintf("lock %s: its console's state cannot be read (an older console that records no question, or a container lox did not start)", name)
+}
+
+// attachLine is the line lox attach prints before attaching: attachHint,
+// and what to type or how to leave.
+func attachLine(name string, p pending) string {
+	if p.question != "" {
+		return attachHint(name, p) + "\n  type the answer, then Enter: the console does not print its question again (detach with Ctrl-P Ctrl-Q)"
+	}
+	if p.serving {
+		return attachHint(name, p) + " (detach with Ctrl-P Ctrl-Q)"
+	}
+	return attachHint(name, p) + "\n  its questions show here as it asks them (detach with Ctrl-P Ctrl-Q)"
 }
 
 // escapeSequence is docker's message when the terminal detaches.
