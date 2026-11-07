@@ -83,8 +83,9 @@ Usage:
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
   lox attach INSTANCE [--file lockfamily.yaml]
-                                          answer a lock console's start-up questions (policy, credentials);
-                                          detach with Ctrl-P Ctrl-Q
+                                          a lock console's terminal, for debugging: lox run asks its questions
+                                          (policy, credentials) in cards; detaches by itself once the console
+                                          serves; Ctrl-P Ctrl-Q detaches sooner, closing the terminal only detaches
   lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lox refresh INSTANCE [--file lockfamily.yaml]
                                           rewrite a locklog lock's containers map once (its docker source's
@@ -496,10 +497,9 @@ func attachCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) error {
 	project := family.Project(family.Workspace(abs))
 	state := stateDir(project)
-	compose := func(args ...string) *exec.Cmd {
-		return exec.Command("docker", append([]string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
-			"-f", filepath.Join(state, "compose.yaml")}, args...)...)
-	}
+	compose := []string{"compose", "-p", project, "--project-directory", state, "--env-file", os.DevNull,
+		"-f", filepath.Join(state, "compose.yaml")}
+	dc := func(args ...string) *exec.Cmd { return exec.Command("docker", slices.Concat(compose, args)...) }
 	// The console has no log (it would keep its screens): attaching
 	// replays nothing. A console that records its question (lockkit's
 	// question file, next to its socket) is asked for it first.
@@ -519,17 +519,46 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 	}
 	ask := func() pending {
 		p := pendingQuestion(who, func(args ...string) (string, error) {
-			out, err := compose(append([]string{"exec", "-T", "lock-" + name}, args...)...).Output()
+			out, err := dc(append([]string{"exec", "-T", "lock-" + name}, args...)...).Output()
 			return string(out), err
 		})
 		if p.question == "" && !p.serving {
-			out, _ := compose("ps", "-a", "--format", "{{.State}} {{.ExitCode}}", "lock-"+name).Output()
+			out, _ := dc("ps", "-a", "--format", "{{.State}} {{.ExitCode}}", "lock-"+name).Output()
 			p.state, p.exit = containerState(string(out))
 		}
 		return p
 	}
 	fmt.Fprintln(stdout, attachLine(name, ask()))
-	cmd := compose("attach", "lock-"+name)
+	fmt.Fprintln(stdout, detachLine)
+	// --sig-proxy=false: a hang-up (the terminal closed) or a signal to lox
+	// only ends the attach; it never reaches the console.
+	cmd := exec.Command("docker", slices.Concat(compose, []string{"attach", "--sig-proxy=false", "--detach-keys", "ctrl-p,ctrl-q", "lock-" + name})...)
+	// At a terminal, lox detaches by itself once a console that did not
+	// serve yet serves (its start questions answered); attached to a
+	// serving console, the user leaves it with Ctrl-P Ctrl-Q.
+	if out, ok := stdout.(*os.File); ok && isTerminal(stdin) && isTerminal(out) {
+		tool := ""
+		if c, err := family.Load(abs); err == nil {
+			tool = c.Locks[name].Type
+		}
+		serves := func() bool { return consoleListens(compose, name, tool) }
+		if tool != "" && !serves() {
+			shown := &escapeWatch{w: out}
+			served, err := attachUntilServes(cmd, stdin, out, shown, serves)
+			switch {
+			case served:
+				fmt.Fprintf(stdout, "lock %s serves: detached, its console keeps running\n", name)
+				return nil
+			case err != nil && shown.seen:
+				fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
+				return nil
+			case !errors.Is(err, errNoPty):
+				// The console ended (a wrong answer, an error).
+				fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
+				return err
+			}
+		}
+	}
 	detach := &escapeWatch{w: stderr}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, detach
 	err := cmd.Run()
@@ -546,6 +575,12 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
 	}
 	return err
+}
+
+// composeArgs name the compose project lox run applied, from its state
+// directory (never a compose file of the workspace).
+func composeArgs(project, state string) []string {
+	return []string{"-p", project, "--project-directory", state, "--env-file", os.DevNull, "-f", filepath.Join(state, "compose.yaml")}
 }
 
 // attachTries and attachStep are how long lox attach waits for a console
@@ -658,18 +693,6 @@ var (
 	profileRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 )
 
-// unixListening is whether /proc/net/unix (table) holds a listening socket
-// in /run/<tool>/: the flag __SO_ACCEPTCON (00010000), state 01.
-func unixListening(table, tool string) bool {
-	for _, ln := range strings.Split(table, "\n") {
-		f := strings.Fields(ln)
-		if len(f) == 8 && f[3] == "00010000" && f[5] == "01" && strings.HasPrefix(f[7], "/run/"+tool+"/") {
-			return true
-		}
-	}
-	return false
-}
-
 // terminalText escapes s, text from the lock's container, for the user's
 // terminal: lockkit's sanitize.Terminal (controls, bidi and directional
 // marks), and the invisible characters it keeps (zero-width, word joiner,
@@ -729,16 +752,16 @@ func attachHint(name string, p pending) string {
 	return fmt.Sprintf("lock %s: its console's state cannot be read (an older console that records no question, or a container lox did not start)", name)
 }
 
-// attachLine is the line lox attach prints before attaching: attachHint,
-// and what to type or how to leave.
+// attachLine is what lox attach prints before attaching (detachLine
+// follows): attachHint, and what to type.
 func attachLine(name string, p pending) string {
-	if p.question != "" {
-		return attachHint(name, p) + "\n  type the answer, then Enter: the console does not print its question again (detach with Ctrl-P Ctrl-Q)"
+	switch {
+	case p.question != "":
+		return attachHint(name, p) + "\n  type the answer, then Enter: the console does not print its question again"
+	case p.serving:
+		return attachHint(name, p)
 	}
-	if p.serving {
-		return attachHint(name, p) + " (detach with Ctrl-P Ctrl-Q)"
-	}
-	return attachHint(name, p) + "\n  its questions show here as it asks them (detach with Ctrl-P Ctrl-Q)"
+	return attachHint(name, p) + "\n  its questions show here as it asks them"
 }
 
 // escapeSequence is docker's message when the terminal detaches.

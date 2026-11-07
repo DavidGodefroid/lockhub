@@ -277,7 +277,8 @@ func Compose(c *Config, p Paths) string {
 		w("    user: %s", q(k.UID+":"+k.GID))
 		// The console asks the human at its terminal: its policy on the
 		// first start and after a loosening, and the credentials its
-		// profile does not take from Vault. lox attach reaches it.
+		// profile does not take from Vault. lox run reaches it through a
+		// pty of its own (lockconsoles); lox attach too.
 		w("    tty: true")
 		w("    stdin_open: true")
 		w("    environment:")

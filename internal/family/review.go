@@ -87,6 +87,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 		if f.Egress != "" {
 			row("egress", f.Egress)
 		}
+		for _, r := range f.Unreachable {
+			row("unreachable", "WARNING: "+r)
+		}
 		if f.Profile != "" {
 			note := "(lox run --review prints it in full)"
 			if f.Changed {
@@ -171,4 +174,4 @@ func caChanged(d []string) bool {
 }
 
 // vaultCANote is said once when the reviewed Vault CA changes.
-const vaultCANote = "vault CA changed: the locks with vault: true restart (lox attach NAME for what they ask)"
+const vaultCANote = "vault CA changed: the locks with vault: true restart (lox run asks what they ask)"
