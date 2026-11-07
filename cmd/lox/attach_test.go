@@ -159,7 +159,8 @@ func TestAttachDetachesOnceServes(t *testing.T) {
 	if b, _ := os.ReadFile(marks + "/typed"); string(b) != "y\r" {
 		t.Fatalf("console got %q from the user, want %q", b, "y\r")
 	}
-	if b, _ := os.ReadFile(marks + "/keys"); strings.TrimSpace(string(b)) != "10 11" {
+	// BSD od (macOS) pads its columns: compare the bytes, not the spacing.
+	if b, _ := os.ReadFile(marks + "/keys"); strings.Join(strings.Fields(string(b)), " ") != "10 11" {
 		t.Fatalf("console got %q once serving, want the detach keys 10 11", b)
 	}
 	waitShown(t, shown, "lock orders serves: detached, its console keeps running")
