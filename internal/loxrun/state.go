@@ -237,11 +237,25 @@ func (st *state) add(it api.QueueItem) {
 	st.seen[k] = t
 	tk, verified, err := parseTicket(it, st.s.LockKeys)
 	if err != nil {
-		t.entry = &Entry{ID: it.ID, At: now, Instance: clean(it.Instance), Status: Failed, Summary: "unreadable ticket",
-			Note: shortNote(err.Error())}
-		st.pushEntry(t, false)
-		t.decided = true // nothing to decide: left to another facade
+		answerable := local(it.Facades)
+		note := err.Error()
+		if answerable {
+			note = "refused: " + note
+		}
+		// Equal failures fold into one line with a counter.
+		t.entry = &Entry{ID: it.ID, At: now, Instance: clean(it.Instance), Status: Failed, Summary: unreadableSummary,
+			Note: shortNote(note)}
+		st.pushEntry(t, true)
 		st.s.observe(Event{Kind: EvTicket, Instance: it.Instance, ID: it.ID, Err: err})
+		if !answerable {
+			t.decided = true // left to another facade
+			return
+		}
+		// Refused with the reason, so its lock ends the plan and frees
+		// its slot instead of waiting for an answer no facade gives.
+		t.unreadable = true
+		st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: route.TTY, Display: st.s.Display,
+			Reason: rejectReason(err)}})
 		return
 	}
 	t.tk = tk
@@ -323,6 +337,20 @@ func (st *state) forgetAll() {
 	}
 	clear(st.conns)
 	clear(st.ran)
+}
+
+// unreadableSummary is the feed's summary of a ticket that does not
+// verify: lox run cannot show what it asks.
+const unreadableSummary = "unreadable ticket"
+
+// rejectReason is the reason of lox run's refusal of a ticket that does
+// not verify, as its lock returns it to the agent.
+func rejectReason(err error) string {
+	r := "ticket rejected by lox run: " + clean(err.Error())
+	if len(r) > 512 {
+		r = r[:512]
+	}
+	return r
 }
 
 func shortNote(s string) string {
@@ -493,6 +521,12 @@ func (st *state) failed(t *tracked, note string) {
 func (st *state) onDecided(t *tracked, req api.DecideRequest, err error) {
 	t.sending = false
 	st.dirty = true
+	if err == nil && t.unreadable {
+		t.decided = true
+		st.results[key(t.instance, t.id)] = t
+		st.s.observe(Event{Kind: EvDecided, Instance: t.instance, ID: t.id})
+		return
+	}
 	if err == nil {
 		t.decided = true
 		st.removeCard(t)

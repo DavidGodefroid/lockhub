@@ -121,6 +121,7 @@ type tracked struct {
 	card         *Card
 	decided      bool // lox run's decision is signed (or not lox run's to take)
 	sending      bool // a decision is on its way
+	unreadable   bool // it does not verify: lox run refuses it
 	profileKey   string
 	gen          int // the profile's generation when it came: x bumps it
 	answer

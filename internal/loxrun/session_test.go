@@ -220,7 +220,7 @@ func TestSessionPlainLog(t *testing.T) {
 
 // A ticket lox run cannot check (no pinned key, a version-1 ticket) is
 // asked, never decided by a rule; one that does not verify under its
-// pinned key is not decided at all.
+// pinned key is refused, never approved.
 func TestSessionUncheckedAsked(t *testing.T) {
 	lk, other := newLockKey(), newLockKey()
 	hub := newFakeHub()
@@ -236,8 +236,8 @@ func TestSessionUncheckedAsked(t *testing.T) {
 	})
 	hub.push(v1)
 	h.wait(EvQuestion, v1.ID)
-	if _, ok := hub.decision(forged.ID); ok {
-		t.Error("a ticket that does not verify was decided")
+	if d, ok := hub.decision(forged.ID); !ok || d.Approved || d.Rule != "" {
+		t.Errorf("a ticket that does not verify: %+v, %v (want refused)", d, ok)
 	}
 	h.keys <- R('y')
 	if e := h.wait(EvDecided, v1.ID); !e.Approved || e.Rule != "" {
@@ -351,6 +351,61 @@ func TestSessionFoldsAutoReads(t *testing.T) {
 	mu.Unlock()
 	if !strings.Contains(last, "× 5") {
 		t.Errorf("no folded line in the last frame:\n%s", last)
+	}
+}
+
+// A ticket that fails verification (here as an HTML-escaping facade
+// sent it, #147) is answered: refused with the reason, so its lock ends
+// the plan. Equal failures show as one line with a counter; one not
+// answerable at the terminal is left to its facade.
+func TestSessionRefusesUnreadable(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	var frames []string
+	var mu sync.Mutex
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
+		s.Size = func() (int, int) { return 100, 20 }
+		s.Style = Style{Unicode: true}
+		s.Out = writerFunc(func(p []byte) {
+			mu.Lock()
+			frames = append(frames, string(p))
+			mu.Unlock()
+		})
+	})
+	escaped := func(it api.QueueItem) api.QueueItem {
+		it.Ticket = json.RawMessage(strings.ReplaceAll(string(it.Ticket), "<", "\\u003c"))
+		return it
+	}
+	for i := 0; i < 3; i++ {
+		it := escaped(lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT id FROM orders WHERE id < 2", nil))
+		hub.push(it)
+		h.wait(EvDecided, it.ID)
+		d, ok := hub.decision(it.ID)
+		if !ok || d.Approved || d.Rule != "" || d.Facade != "tty" ||
+			!strings.HasPrefix(d.Reason, "ticket rejected by lox run: ") || !strings.Contains(d.Reason, "not in canonical form") {
+			t.Fatalf("unreadable ticket answered %+v, %v: want refused with the reason", d, ok)
+		}
+	}
+	elsewhere := escaped(lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT id FROM orders WHERE id < 3", nil))
+	elsewhere.Facades = []string{"mobile"}
+	hub.push(elsewhere)
+	h.wait(EvTicket, elsewhere.ID)
+	time.Sleep(50 * time.Millisecond)
+	if _, ok := hub.decision(elsewhere.ID); ok {
+		t.Error("lox run answered a ticket not routed to it")
+	}
+	h.keys <- Key{Code: KeyEsc} // one more frame
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	var last string
+	for i := len(frames) - 1; i >= 0 && last == ""; i-- {
+		if strings.Contains(frames[i], "unreadable ticket") {
+			last = frames[i]
+		}
+	}
+	mu.Unlock()
+	if n := strings.Count(last, "unreadable ticket"); n != 2 || !strings.Contains(last, "× 3") {
+		t.Errorf("want one folded line (× 3) and the elsewhere one, got %d lines:\n%s", n, last)
 	}
 }
 
