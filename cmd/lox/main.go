@@ -79,9 +79,9 @@ Usage:
                                           merge sub-projects' lockfamily.yaml (default: every */lockfamily.yaml),
                                           keeping the strictest routing
   lox attach INSTANCE [--file lockfamily.yaml]
-                                          answer a lock console's start-up questions (policy, credentials);
-                                          detaches by itself once the console serves; Ctrl-P Ctrl-Q
-                                          detaches sooner, closing the terminal only detaches
+                                          a lock console's terminal, for debugging: lox run asks its questions
+                                          (policy, credentials) in cards; detaches by itself once the console
+                                          serves; Ctrl-P Ctrl-Q detaches sooner, closing the terminal only detaches
   lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
   lox refresh INSTANCE [--file lockfamily.yaml]
                                           rewrite a locklog lock's containers map once (its docker source's
@@ -536,6 +536,12 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		return nil
 	}
 	return err
+}
+
+// composeArgs name the compose project lox run applied, from its state
+// directory (never a compose file of the workspace).
+func composeArgs(project, state string) []string {
+	return []string{"-p", project, "--project-directory", state, "--env-file", os.DevNull, "-f", filepath.Join(state, "compose.yaml")}
 }
 
 // escapeSequence is docker's message when the terminal detaches.
