@@ -29,7 +29,7 @@ type EventKind string
 // Events.
 const (
 	EvTicket   EventKind = "ticket"   // a new ticket in the feed
-	EvQuestion EventKind = "question" // a question card waits (the bell rang)
+	EvQuestion EventKind = "question" // a question card waits (the human was called)
 	EvDecided  EventKind = "decided"  // the hub signed lox run's decision
 	EvFailed   EventKind = "failed"   // a decision could not be sent
 	EvResult   EventKind = "result"   // a decided ticket's result (consumed, expired…)
@@ -106,6 +106,9 @@ type Session struct {
 	// sessions): the a key shows it, read again every second while it is
 	// open. Unset, a shows this session's decisions only.
 	Audit func() ([]Exchange, []RunEvent, error)
+	// Sound calls the human when a question waits (nil: the terminal
+	// bell only, and the header shows no sound state).
+	Sound *Sound
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
@@ -156,6 +159,8 @@ type state struct {
 	quitting bool
 	pending  []effect
 	bell     bool
+	muted    bool      // the sound is off (Sound.Off, the s key)
+	calledAt time.Time // when the human was last called for the questions waiting
 	dirty    bool
 	drawn    int // frames drawn (a terminal's first one clears it)
 	keyGuard
@@ -201,6 +206,7 @@ func newState(s *Session) *state {
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
 		ran: map[string]time.Time{}, gen: map[string]int{}, dirty: true}
 	st.eng.Rules = s.Rules
+	st.muted = s.Sound != nil && s.Sound.Off
 	return st
 }
 

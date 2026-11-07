@@ -112,6 +112,12 @@ func (st *state) wipe() {
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
 		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting}
+	if st.s.Sound != nil {
+		v.Sound = SoundOn
+		if st.muted {
+			v.Sound = SoundOff
+		}
+	}
 	if st.overlay == "audit" && st.s.Audit != nil {
 		a := st.audit
 		v.Audit = &a
@@ -154,7 +160,8 @@ func (st *state) draw() {
 		st.drawn++
 	}
 	if st.bell {
-		// The bell rings only for a question, never for auto traffic.
+		// The bell rings only for a question, never for auto traffic,
+		// when no sound file could be played for it.
 		b.WriteString("\a")
 	}
 	io.WriteString(st.s.Out, b.String())
@@ -376,7 +383,7 @@ func (st *state) apply(t *tracked, v Verdict) {
 	}
 }
 
-// ask puts t's question card up and rings the bell.
+// ask puts t's question card up and calls the human (a sound, the bell).
 func (st *state) ask(t *tracked, why string) {
 	tk := t.tk
 	c := &Card{ID: t.id, Instance: clean(t.instance), Lock: clean(tk.Source.Lock), Agent: clean(tk.Requester.Agent),
@@ -400,7 +407,7 @@ func (st *state) ask(t *tracked, why string) {
 	t.entry.Status, t.entry.Rule = Waiting, ""
 	st.pushEntry(t, false)
 	st.cards = append(st.cards, t)
-	st.bell = true
+	st.call(t)
 	st.dirty = true
 	if st.s.Size == nil {
 		for _, l := range card(st.view(), *c, len(st.cards), 80, st.s.Style) {
@@ -655,6 +662,7 @@ func (st *state) onTick() {
 	if st.overlay == "audit" {
 		st.loadAudit()
 	}
+	st.remind()
 	st.dirty = st.s.Size != nil
 }
 
@@ -822,6 +830,8 @@ func (st *state) onKey(k Key) bool {
 		}
 	case 'x', 'X':
 		st.forgetKey(top)
+	case 's', 'S':
+		st.toggleSound()
 	}
 	return false
 }
