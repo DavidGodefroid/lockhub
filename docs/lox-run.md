@@ -76,9 +76,29 @@ highlighted and masked values set apart as `‹…›` in dim italic, the decisi
 Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
 framed card above the feed: what, who, which profile, the masked screen,
 why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
-is typed in the card. The bell rings only when a card appears. `Tab` brings
-the next card up, `a` shows the hub's audit (as `lox audit` lists it, read
-again every second while open), `?` the keys, `q q` or Ctrl-C quits.
+is typed in the card. A sound plays only when a card appears (see below).
+`Tab` brings the next card up, `a` shows the hub's audit (as `lox audit`
+lists it, read again every second while open), `s` turns the sound on or off
+for the session, `?` the keys, `q q` or Ctrl-C quits.
+
+**A question calls you by ear.** When a question card appears (an approval, a
+connection, a policy review, a secret), `lox run` plays a sound file through
+the platform's player (`pw-play`, `paplay`, or `aplay` for WAV files on Linux;
+`afplay` on macOS), and plays it again every 60 s while a question waits, until
+none does. Auto-approved and rule-denied traffic plays nothing. The sounds
+differ from lea's attention sound (`message-new-instant.oga`), so you know which
+tool asks: `window-question.oga` for a question, `dialog-warning.oga` for a
+production ticket (freedesktop theme, `/usr/share/sounds/freedesktop/stereo/`);
+`Glass` and `Sosumi` on macOS. With no player, no such file, or a file set to
+`0`, the terminal bell rings instead. The header shows 🔔 (on) or 🔕 (off).
+
+| Setting | Effect |
+| --- | --- |
+| `LOX_SOUND=0` | start silent (no sound, no bell); `s` turns it on |
+| `LOX_SOUND_QUESTION=FILE\|0` | the question sound (`0`: the terminal bell) |
+| `LOX_SOUND_PRODUCTION=FILE\|0` | the production sound (`0`: the question sound) |
+| `LOX_SOUND_REMIND=DURATION` | play it again every `30s`, `2m`… while a question waits (default `60s`; `0`: once) |
+| `LOX_NOTIFY=1` | also a desktop notification (`notify-send`, `osascript`) with the lock and kind only, never the request |
 
 **A key answers the card it was pressed for.** When the card on top changes
 (answered, decided elsewhere, withdrawn, expired, or `Tab`), the keys already

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -107,6 +108,12 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	s := &loxrun.Session{Hub: approve.Dial(*sock), Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
 		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules}
+	// A question plays a sound of its own (not lea's), again while it waits.
+	snd, warns := loxrun.SoundFromEnv(os.LookupEnv, loxrun.SystemHost(runtime.GOOS))
+	for _, w := range warns {
+		fmt.Fprintln(stderr, "lox run:", w)
+	}
+	s.Sound = snd
 	// The a key: the hub's audit, as lox audit lists it. The session
 	// journal places this session (who, when, its mode switches) in it.
 	state := stateDir(family.Project(family.Workspace(abs)))
