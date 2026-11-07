@@ -662,7 +662,7 @@ command to run:
 It prints one line per upgraded image:
 
 ```
-hub image upgraded: lockhub v0.8.0 → v0.9.0 (signature verified)
+hub image upgraded: lockhub v0.9.0 → v0.10.0 (signature verified)
 lock shop-db: image upgraded: locksql v0.16.2 → v0.17.0 (vault image, signature verified)
 ```
 
