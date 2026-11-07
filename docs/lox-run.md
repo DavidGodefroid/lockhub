@@ -710,13 +710,13 @@ command to run:
 It prints one line per upgraded image:
 
 ```
-hub image upgraded: lockhub v0.9.0 → v0.10.0 (signature verified)
-lock shop-db: image upgraded: locksql v0.16.2 → v0.17.0 (vault image, signature verified)
+hub image upgraded: lockhub v0.10.0 → v0.10.1 (signature verified)
+lock shop-db: image upgraded: locksql v0.16.2 → v0.17.1 (vault image, signature verified)
 ```
 
 Fail closed: an image that cannot be resolved or whose signature does not
 verify is not used; the old image (verified above) is kept and a line says
-why (`lock shop-db: image: not upgraded to locksql v0.17.0, keeping v0.16.2:
+why (`lock shop-db: image: not upgraded to locksql v0.17.1, keeping v0.16.2:
 …`). An image newer than the shipped release (`lox add --version`) is kept,
 and so is one whose signature names no release (it cannot be compared).
 
