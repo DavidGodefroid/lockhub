@@ -238,12 +238,27 @@ func (w *world) acquire(profile string) chan error {
 // ticket of kind with the masked screen.
 func (w *world) submit(kind ticket.Kind, risk ticket.Risk, profile, sql string) string {
 	w.t.Helper()
-	return w.submitFlags(kind, risk, profile, sql, ticket.Flags{}, nil)
+	return w.submitWith(kind, risk, profile, sql, nil)
+}
+
+// submitWith is submit with mod applied to the ticket before the lock
+// signs it.
+func (w *world) submitWith(kind ticket.Kind, risk ticket.Risk, profile, sql string, mod func(*ticket.Ticket)) string {
+	w.t.Helper()
+	return w.submitScreen(kind, risk, profile, sql, mod, nil)
 }
 
 // submitFlags is submit with the ticket's flags and the screen's warnings
 // (a WARN verdict).
 func (w *world) submitFlags(kind ticket.Kind, risk ticket.Risk, profile, sql string, flags ticket.Flags, warnings []string) string {
+	w.t.Helper()
+	return w.submitScreen(kind, risk, profile, sql, func(tk *ticket.Ticket) {
+		tk.Flags.Production, tk.Flags.NeverAuto = flags.Production, flags.NeverAuto || tk.Flags.NeverAuto
+	}, warnings)
+}
+
+// submitScreen is submitWith with the screen's warnings.
+func (w *world) submitScreen(kind ticket.Kind, risk ticket.Risk, profile, sql string, mod func(*ticket.Ticket), warnings []string) string {
 	w.t.Helper()
 	in := map[string]string{"sql": "sha256:" + strings.Repeat("a", 64), "n": ticket.NewNonce()}
 	hash, _ := ticket.HashOf(in)
@@ -255,7 +270,9 @@ func (w *world) submitFlags(kind ticket.Kind, risk ticket.Risk, profile, sql str
 	tk := ticket.NewKindTicket(ticket.Source{Lock: "locksql"}, kind, risk, &ticket.Subject{Profile: profile, Target: "customers"},
 		hash, policyFP, time.Now(), time.Hour)
 	tk.Workspace, tk.Requester = "~/e2e", ticket.Requester{Agent: "dev-1", Session: "s1"}
-	tk.Flags.Production, tk.Flags.NeverAuto = flags.Production, flags.NeverAuto || tk.Flags.NeverAuto
+	if mod != nil {
+		mod(tk)
+	}
 	masked := render.MaskScreen(render.ScreenSource{Header: inst + " / " + profile + " · " + string(kind), Warnings: warnings,
 		Body: []render.Line{{{Text: sql}, {Text: "jane.doe@example.com", Value: true, Column: "email", ColumnType: "text"}}}}, render.Masking{})
 	id, err := w.lock.Submit(context.Background(), w.plans, p.ID, caller, tk, masked)
@@ -454,6 +471,34 @@ func TestRunE2E(t *testing.T) {
 	})
 	if !errors.Is(err, hubclient.ErrPending) {
 		t.Errorf("lock may run a ticket after lox run quit: %v", err)
+	}
+}
+
+// A read whose SQL and requester hold <, >, & and non-ASCII reaches
+// lox run byte for byte (the facade does not HTML-escape the signed
+// ticket, #147): it verifies under the pinned lock key and is
+// auto-approved, and the lock gets the decision.
+func TestRunE2EHTMLChars(t *testing.T) {
+	w := newWorld(t)
+	done := w.acquire("B")
+	q := w.wait(loxrun.EvQuestion, "")
+	w.press(loxrun.R('y'))
+	if d := w.wait(loxrun.EvDecided, q.ID); !d.Approved {
+		t.Fatalf("connect decision %+v", d)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	sql := "SELECT id FROM b WHERE b.id >= 'a' AND b.id < 'z' AND b.source <> 'manual' AND b.flags & 4 = 4 AND b.name = 'Zoé « ç »' AND "
+	sel := w.submitWith(ticket.KindRead, ticket.RiskRead, "B", sql, func(tk *ticket.Ticket) {
+		tk.Requester.Session = "s1 <&> ünïcode"
+		tk.Workspace = "~/e2e/<a&b>"
+	})
+	if d := w.wait(loxrun.EvDecided, sel); !d.Approved || d.Rule != "default:read" {
+		t.Fatalf("SELECT decision %+v: want auto by default:read", d)
+	}
+	if d := w.decision(sel); !d.Auto() {
+		t.Errorf("signed SELECT decision %+v", d)
 	}
 }
 

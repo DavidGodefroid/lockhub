@@ -76,6 +76,10 @@ type Entry struct {
 
 // group is the key that folds equal auto reads into one line.
 func (e Entry) group() string {
+	if e.Status == Failed && e.Summary == unreadableSummary {
+		// Tickets that fail verification the same way (#147).
+		return strings.Join([]string{"unreadable", e.Instance, e.Note}, "\x00")
+	}
 	if e.Status != AutoApproved || (e.Kind != ticket.KindRead && e.Kind != ticket.KindAction) {
 		return ""
 	}
@@ -112,6 +116,9 @@ type Card struct {
 	// Unverified: lox run could not check the ticket under the pinned
 	// lock key (shown on the card).
 	Unverified bool
+	// Console: a question of the lock's console at its terminal, not a
+	// ticket (Header is its prompt, Body the lines above it).
+	Console bool
 }
 
 // Prompt is a line typed on a card.
@@ -152,6 +159,9 @@ type View struct {
 	// Audit is the hub's audit when the audit overlay shows it (nil: the
 	// overlay shows this session's decisions).
 	Audit *auditView
+	// Consoles are the locks' consoles as lox run reaches them (none: it
+	// does not, and the header shows no lock line).
+	Consoles []LockConsole
 }
 
 // auditView is the hub's audit as lox run last read it.
@@ -327,7 +337,55 @@ func header(v View, w int, st Style) []line {
 		}
 		conn = conn.add(name, sgr).add(" "+age(v.Now.Sub(p.Since)), sgrDim)
 	}
-	return []line{l, conn.trunc(w, st.ellipsis()), rule(w, st, sgrDim)}
+	out := []line{l, conn.trunc(w, st.ellipsis())}
+	if len(v.Consoles) > 0 {
+		out = append(out, consolesLine(v, st).trunc(w, st.ellipsis()))
+	}
+	return append(out, rule(w, st, sgrDim))
+}
+
+// consolesLine is the header's line of the locks' consoles: each one's
+// state, the question it waits for first (they are the ones to see).
+func consolesLine(v View, st Style) line {
+	cs := slices.Clone(v.Consoles)
+	rank := func(s ConsoleState) int {
+		switch s {
+		case ConsoleWaiting:
+			return 0
+		case ConsoleStopped, ConsoleUnreachable:
+			return 1
+		}
+		return 2
+	}
+	slices.SortStableFunc(cs, func(a, b LockConsole) int { return rank(a.State) - rank(b.State) })
+	l := line{{" locks ", sgrDim}}
+	for i, c := range cs {
+		if i > 0 {
+			l = l.add(" "+st.g("·", "-")+" ", sgrDim)
+		}
+		l = l.add(st.lockIcon(c.Lock)+" "+c.Instance+" ", "")
+		switch c.State {
+		case ConsoleWaiting:
+			l = l.add("waiting for you: "+c.Question, join(st.asked(), sgrBold))
+		case ConsoleStopped:
+			msg := "stopped"
+			if c.Err != "" {
+				msg += ": " + c.Err
+			}
+			l = l.add(msg, st.errored())
+		case ConsoleUnreachable:
+			msg := "not reached here"
+			if c.Err != "" {
+				msg += " (" + c.Err + ")"
+			}
+			l = l.add(msg+": lox attach "+c.Instance, st.errored())
+		case ConsoleServing:
+			l = l.add("serving", st.approved())
+		default:
+			l = l.add(string(c.State), sgrDim)
+		}
+	}
+	return l
 }
 
 func plural(n int) string {
@@ -445,6 +503,9 @@ func entryLine(e Entry, v View, c columns, st Style) line {
 	if e.Count > 1 {
 		req = req.add(fmt.Sprintf("%s %d ", st.g("×", "x"), e.Count), sgrBold)
 		what := firstWord(e.Summary)
+		if e.Summary == unreadableSummary {
+			what = e.Summary
+		}
 		if e.Target != "" {
 			what += " on " + e.Target
 		}
@@ -487,7 +548,9 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 	inner := w - 4
 	title := line{{" " + st.g("◆", "?") + " QUESTION ", fsgr}}
 	kind := kindLabel(c.Kind)
-	if c.Kind == ticket.KindConnect {
+	if c.Console {
+		kind = "console"
+	} else if c.Kind == ticket.KindConnect {
 		kind = "connect"
 	} else if c.Kind == ticket.KindEndpoint {
 		kind = "new endpoint"
@@ -524,17 +587,24 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 	if agent == "" {
 		agent = "an agent"
 	}
-	who = who.add(agent, join(st.agentColor(agent), sgrBold)).add(" asks (unverified name)", sgrDim)
+	if c.Console {
+		who = who.add("the console of "+c.Instance, sgrBold).add(" asks at its terminal", sgrDim)
+	} else {
+		who = who.add(agent, join(st.agentColor(agent), sgrBold)).add(" asks (unverified name)", sgrDim)
+	}
 	who = who.add(" "+st.g("·", "-")+" "+st.lockIcon(c.Lock)+" "+c.Lock, sgrDim)
 	if !c.Expires.IsZero() {
 		who = who.add(" "+st.g("·", "-")+" expires in "+age(c.Expires.Sub(v.Now)), sgrDim)
 	}
 	rows = append(rows, row(who))
-	if c.Header != "" {
+	if c.Header != "" && !(c.Console && c.Prompt != nil) { // a console's prompt is the typed line
 		rows = append(rows, row(st.highlight(c.Header, sgrBold)))
 	}
 	body := c.Body
 	limit := 4
+	if c.Console {
+		limit = 12 // a policy review's changes, a host key: read before answering
+	}
 	if c.Details {
 		limit = 1 << 30
 	}
@@ -570,6 +640,10 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 			hint = append(line{{p.Error + "  ", st.denied()}}, hint...)
 		}
 		rows = append(rows, row(hint))
+	} else if c.Console {
+		keys := line{{"y", join(st.approved(), sgrBold)}, {" yes   ", sgrDim}, {"n", join(st.denied(), sgrBold)}, {" no   ", sgrDim}}
+		keys = keys.add("d", sgrBold).add(" details", sgrDim)
+		rows = append(rows, row(keys))
 	} else {
 		keys := line{{"y", join(st.approved(), sgrBold)}, {" approve   ", sgrDim}, {"n", join(st.denied(), sgrBold)}, {" deny   ", sgrDim}}
 		if c.Details {

@@ -214,6 +214,24 @@ func TestShortReviewFocus(t *testing.T) {
 	}
 }
 
+// What the lock reaches by nothing is a row of its own, not a tail of the
+// egress row (lockhub#145).
+func TestShortReviewShowsUnreachable(t *testing.T) {
+	c := &Config{Locks: map[string]Lock{"o": {Type: "locksql", Image: sqlImg}}}
+	e := Egress{Endpoints: []Endpoint{{Host: "db.example.com", Port: 5432, What: "database"}}, None: []string{"profile p: proxy_command runs a program the gateway cannot follow"}}
+	var out strings.Builder
+	renderShort(&out, c, "", map[string]Facts{"o": {Egress: e.Short(), Unreachable: e.None}}, true, nil)
+	got := out.String()
+	for _, want := range []string{
+		"  egress       only db.example.com:5432\n",
+		"  unreachable  WARNING: profile p: proxy_command runs a program the gateway cannot follow\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 const shortConf = `version: 1
 hub:
   image: ` + hubImg + `
@@ -317,7 +335,7 @@ func TestVaultCAChangeNote(t *testing.T) {
 	conf := strings.Replace(shortConf, "locks:", "vault:\n  address: https://vault.example.com:8200\n  ca_file: "+ca+"\nlocks:", 1) + "    vault: true\n"
 	os.WriteFile(w.file, []byte(conf), 0o644)
 	out, err := w.up("n\n", &fake{keys: f.keys})
-	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "vault CA changed: the locks with vault: true restart (lox attach NAME for what they ask)") {
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "vault CA changed: the locks with vault: true restart (lox run asks what they ask)") {
 		t.Errorf("CA note: %v\n%s", err, out)
 	}
 }

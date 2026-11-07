@@ -406,21 +406,64 @@ look for another socket.
 
 Every lock's console asks a human at its terminal: its policy on the first
 start and after a loosening, the typed profile name of a production
-profile, the credentials its profile does not take from Vault. lox run runs
-each console with a terminal (`tty: true`, `stdin_open: true`) as its
-image's console account, and prints `lox attach <instance>` for each; that
-command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
-Docker log (`logging: none`, as with their own launchers: the log would keep
-every screen), so attaching does not replay the pending question, and lox
-cannot tell which one it is: the policy review, `Apply these changes?
-[y/N]`, on a first start or after a loosening; for a production profile,
-`Type the profile name "<instance>" to continue:` (on every start, so on a
-restart whose policy is already approved it is this one, not the review);
-or a password its profile does not take from Vault. A detach ends lox
-attach with status 0: the console keeps running. A console that restarts
-asks again: attach again. Locks are pending (agents get no
-answer) until answered. Memory and process limits are the ones each lock's
-own launcher sets.
+profile, an SSH host key, the SSH passphrase and the database password its
+profile does not take from Vault, a Vault token. lox run runs each console
+with a terminal (`tty: true`, `stdin_open: true`) as its image's console
+account, and asks these questions itself: it attaches to each console
+through a pseudo-terminal of its own (`docker attach --sig-proxy=false`, so
+quitting lox run never signals a console), reads the question the console
+records next to its socket (lockkit v0.12.1 or later: `<socket>.question`,
+the prompt only, mode 0600, the console account's) and the lines the
+console printed above it, and shows them as a **question card**: the lock,
+the PRODUCTION banner when the console shows one or asks the profile name,
+the bell. Several waiting locks queue, one card at a time (`1 of N
+waiting`).
+
+- A yes/no question (`Apply these changes? [y/N]`, a host key's `[yes/N]`)
+  is answered with **y** or **n**. The lines above it are on the card (the
+  policy review's changes, the host key's fingerprint), up to 12, all of
+  them with **d**.
+- A value is typed into the card: the production profile name and a
+  fingerprint's last characters in clear, anything else (a password, a
+  passphrase, a token, a prompt lox run does not know) as dots only.
+  Enter types it at the console's terminal; Esc closes the line, **y**
+  opens it again, **n** answers an empty line.
+- A value typed this session is kept in lox run's memory, for that lock and
+  that prompt: when the console asks the same again (it restarted at the
+  end of an idle session, Docker starting it again), **Enter alone** gives
+  it. A policy review is never answered for you. The same question asked
+  again within 30 seconds of the session's answer means the console refused
+  it (a changed password): the value is dropped and typed again. **x** on
+  the card forgets the lock's values; quitting lox run wipes them all.
+
+The header's `locks` line shows each console's state, the waiting ones
+first: `waiting for you: <question>`, `serving`, `stopped: <its last line>`
+(the container does not run; Docker restarts it), `starting`, or `not
+reached here (…): lox attach NAME` when lox run cannot reach its terminal
+(no pseudo-terminal on this system, no docker).
+
+An answer goes from lox run's memory to the console's terminal through the
+Docker CLI only: never through the hub (which sees masked tickets only),
+never to a log (the consoles have no Docker log, `logging: none`, as with
+their own launchers; lox run's pty echoes nothing and the console echoes no
+secret; the card shows dots). An agent cannot answer: it has no Docker,
+the question file is the console account's, and lox run types only what
+the human typed in its own terminal.
+
+`lox attach NAME` stays as a fallback for debugging: it attaches your
+terminal to the console and, at a terminal, detaches by itself once a
+console that did not serve yet listens on its socket: `lock NAME serves:
+detached, its console keeps running`. Attached to a console that already
+serves (to use its commands), it stays. Ctrl-P Ctrl-Q detaches at any time
+and exits 0 (`detached from NAME`); Ctrl-C at the console stops it. The
+attach does not proxy signals (`--sig-proxy=false`): closing the terminal
+only detaches. A question answered there takes lox run's card away. The consoles have no log, so attaching replays
+nothing: lox run's card is where the question shows. A console that
+printed its policy review before lox run attached to it (the first start,
+during lox run's own start) shows the question without the lines above it;
+lox run's own review showed the profile it reviews. Locks are pending
+(agents get no answer) until answered. Memory and process limits are the
+ones each lock's own launcher sets.
 
 The copy is read-only in the lock. A locksql console keeps its PII rule sets
 in its own home volume instead (`LOCKSQL_PII_DIR`, locksql v0.11.0 or later):
@@ -502,9 +545,14 @@ The review shows the allowlist (the `egress` row of each lock; `lox run
 --review` lists the lines `lock <name> egress host:port (what)`), so a
 profile change that changes it is reviewed again. Fail closed: what the
 allowlist cannot name exactly is reached by nothing, and the review says why
-(`egress unreachable: …`): an IP address (the gateway answers for names; name
-the host, or `host.docker.internal` for this machine), a `proxy_command`, a
-value it cannot read. `lox doctor` checks each lock's effective egress: every
+in an `unreachable` row of its own (`egress unreachable: …` in the lines): a
+`proxy_command`, a value it cannot read. An IP address (a `host`, an
+`ssh.host`, a URL's host or the Vault address; loopback aside) is refused
+outright: the gateway answers by host name only, so the lock could never reach
+it. `lox add` refuses it as an answer, and `lox run` stops before the review,
+naming the key (`profiles.<p>.ssh.host in config.toml`) and the fix: name the
+host (a DNS name that resolves to it, or `host.docker.internal` for this
+machine). `lox doctor` checks each lock's effective egress: every
 network of its container is internal, and its gateway runs and forwards exactly
 what the last `lox run` reviewed. A hub image older than the gateway (pinned
 with `--pin`) cannot run it: the lock then reaches nothing until `lox run`

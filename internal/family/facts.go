@@ -24,6 +24,9 @@ type Facts struct {
 	Changed bool
 	// Egress is the lock's allowlist as the short review shows it.
 	Egress string
+	// Unreachable are what the profile names that the lock reaches by
+	// nothing (Egress.None): a row each, so none hides in the egress row.
+	Unreachable []string
 }
 
 // factKeys are the keys read per lock type for the target.

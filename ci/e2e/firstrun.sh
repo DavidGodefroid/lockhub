@@ -131,6 +131,17 @@ grep -qF "$endline" "$out/init2.out" || die "lox init (re-run): no end line"
 # block NAME FILE: the lock NAME's entry (two-space key) of FILE.
 block() { awk -v n="  $1:" '$0 == n { on = 1; print; next } on && /^  [^ ]/ { on = 0 } on && /^[^ ]/ { on = 0 } on { print }' "$2"; }
 
+say "lockhub#145: a host named by its IP is refused at lox add, with the fix"
+cp "$ws/.lockfamily/lockfamily.yaml" "$out/before-ip.yaml"
+rc=0
+"$lox" add locksql --non-interactive --engine postgres --host 203.0.113.10 --name bastion </dev/null >"$out/add-ip.out" 2>&1 || rc=$?
+cat "$out/add-ip.out"
+[ "$rc" = 2 ] || die "lox add with an IP host: exit $rc, want 2"
+grep -qF -- '--host: 203.0.113.10 is an IP address' "$out/add-ip.out" || die "lox add with an IP host: no reason"
+grep -qF 'name the host instead' "$out/add-ip.out" || die "lox add with an IP host: no fix"
+cmp -s "$ws/.lockfamily/lockfamily.yaml" "$out/before-ip.yaml" || die "lox add with an IP host changed lockfamily.yaml"
+[ ! -e "$ws/.locksql" ] || die "lox add with an IP host wrote a profile"
+
 say "lox add locksql for orders: the form, the review, the console's questions"
 # The form's defaults are the found source's (postgres on
 # host.docker.internal:55432, user and database shop; its TLS disable is
@@ -152,7 +163,7 @@ python3 "$here/expect.py" 900 \
 	'Password for shop@' "$inv_pw\\n" \
 	'Type "continue" to proceed' 'continue\n' \
 	'Accept all [a]' 'a\n' \
-	'Listening' '<detach>' \
+	'lock orders serves: detached' '' \
 	-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/add1.out" 2>&1 ||
 	{ cat "$out/add1.out"; die "lox add locksql (orders) failed"; }
 cat "$out/add1.out"
@@ -227,7 +238,7 @@ if [ "$vault" = 1 ]; then
 		'attached to lock inventory' '<pause>y\n' \
 		'Vault token for http://host.docker.internal:58200:' "$E2E_VAULT_TOKEN\\n" \
 		'Type "continue" to proceed' 'continue\n' \
-		'Listening' '<detach>' \
+		'lock inventory serves: detached' '' \
 		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/add2.out" 2>&1 ||
 		{ cat "$out/add2.out"; die "lox add locksql (inventory, vault) failed"; }
 	cat "$out/add2.out"

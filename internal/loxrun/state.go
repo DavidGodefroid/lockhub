@@ -124,11 +124,15 @@ func (st *state) wipe() {
 		clear(t.secret)
 		t.secret = nil
 	}
+	for k, a := range st.consoleAnswers {
+		clear(a.value)
+		delete(st.consoleAnswers, k)
+	}
 }
 
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
-		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting}
+		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles()}
 	if st.overlay == "audit" && st.s.Audit != nil {
 		a := st.audit
 		v.Audit = &a
@@ -254,11 +258,25 @@ func (st *state) add(it api.QueueItem) {
 	st.seen[k] = t
 	tk, verified, err := parseTicket(it, st.s.LockKeys)
 	if err != nil {
-		t.entry = &Entry{ID: it.ID, At: now, Instance: clean(it.Instance), Status: Failed, Summary: "unreadable ticket",
-			Note: shortNote(err.Error())}
-		st.pushEntry(t, false)
-		t.decided = true // nothing to decide: left to another facade
+		answerable := local(it.Facades)
+		note := err.Error()
+		if answerable {
+			note = "refused: " + note
+		}
+		// Equal failures fold into one line with a counter.
+		t.entry = &Entry{ID: it.ID, At: now, Instance: clean(it.Instance), Status: Failed, Summary: unreadableSummary,
+			Note: shortNote(note)}
+		st.pushEntry(t, true)
 		st.s.observe(Event{Kind: EvTicket, Instance: it.Instance, ID: it.ID, Err: err})
+		if !answerable {
+			t.decided = true // left to another facade
+			return
+		}
+		// Refused with the reason, so its lock ends the plan and frees
+		// its slot instead of waiting for an answer no facade gives.
+		t.unreadable = true
+		st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: route.TTY, Display: st.s.Display,
+			Reason: rejectReason(err)}})
 		return
 	}
 	t.tk = tk
@@ -340,6 +358,20 @@ func (st *state) forgetAll() {
 	}
 	clear(st.conns)
 	clear(st.ran)
+}
+
+// unreadableSummary is the feed's summary of a ticket that does not
+// verify: lox run cannot show what it asks.
+const unreadableSummary = "unreadable ticket"
+
+// rejectReason is the reason of lox run's refusal of a ticket that does
+// not verify, as its lock returns it to the agent.
+func rejectReason(err error) string {
+	r := "ticket rejected by lox run: " + clean(err.Error())
+	if len(r) > 512 {
+		r = r[:512]
+	}
+	return r
 }
 
 func shortNote(s string) string {
@@ -513,6 +545,12 @@ func (st *state) failed(t *tracked, note string) {
 func (st *state) onDecided(t *tracked, req api.DecideRequest, err error) {
 	t.sending = false
 	st.dirty = true
+	if err == nil && t.unreadable {
+		t.decided = true
+		st.results[key(t.instance, t.id)] = t
+		st.s.observe(Event{Kind: EvDecided, Instance: t.instance, ID: t.id})
+		return
+	}
 	if err == nil {
 		t.decided = true
 		st.removeCard(t)
@@ -830,12 +868,16 @@ func (st *state) onKey(k Key) bool {
 			st.setFlash("the question on top just changed: read it, then press " + string(k.Rune) + " again")
 			break
 		}
-		if k.Rune == 'y' || k.Rune == 'Y' {
+		yes := k.Rune == 'y' || k.Rune == 'Y'
+		switch {
+		case top.cq != nil:
+			st.consoleKey(top, yes)
+		case yes:
 			st.approve(top)
-		} else {
+		default:
 			st.send(top, false, "", nil)
 		}
-		st.shownPrompt = top.card.Prompt != nil
+		st.shownPrompt = top.card != nil && top.card.Prompt != nil
 	case 'd', 'D':
 		if top != nil {
 			top.card.Details = !top.card.Details
@@ -849,12 +891,23 @@ func (st *state) onKey(k Key) bool {
 // forgetKey is x: drop the session's connection, endpoints and secret of
 // the question's profile, or of every profile when nothing is asked.
 func (st *state) forgetKey(top *tracked) {
+	if top != nil && top.cq != nil {
+		st.forgetConsole(top.instance)
+		if top.card.Prompt != nil {
+			top.card.Prompt = st.consolePrompt(top)
+		}
+		st.setFlash("forgot the answers typed to " + clean(top.instance) + "'s console: asked again")
+		return
+	}
 	if top != nil && top.tk != nil {
 		st.forget(top.instance, top.req.Profile())
 		st.setFlash("forgot " + clean(top.profileKey) + ": its connection, endpoints and password are asked again")
 		return
 	}
 	st.forgetAll()
+	for i := range st.consoles {
+		st.forgetConsole(i)
+	}
 	st.setFlash("forgot every profile: connections, endpoints and passwords are asked again")
 }
 
@@ -869,7 +922,7 @@ func toggle(cur, v string) string {
 // decide (none being typed into).
 func (st *state) reevaluate() {
 	for _, t := range slices.Clone(st.cards) {
-		if t.sending || t.card.Prompt != nil {
+		if t.sending || t.cq != nil || t.card.Prompt != nil {
 			continue
 		}
 		v := st.eng.Decide(t.req)
@@ -940,6 +993,10 @@ func (st *state) promptKey(t *tracked, k Key) {
 		clear(p.Typed)
 		p.Typed = nil
 		defer clear(secret)
+		if t.cq != nil {
+			st.consoleEnter(t, secret)
+			return
+		}
 		switch t.promptKind {
 		case promptRetype:
 			typed := string(secret)
