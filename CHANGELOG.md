@@ -19,6 +19,48 @@ digest).
   under the attach makes lox attach print its next question once it
   restarted (#143).
 
+## v0.10.1 (2026-11-07)
+
+Supported locks: as v0.10.0. `lox run` upgrades older images to locksql
+v0.17.1, lockmq v0.8.1, lockfile v0.8.1, lockhttp v0.8.1 and locklog
+v0.2.1 (`family.ShippedLocks`; the lock patches only change their texts
+to name `lox run`). Upgrade lox, then start `lox run`: it upgrades the hub
+image to v0.10.1.
+
+New: `lox run` answers the consoles' start and reconnect questions in
+question cards (lockhub#142): y/n for `[y/N]` and `[yes/N]`, a typed line
+otherwise (secrets as dots). The answer is typed at the console's terminal
+only, never through the hub nor logged. Values typed this session are
+offered again after a console's idle restart; a policy review is never
+answered for the human. The header's locks line shows each console:
+waiting for you, serving, stopped or not reached. `lox attach` stays as a
+debugging fallback.
+
+Fixes:
+
+- A ticket holding `<`, `>` or `&` (a SQL `<`, `>=`, `<>`, `&`) could
+  never be decided in `lox run`: the hub's facade sent it HTML-escaped,
+  out of its canonical form, so it showed as `unreadable ticket does not
+  verify under the pinned lock key: ticket: invalid: not in canonical
+  form` and stayed pending (lockhub#147). The facade API, the lock API and
+  the mobile facade no longer HTML-escape, nor do `lox run`'s and the
+  phone CLI's requests; a decision whose reason holds these characters now
+  verifies at the lock too. Tickets already stuck this way are stored
+  intact: the upgraded `lox run` reads and decides them.
+- `lox run` answers a ticket routed to it that fails verification:
+  refused with the reason (`ticket rejected by lox run: …`), so its lock
+  ends the plan and frees the slot instead of waiting. Equal failures show
+  as one feed line with a counter.
+- `lox attach` detaches on its own once the console serves (`lock NAME
+  serves: detached, its console keeps running`), and runs docker's attach
+  with `--sig-proxy=false`: closing the terminal only detaches, it never
+  stops the console (lockhub#144).
+- An IP address as host (`host`, `ssh.host`, a URL's host, the Vault
+  address) is refused by `lox add`, and `lox run` stops before the review
+  naming the key and the fix: the gateway answers by host name only, so
+  such a lock failed later with a bare `network is unreachable`
+  (lockhub#145).
+
 ## v0.10.0 (2026-11-07)
 
 Supported locks: locklog joins `lox run` (locklog v0.2.0 or later).

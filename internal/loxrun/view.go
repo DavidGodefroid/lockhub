@@ -62,7 +62,10 @@ type Entry struct {
 	Target string
 	Status Status
 	// Rule is the rule that decided (auto), "" for the human.
-	Rule   string
+	Rule string
+	// Asked is why the human was asked (the auto mode's reason), on a
+	// question and the human's decision on it.
+	Asked  string
 	Result Result
 	Count  int
 	Note   string
@@ -159,7 +162,19 @@ type View struct {
 	// Consoles are the locks' consoles as lox run reaches them (none: it
 	// does not, and the header shows no lock line).
 	Consoles []LockConsole
+	// Sound is the session's sound state in the header (SoundNone: not shown).
+	Sound SoundState
 }
+
+// SoundState is whether a question plays a sound.
+type SoundState int
+
+// Sound states.
+const (
+	SoundNone SoundState = iota
+	SoundOn
+	SoundOff
+)
 
 // auditView is the hub's audit as lox run last read it.
 type auditView struct {
@@ -302,6 +317,12 @@ func header(v View, w int, st Style) []line {
 	}
 	if n := len(v.Cards); n > 0 {
 		right = right.add(fmt.Sprintf(" %s ", st.g("·", "-")), sgrDim).add(fmt.Sprintf("%d waiting", n), st.asked())
+	}
+	switch v.Sound {
+	case SoundOn:
+		right = right.add(" "+st.g("·", "-")+" "+st.g("🔔", "sound on"), sgrDim)
+	case SoundOff:
+		right = right.add(" "+st.g("·", "-")+" "+st.g("🔕", "sound off"), sgrDim)
 	}
 	ws := line{{"  " + v.Workspace, sgrDim}}
 	gap := w - l.width() - right.width() - 1
@@ -661,6 +682,7 @@ func helpLines(w int, st Style) []line {
 		{"y / n", "approve / deny the question on top"},
 		{"d", "the question's whole masked screen"},
 		{"x", "forget the profile on top (none up: all): asked again, password too"},
+		{"s", "sound on / off for this session (a question plays a sound)"},
 		{"a", "the hub's audit (lox audit): each exchange and the rule or human that decided it"},
 		{"?", "this help; Esc or ? again to close"},
 		{"q q, Ctrl-C", "quit: decisions stop, tickets wait (fail closed)"},
@@ -707,6 +729,8 @@ func auditLines(v View, w int, st Style) []line {
 		who := "you"
 		if e.Rule != "" {
 			who = "rule " + e.Rule
+		} else if e.Asked != "" {
+			who += " (asked: " + e.Asked + ")"
 		}
 		switch e.Status {
 		case Elsewhere:

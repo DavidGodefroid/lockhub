@@ -57,7 +57,10 @@ Usage:
                                           stops decisions (tickets wait: fail closed). --no-start only serves
                                           decisions; --pin, --rotate, --review, -v as they were on lox up;
                                           an image older than this lox's release is upgraded first, verified
-                                          with cosign (--no-upgrade keeps the pins)
+                                          with cosign (--no-upgrade keeps the pins). A question plays a sound
+                                          (not lea's), again every 60s while it waits; s toggles it.
+                                          LOX_SOUND=0 off, LOX_SOUND_QUESTION=FILE|0, LOX_SOUND_PRODUCTION=FILE|0,
+                                          LOX_SOUND_REMIND=DURATION (0 once), LOX_NOTIFY=1 desktop notification
   lox up                                  deprecated: use lox run (it still starts the hub and the locks)
   lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
                                           one source (TYPE: locksql, lockmq, lockfile, lockhttp), guided (or

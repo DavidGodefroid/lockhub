@@ -25,6 +25,7 @@ import (
 
 	"github.com/DavidGodefroid/lockkit/ticket"
 
+	"github.com/DavidGodefroid/lockhub/internal/audit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 	"github.com/DavidGodefroid/lockhub/internal/state"
 	"github.com/DavidGodefroid/lockhub/internal/store"
@@ -33,6 +34,9 @@ import (
 // RunsFile is lox run's session journal, in the workspace's state
 // directory (next to hub-keys.pub): one RunEvent per line.
 const RunsFile = "runs.jsonl"
+
+// LogFile is the hub's signed audit log, in its data directory.
+const LogFile = "tickets.jsonl"
 
 // Source is where the audit is read from.
 type Source struct {
@@ -77,6 +81,12 @@ func Load(ctx context.Context, src Source) ([]loxrun.Exchange, []loxrun.RunEvent
 			continue
 		}
 		xs = append(xs, x)
+	}
+	why := asked(filepath.Join(src.Data, LogFile), src.HubKeys, xs)
+	for i := range xs {
+		if xs[i].ByHuman() {
+			xs[i].Asked = why[xs[i].Instance+"/"+xs[i].ID]
+		}
 	}
 	var runs []loxrun.RunEvent
 	if src.Runs != "" {
@@ -373,4 +383,45 @@ func ReadRuns(path string, since time.Time) ([]loxrun.RunEvent, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// asked is why the human was asked each exchange of xs a human decided
+// (instance/id: reason), from the decision records of the hub's audit
+// log at path: with hubKeys, only the records that verify under them
+// (up to a break in the chain, which lox audit verify reports). A log
+// missing or unreadable gives none: the listing does not depend on it.
+func asked(path string, hubKeys []ed25519.PublicKey, xs []loxrun.Exchange) map[string]string {
+	want := map[string]bool{}
+	for _, x := range xs {
+		if x.ByHuman() {
+			want[x.Instance+"/"+x.ID] = true
+		}
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	out := map[string]string{}
+	keep := func(r audit.Record, _ int) {
+		if k := r.Instance + "/" + r.Ticket; r.Asked != "" && r.Rule == "" && want[k] {
+			out[k] = clean(r.Asked)
+		}
+	}
+	if len(hubKeys) > 0 {
+		_, _, _ = audit.VerifyKeys(f, hubKeys, keep)
+		return out
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), audit.MaxLine+1)
+	for sc.Scan() {
+		var r audit.Record
+		if json.Unmarshal(sc.Bytes(), &r) == nil {
+			keep(r, 0)
+		}
+	}
+	return out
 }

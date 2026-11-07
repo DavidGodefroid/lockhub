@@ -42,6 +42,23 @@ type answer struct {
 
 func clean(s string) string { return sanitize.Terminal(s, false) }
 
+// maxAsked bounds the reason a decision carries to the hub's audit (the
+// hub refuses more than its MaxReason).
+const maxAsked = 512
+
+// askedText is why, as the hub's audit keeps it: at most maxAsked bytes,
+// cut on a rune.
+func askedText(why string) string {
+	if len(why) <= maxAsked {
+		return why
+	}
+	cut := maxAsked
+	for cut > 0 && !utf8.RuneStart(why[cut]) {
+		cut--
+	}
+	return why[:cut]
+}
+
 // parseTicket reads a queue item's ticket: verified under the pinned
 // lock key when there is one (verified true), only decoded otherwise.
 // A ticket that does not verify under its pinned key is an error.
@@ -116,6 +133,12 @@ func (st *state) wipe() {
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
 		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles()}
+	if st.s.Sound != nil {
+		v.Sound = SoundOn
+		if st.muted {
+			v.Sound = SoundOff
+		}
+	}
 	if st.overlay == "audit" && st.s.Audit != nil {
 		a := st.audit
 		v.Audit = &a
@@ -158,7 +181,8 @@ func (st *state) draw() {
 		st.drawn++
 	}
 	if st.bell {
-		// The bell rings only for a question, never for auto traffic.
+		// The bell rings only for a question, never for auto traffic,
+		// when no sound file could be played for it.
 		b.WriteString("\a")
 	}
 	io.WriteString(st.s.Out, b.String())
@@ -408,7 +432,7 @@ func (st *state) apply(t *tracked, v Verdict) {
 	}
 }
 
-// ask puts t's question card up and rings the bell.
+// ask puts t's question card up and calls the human (a sound, the bell).
 func (st *state) ask(t *tracked, why string) {
 	tk := t.tk
 	c := &Card{ID: t.id, Instance: clean(t.instance), Lock: clean(tk.Source.Lock), Agent: clean(tk.Requester.Agent),
@@ -429,10 +453,10 @@ func (st *state) ask(t *tracked, why string) {
 	}
 	t.card = c
 	st.detach(t)
-	t.entry.Status, t.entry.Rule = Waiting, ""
+	t.entry.Status, t.entry.Rule, t.entry.Asked = Waiting, "", clean(why)
 	st.pushEntry(t, false)
 	st.cards = append(st.cards, t)
-	st.bell = true
+	st.call(t)
 	st.dirty = true
 	if st.s.Size == nil {
 		for _, l := range card(st.view(), *c, len(st.cards), 80, st.s.Style) {
@@ -485,6 +509,9 @@ func (st *state) pushEntry(t *tracked, group bool) {
 // open it.
 func (st *state) send(t *tracked, approved bool, rule string, secret []byte) {
 	req := api.DecideRequest{Approved: approved, Facade: route.TTY, Display: st.s.Display, Rule: rule, Retype: t.retyped}
+	if rule == "" {
+		req.Asked = askedText(t.entry.Asked)
+	}
 	if approved && secret != nil {
 		box, err := ticket.SealSecret(t.tk, secret)
 		if err == nil {
@@ -693,6 +720,7 @@ func (st *state) onTick() {
 	if st.overlay == "audit" {
 		st.loadAudit()
 	}
+	st.remind()
 	st.dirty = st.s.Size != nil
 }
 
@@ -864,6 +892,8 @@ func (st *state) onKey(k Key) bool {
 		}
 	case 'x', 'X':
 		st.forgetKey(top)
+	case 's', 'S':
+		st.toggleSound()
 	}
 	return false
 }
