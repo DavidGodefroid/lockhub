@@ -188,7 +188,7 @@ func (st *state) askConsole(e ConsoleEvent) {
 	t.entry.Status = Waiting
 	st.pushEntry(t, false)
 	st.cards = append(st.cards, t)
-	st.bell = true
+	st.call(t)
 	if st.s.Size == nil {
 		for _, l := range card(st.view(), *c, len(st.cards), 80, st.s.Style) {
 			st.logf("%s", finish(l, 80, st.s.Style))
