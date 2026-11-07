@@ -220,6 +220,13 @@ func endpointKey(r Request) string {
 // Decide rules on r. A rule decides only a version-2 ticket that lox run
 // verified and that does not want a human (never-auto, a typed name); a
 // deny rule holds in both modes; manual asks the rest.
+//
+// Production plays no part here (#149): a read of a production profile
+// is decided as a read of any other profile, by default:read in auto
+// mode. Production shows (the banner, the red frame) and keeps its
+// writes asked by their own rules; a production read is asked only when
+// its lock says so, by marking the ticket never-auto (its profile's auto
+// rule for reads is ask) or asking the instance name typed.
 func (e *Engine) Decide(r Request) Verdict {
 	a := r.Action()
 	ra := e.ruleAction(r, a) // the action named in the rule
@@ -238,8 +245,10 @@ func (e *Engine) Decide(r Request) Verdict {
 		return ask("this lock's ticket does not name its kind (version 1): asked")
 	case !r.Verified:
 		return ask("the ticket was not checked under the pinned lock key: asked")
-	case r.NeverAuto || r.Risk == ticket.RiskGrant:
-		return ask("the lock wants a human for this ticket")
+	case r.Risk == ticket.RiskGrant:
+		return ask("a grant is always the human's")
+	case r.NeverAuto:
+		return ask(fmt.Sprintf("the lock wants a human for this %s: its profile's auto rule for it is not auto", ra))
 	case r.Retype:
 		return ask("approving it needs the instance name typed")
 	}

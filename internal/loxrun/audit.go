@@ -356,6 +356,9 @@ func auditDetail(x Exchange, loc *time.Location, w int, st Style) []line {
 		dec = dec.add("  never decided", sgrDim)
 	}
 	rows = append(rows, row(dec))
+	if x.Asked != "" && x.Rule == "" {
+		rows = append(rows, row(append(label("why asked"), line{{x.Asked, sgrDim}}...)))
+	}
 	tz := loc
 	if tz == nil {
 		tz = time.Local

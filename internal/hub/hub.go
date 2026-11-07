@@ -94,6 +94,11 @@ type Verdict struct {
 	// the lock's audit. Only a version-2 ticket takes one, never a
 	// NeverAuto ticket nor one whose approval needs a typed name.
 	Rule string
+	// Asked, on a human's decision only, is why the facade asked the
+	// human rather than an auto rule deciding (lox run's reason: "first
+	// connection to this profile in this session", "write is always
+	// asked"…): the audit record keeps it.
+	Asked string
 	// Secret is the backend's secret sealed by the decider to the lock's
 	// one-use key (lockkit ticket.Sealed, JSON), on the approval of a
 	// connect ticket that asked for it: the hub relays a box it cannot
@@ -455,8 +460,11 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		return nil, fmt.Errorf("%w: a decision needs an approver and a facade", ErrBadRequest)
 	}
 	if len(v.Reason) > MaxReason || len(v.ApproverID) > MaxID || len(v.ApproverDisplay) > MaxID || len(v.Retype) > MaxID ||
-		len(v.Rule) > MaxID || len(v.Secret) > MaxSecret {
+		len(v.Rule) > MaxID || len(v.Secret) > MaxSecret || len(v.Asked) > MaxReason {
 		return nil, fmt.Errorf("%w: field too long", ErrBadRequest)
+	}
+	if v.Asked != "" && v.Rule != "" {
+		return nil, fmt.Errorf("%w: an auto rule's decision asked nobody", ErrBadRequest)
 	}
 	if len(v.Secret) > 0 && !v.Approved {
 		return nil, fmt.Errorf("%w: only an approval carries a secret", ErrBadRequest)
@@ -564,7 +572,7 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		return h.audit(tx, audit.Record{
 			Event: string(ev), Ticket: ref.ID, Instance: tk.Instance, Risk: tk.Risk, State: string(to),
 			Approver: v.ApproverID, Facade: v.Facade, Reason: v.Reason, Decision: hashBytes(raw), Device: v.DeviceID,
-			Rule: v.Rule,
+			Rule: v.Rule, Asked: v.Asked,
 		})
 	})
 	if err != nil {

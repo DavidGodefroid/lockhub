@@ -1,6 +1,7 @@
 package loxrun
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
@@ -287,5 +288,67 @@ func TestEngineLocklogUnknownRulesAsk(t *testing.T) {
 	c.Kind = ticket.KindConnect
 	if v := e.Decide(c); v.Outcome != Approve || v.Rule != "profile:connect" {
 		t.Errorf("a locklog rule set is kept: %+v", v)
+	}
+}
+
+// Production does not turn reads into questions (#149): in auto mode a
+// production read is approved by default:read as any read; writes, DDL,
+// unmasked reads (never-auto), grants and a typed name stay asked, and
+// the connection is asked once per session. A read is asked only when
+// the lock marks it never-auto (its profile's auto rule for reads is
+// ask), and the question says so. Manual mode asks all.
+func TestEngineProduction(t *testing.T) {
+	prod := func(kind ticket.Kind, risk ticket.Risk) Request {
+		r := req(kind, risk, "shop-prod")
+		r.Production = true
+		return r
+	}
+	never := func(r Request) Request { r.NeverAuto = true; return r }
+	retype := func(r Request) Request { r.Retype = true; return r }
+	cases := []struct {
+		name string
+		r    Request
+		want Outcome
+		rule string
+		why  string
+	}{
+		{"select", prod(ticket.KindRead, ticket.RiskRead), Approve, "default:read", "auto: read"},
+		{"select touching pii (masked)", prod(ticket.KindRead, ticket.RiskReadPII), Approve, "default:read", "auto: read"},
+		{"update", prod(ticket.KindWrite, ticket.RiskProdWrite), Question, "ask:write", "write is always asked"},
+		{"update never-auto", never(prod(ticket.KindWrite, ticket.RiskProdWrite)), Question, "ask:write", "auto rule for it is not auto"},
+		{"ddl", prod(ticket.KindDDL, ticket.RiskProdWrite), Question, "ask:ddl", "ddl is always asked"},
+		{"unmask", never(prod(ticket.KindRead, ticket.RiskReadPII)), Question, "ask:read", "human for this read"},
+		{"read = ask", never(prod(ticket.KindRead, ticket.RiskRead)), Question, "ask:read", "its profile's auto rule for it is not auto"},
+		{"grant", never(prod(ticket.KindRead, ticket.RiskGrant)), Question, "ask:read", "a grant is always the human's"},
+		{"typed name", retype(prod(ticket.KindRead, ticket.RiskRead)), Question, "ask:read", "instance name typed"},
+		{"policy", prod(ticket.KindPolicy, ticket.RiskPolicyLoosen), Question, "ask:policy", "policy is always asked"},
+		{"connect", prod(ticket.KindConnect, ticket.RiskProdWrite), Question, "ask:connect", "first connection"},
+	}
+	for _, c := range cases {
+		e := NewEngine(Auto)
+		got := e.Decide(c.r)
+		if got.Outcome != c.want || got.Rule != c.rule || !strings.Contains(got.Why, c.why) {
+			t.Errorf("%s: %+v, want outcome %d rule %s why ~%q", c.name, got, c.want, c.rule, c.why)
+		}
+		// The same ticket off production is decided the same way.
+		off := c.r
+		off.Production = false
+		if o := e.Decide(off); o != got && c.r.Kind != ticket.KindConnect {
+			t.Errorf("%s: %+v off production, %+v on it", c.name, o, got)
+		}
+		if m := NewEngine(Manual).Decide(c.r); m.Outcome != Question {
+			t.Errorf("%s in manual mode: %+v", c.name, m)
+		}
+	}
+
+	// The connection: asked once per session, then session:connect.
+	e := NewEngine(Auto)
+	c := prod(ticket.KindConnect, ticket.RiskProdWrite)
+	if v := e.Decide(c); v.Outcome != Question {
+		t.Fatalf("first production connect: %+v", v)
+	}
+	e.Answered(c, true)
+	if v := e.Decide(c); v.Outcome != Approve || v.Rule != "session:connect" {
+		t.Fatalf("production reconnect: %+v", v)
 	}
 }

@@ -37,9 +37,11 @@ import (
 )
 
 const (
-	inst     = "shop"
-	password = "pw-of-profile-A"
-	policyFP = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	// prodProfile is a production profile of the lock.
+	prodProfile = "shop-prod"
+	inst        = "shop"
+	password    = "pw-of-profile-A"
+	policyFP    = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 )
 
 var caller = plans.Caller{UID: 1000, Token: "tok-dev-1"}
@@ -137,14 +139,17 @@ func newWorldArm(t *testing.T, arm time.Duration) *world {
 	go func() { defer close(watched); w.lock.Watch(lctx, w.plans, func(error) {}) }()
 	t.Cleanup(func() { lcancel(); <-watched })
 
-	// Profile A takes its password from the decider ("ask"); B from the
-	// lock's keychain.
+	// Profile A takes its password from the decider ("ask"); B and the
+	// production profile from the lock's keychain.
 	w.pool, err = lazyconn.New(lazyconn.Config[*conn]{
 		Lock: "locksql", Asker: w.lock,
 		Profile: func(name string) (lazyconn.Profile, error) {
 			p := lazyconn.Profile{Endpoint: "db.internal:5432/" + name, Credential: ticket.CredentialKeychain, PolicyFP: policyFP}
-			if name == "A" {
+			switch name {
+			case "A":
 				p.Credential, p.NeedSecret = ticket.CredentialAsk, true
+			case prodProfile:
+				p.Production = true
 			}
 			return p, nil
 		},
@@ -233,6 +238,13 @@ func (w *world) acquire(profile string) chan error {
 // ticket of kind with the masked screen.
 func (w *world) submit(kind ticket.Kind, risk ticket.Risk, profile, sql string) string {
 	w.t.Helper()
+	return w.submitFlags(kind, risk, profile, sql, ticket.Flags{}, nil)
+}
+
+// submitFlags is submit with the ticket's flags and the screen's warnings
+// (a WARN verdict).
+func (w *world) submitFlags(kind ticket.Kind, risk ticket.Risk, profile, sql string, flags ticket.Flags, warnings []string) string {
+	w.t.Helper()
 	in := map[string]string{"sql": "sha256:" + strings.Repeat("a", 64), "n": ticket.NewNonce()}
 	hash, _ := ticket.HashOf(in)
 	p, err := w.plans.Create(plans.Binding{UID: caller.UID, Agent: "dev-1", TokenHash: plans.HashToken(caller.Token),
@@ -243,7 +255,8 @@ func (w *world) submit(kind ticket.Kind, risk ticket.Risk, profile, sql string) 
 	tk := ticket.NewKindTicket(ticket.Source{Lock: "locksql"}, kind, risk, &ticket.Subject{Profile: profile, Target: "customers"},
 		hash, policyFP, time.Now(), time.Hour)
 	tk.Workspace, tk.Requester = "~/e2e", ticket.Requester{Agent: "dev-1", Session: "s1"}
-	masked := render.MaskScreen(render.ScreenSource{Header: inst + " / " + profile + " · " + string(kind),
+	tk.Flags.Production, tk.Flags.NeverAuto = flags.Production, flags.NeverAuto || tk.Flags.NeverAuto
+	masked := render.MaskScreen(render.ScreenSource{Header: inst + " / " + profile + " · " + string(kind), Warnings: warnings,
 		Body: []render.Line{{{Text: sql}, {Text: "jane.doe@example.com", Value: true, Column: "email", ColumnType: "text"}}}}, render.Masking{})
 	id, err := w.lock.Submit(context.Background(), w.plans, p.ID, caller, tk, masked)
 	if err != nil {
