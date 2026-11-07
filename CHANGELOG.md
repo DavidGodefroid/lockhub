@@ -10,7 +10,14 @@ digest).
   next to its socket (DavidGodefroid/lockkit#127,
   DavidGodefroid/locksql#182): only when the console does not listen on
   its socket, only that console's own file (its name, owner and mode
-  0600), at most 200 characters, escaped for the terminal (#119).
+  0600), at most 200 characters, escaped for the terminal (#119): `lock
+  NAME waits for: Passphrase for ...: (typed, not shown)`. A console that
+  listens says `lock NAME is serving: nothing to answer`; neither gives
+  the container's state (starting, or stopped with its exit status). The
+  list of what a console may ask is gone: it was taken for the question,
+  and a policy answer was typed as an SSH passphrase. A console that ends
+  under the attach makes lox attach print its next question once it
+  restarted (#143).
 
 ## v0.10.0 (2026-11-07)
 

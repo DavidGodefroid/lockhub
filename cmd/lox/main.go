@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/term"
 
@@ -516,10 +517,18 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 			}
 		}
 	}
-	fmt.Fprintln(stdout, attachHint(name, pendingQuestion(who, func(args ...string) (string, error) {
-		out, err := compose(append([]string{"exec", "-T", "lock-" + name}, args...)...).Output()
-		return string(out), err
-	})))
+	ask := func() pending {
+		p := pendingQuestion(who, func(args ...string) (string, error) {
+			out, err := compose(append([]string{"exec", "-T", "lock-" + name}, args...)...).Output()
+			return string(out), err
+		})
+		if p.question == "" && !p.serving {
+			out, _ := compose("ps", "-a", "--format", "{{.State}} {{.ExitCode}}", "lock-"+name).Output()
+			p.state, p.exit = containerState(string(out))
+		}
+		return p
+	}
+	fmt.Fprintln(stdout, attachLine(name, ask()))
 	cmd := compose("attach", "lock-"+name)
 	detach := &escapeWatch{w: stderr}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, detach
@@ -530,7 +539,37 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
 		return nil
 	}
+	// The console ended (a wrong answer, an error): its container restarts
+	// it, and the next attach must not be blind. Its next question, once
+	// it asks one, is shown now.
+	if err != nil {
+		fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
+	}
 	return err
+}
+
+// attachTries and attachStep are how long lox attach waits for a console
+// that ended to ask its next question: its container restarts it.
+var (
+	attachTries = 10
+	attachStep  = 500 * time.Millisecond
+)
+
+// afterExit tells, once the console of lock name ended under the attach,
+// what it does now: ask is polled up to tries times for its next question
+// or its serving.
+func afterExit(name string, ask func() pending, tries int) string {
+	var p pending
+	for i := 0; i < tries; i++ {
+		// No container to wait for (state unknown): asking again tells no more.
+		if p = ask(); p.question != "" || p.serving || p.state == "" {
+			break
+		}
+		if i < tries-1 {
+			time.Sleep(attachStep)
+		}
+	}
+	return "the console of lock " + name + " ended; now " + attachHint(name, p) + "\n  lox attach " + name + " to answer it once it asks"
 }
 
 // pending is what a console waits for, as lox attach found it.
@@ -539,6 +578,10 @@ type pending struct {
 	question string
 	// serving: no question recorded, and the console listens on its socket.
 	serving bool
+	// state and exit are its container's state (docker's: running,
+	// restarting, exited, created, ...) and last exit status, read when it
+	// neither asks nor serves; state "" is unknown.
+	state, exit string
 }
 
 // console is the lock console lox attach asks for its question: its type,
@@ -644,17 +687,58 @@ func terminalText(s string) string {
 	return b.String()
 }
 
-// attachHint is the line lox attach prints before attaching to lock name:
-// the question its console waits for when it records one, else that it
-// asks nothing (it serves), else what it may ask, without claiming which.
+// containerState reads docker compose ps's "{{.State}} {{.ExitCode}}"
+// line: "" when there is none (no container) or it is not that shape.
+func containerState(out string) (state, exit string) {
+	f := strings.Fields(out)
+	if len(f) != 2 || !typeName.MatchString(f[0]) || !exitRe.MatchString(f[1]) {
+		return "", ""
+	}
+	return f[0], f[1]
+}
+
+var (
+	// exitRe is an exit status.
+	exitRe = regexp.MustCompile(`^-?[0-9]{1,3}$`)
+	// secretQuestion is a question whose answer the console reads without
+	// echo: a passphrase, a password, a token or a secret.
+	secretQuestion = regexp.MustCompile(`(?i)\b(passphrase|password|token|secret)\b`)
+)
+
+// attachHint is what lox attach tells of lock name: the question its
+// console waits for, or that it serves, or its container's state. Never a
+// list of what it may ask: that list was taken for the question, and a
+// policy answer was typed as an SSH passphrase (#143).
 func attachHint(name string, p pending) string {
 	switch {
 	case p.question != "":
-		return fmt.Sprintf("attached to lock %s: the console asks %s\n  type the answer, then Enter (its question is not printed again; detach with Ctrl-P Ctrl-Q)", name, `"`+p.question+`"`)
+		typed := ""
+		if secretQuestion.MatchString(p.question) {
+			typed = " (typed, not shown)"
+		}
+		return fmt.Sprintf("lock %s waits for: %s%s", name, p.question, typed)
 	case p.serving:
-		return fmt.Sprintf("attached to lock %s: it serves and asks nothing now (detach with Ctrl-P Ctrl-Q)", name)
+		return fmt.Sprintf("lock %s is serving: nothing to answer", name)
+	case p.state == "running":
+		return fmt.Sprintf("lock %s is starting: its console asks nothing yet", name)
+	case p.state == "restarting", p.state == "exited", p.state == "dead":
+		return fmt.Sprintf("lock %s is stopped (%s, exit status %s): its console keeps no log, its last error showed only on an attached terminal", name, p.state, p.exit)
+	case p.state != "":
+		return fmt.Sprintf("lock %s is %s: its console asks nothing yet", name, p.state)
 	}
-	return fmt.Sprintf("attached to lock %s (its pending question is not shown again, and this console does not tell which one it is: the policy review, \"Apply these changes? [y/N]\", on a first start or after a loosening; for a production profile whose policy was not confirmed yet, \"Type the profile name ... to continue:\"; or a credential its profile does not take from Vault, the Vault token included; detach with Ctrl-P Ctrl-Q)", name)
+	return fmt.Sprintf("lock %s: its console's state cannot be read (an older console that records no question, or a container lox did not start)", name)
+}
+
+// attachLine is the line lox attach prints before attaching: attachHint,
+// and what to type or how to leave.
+func attachLine(name string, p pending) string {
+	if p.question != "" {
+		return attachHint(name, p) + "\n  type the answer, then Enter: the console does not print its question again (detach with Ctrl-P Ctrl-Q)"
+	}
+	if p.serving {
+		return attachHint(name, p) + " (detach with Ctrl-P Ctrl-Q)"
+	}
+	return attachHint(name, p) + "\n  its questions show here as it asks them (detach with Ctrl-P Ctrl-Q)"
 }
 
 // escapeSequence is docker's message when the terminal detaches.

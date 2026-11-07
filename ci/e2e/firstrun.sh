@@ -148,7 +148,7 @@ python3 "$here/expect.py" 900 \
 	'Credentials: ask' '\n' \
 	'Name (required)' 'orders\n' \
 	'Apply? [y/N]' 'y\n' \
-	'attached to lock orders' '<pause>y\n' \
+	'(detach with Ctrl-P Ctrl-Q)' '<pause>y\n' \
 	'Password for shop@' "$inv_pw\\n" \
 	'Type "continue" to proceed' 'continue\n' \
 	'Accept all [a]' 'a\n' \
@@ -224,7 +224,7 @@ if [ "$vault" = 1 ]; then
 		'Vault CA file (optional:' '\n' \
 		'Name (required)' 'inventory\n' \
 		'Apply? [y/N]' 'y\n' \
-		'attached to lock inventory' '<pause>y\n' \
+		'(detach with Ctrl-P Ctrl-Q)' '<pause>y\n' \
 		'Vault token for http://host.docker.internal:58200:' "$E2E_VAULT_TOKEN\\n" \
 		'Type "continue" to proceed' 'continue\n' \
 		'Listening' '<detach>' \
@@ -256,6 +256,29 @@ if [ "$vault" = 1 ]; then
 
 	say "a host agent's locksql query on inventory, approved through the facade"
 	sql_query inventory inventory stock sku sku-1
+
+	say "lockhub#143: a restarted console's pending question, shown by lox attach"
+	# Its policy is approved: on a restart it asks only the Vault token,
+	# and records it next to its socket before lox attach reads it.
+	docker restart "$p-lock-inventory-1" >/dev/null
+	i=0
+	until docker exec "$p-lock-inventory-1" sh -c 'ls /run/locksql/*.question' >/dev/null 2>&1; do
+		i=$((i + 1))
+		[ "$i" -le 60 ] || die "the restarted inventory console recorded no question"
+		sleep 1
+	done
+	python3 "$here/expect.py" 120 \
+		'lock inventory waits for: Vault token for http://host.docker.internal:58200: (typed, not shown)' "<pause>$E2E_VAULT_TOKEN\\n" \
+		'Type "continue" to proceed' 'continue\n' \
+		'Listening' '<detach>' \
+		-- "$lox" attach inventory >"$out/attach-restart.out" 2>&1 ||
+		{ cat "$out/attach-restart.out"; die "lox attach did not show the restarted console's question"; }
+	cat "$out/attach-restart.out"
+	grep -q 'Apply these changes\|Type the profile name' "$out/attach-restart.out" && die "lox attach printed a guess list"
+	python3 "$here/expect.py" 60 \
+		'lock inventory is serving: nothing to answer' '<detach>' \
+		-- "$lox" attach inventory >"$out/attach-serving.out" 2>&1 ||
+		{ cat "$out/attach-serving.out"; die "lox attach did not say the serving console asks nothing"; }
 
 	say "lockhub#123: the Vault address is an endpoint of the vault: true lock only"
 	reaches "$p-lock-inventory-1" host.docker.internal 58200 || die "inventory (vault: true) does not reach Vault"
