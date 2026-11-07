@@ -9,24 +9,26 @@ import (
 // Record is an exchange as lox audit --json writes it (one JSON object
 // per line): the same fields as the listing, never a value in clear.
 type Record struct {
-	ID         string     `json:"id"`
-	At         time.Time  `json:"at"`
-	Agent      string     `json:"agent"`
-	Instance   string     `json:"instance"`
-	Lock       string     `json:"lock"`
-	Profile    string     `json:"profile,omitempty"`
-	Kind       string     `json:"kind"`
-	Risk       string     `json:"risk,omitempty"`
-	Production bool       `json:"production,omitempty"`
-	Write      bool       `json:"write,omitempty"`
-	Request    string     `json:"request"`
-	Decision   string     `json:"decision"`
-	Rule       string     `json:"rule,omitempty"`
-	Facade     string     `json:"facade,omitempty"`
-	Approver   string     `json:"approver,omitempty"`
-	State      string     `json:"state"`
-	DecidedAt  *time.Time `json:"decided_at,omitempty"`
-	EndedAt    *time.Time `json:"ended_at,omitempty"`
+	ID         string    `json:"id"`
+	At         time.Time `json:"at"`
+	Agent      string    `json:"agent"`
+	Instance   string    `json:"instance"`
+	Lock       string    `json:"lock"`
+	Profile    string    `json:"profile,omitempty"`
+	Kind       string    `json:"kind"`
+	Risk       string    `json:"risk,omitempty"`
+	Production bool      `json:"production,omitempty"`
+	Write      bool      `json:"write,omitempty"`
+	Request    string    `json:"request"`
+	Decision   string    `json:"decision"`
+	Rule       string    `json:"rule,omitempty"`
+	// Asked is why the human was asked, on a human's decision.
+	Asked     string     `json:"asked,omitempty"`
+	Facade    string     `json:"facade,omitempty"`
+	Approver  string     `json:"approver,omitempty"`
+	State     string     `json:"state"`
+	DecidedAt *time.Time `json:"decided_at,omitempty"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	// DecideMS is the time from the ticket to its decision.
 	DecideMS  *int64 `json:"decide_ms,omitempty"`
 	Signature string `json:"signature"`
@@ -42,7 +44,7 @@ type Record struct {
 func RecordOf(x loxrun.Exchange, detail bool) Record {
 	r := Record{ID: x.ID, At: x.At.UTC(), Agent: x.Agent, Instance: x.Instance, Lock: x.Lock, Profile: x.Profile,
 		Kind: string(x.Kind), Risk: x.Risk, Production: x.Production, Write: x.Write(), Request: x.Summary,
-		Decision: x.Decision(), Rule: x.Rule, Facade: x.Facade, Approver: x.Approver, State: x.State, SigNote: x.SigNote}
+		Decision: x.Decision(), Rule: x.Rule, Asked: x.Asked, Facade: x.Facade, Approver: x.Approver, State: x.State, SigNote: x.SigNote}
 	switch x.Sig {
 	case loxrun.SigOK:
 		r.Signature = "ok"

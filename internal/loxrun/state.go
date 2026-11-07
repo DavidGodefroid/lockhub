@@ -42,6 +42,23 @@ type answer struct {
 
 func clean(s string) string { return sanitize.Terminal(s, false) }
 
+// maxAsked bounds the reason a decision carries to the hub's audit (the
+// hub refuses more than its MaxReason).
+const maxAsked = 512
+
+// askedText is why, as the hub's audit keeps it: at most maxAsked bytes,
+// cut on a rune.
+func askedText(why string) string {
+	if len(why) <= maxAsked {
+		return why
+	}
+	cut := maxAsked
+	for cut > 0 && !utf8.RuneStart(why[cut]) {
+		cut--
+	}
+	return why[:cut]
+}
+
 // parseTicket reads a queue item's ticket: verified under the pinned
 // lock key when there is one (verified true), only decoded otherwise.
 // A ticket that does not verify under its pinned key is an error.
@@ -429,7 +446,7 @@ func (st *state) ask(t *tracked, why string) {
 	}
 	t.card = c
 	st.detach(t)
-	t.entry.Status, t.entry.Rule = Waiting, ""
+	t.entry.Status, t.entry.Rule, t.entry.Asked = Waiting, "", clean(why)
 	st.pushEntry(t, false)
 	st.cards = append(st.cards, t)
 	st.bell = true
@@ -485,6 +502,9 @@ func (st *state) pushEntry(t *tracked, group bool) {
 // open it.
 func (st *state) send(t *tracked, approved bool, rule string, secret []byte) {
 	req := api.DecideRequest{Approved: approved, Facade: route.TTY, Display: st.s.Display, Rule: rule, Retype: t.retyped}
+	if rule == "" {
+		req.Asked = askedText(t.entry.Asked)
+	}
 	if approved && secret != nil {
 		box, err := ticket.SealSecret(t.tk, secret)
 		if err == nil {
