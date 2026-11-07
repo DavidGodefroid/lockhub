@@ -73,6 +73,10 @@ type Entry struct {
 
 // group is the key that folds equal auto reads into one line.
 func (e Entry) group() string {
+	if e.Status == Failed && e.Summary == unreadableSummary {
+		// Tickets that fail verification the same way (#147).
+		return strings.Join([]string{"unreadable", e.Instance, e.Note}, "\x00")
+	}
 	if e.Status != AutoApproved || (e.Kind != ticket.KindRead && e.Kind != ticket.KindAction) {
 		return ""
 	}
@@ -442,6 +446,9 @@ func entryLine(e Entry, v View, c columns, st Style) line {
 	if e.Count > 1 {
 		req = req.add(fmt.Sprintf("%s %d ", st.g("×", "x"), e.Count), sgrBold)
 		what := firstWord(e.Summary)
+		if e.Summary == unreadableSummary {
+			what = e.Summary
+		}
 		if e.Target != "" {
 			what += " on " + e.Target
 		}
