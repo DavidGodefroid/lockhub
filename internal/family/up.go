@@ -619,7 +619,7 @@ func (u *Up) Do(ctx context.Context) error {
 		} else {
 			fmt.Fprintln(u.Out, "  The rotated locks restart.")
 		}
-		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (lox attach).")
+		fmt.Fprintln(u.Out, "  A restarted console asks again for the credentials it does not take from Vault (in a lox run card).")
 	}
 	var prev Applied
 	first := false
@@ -981,10 +981,7 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintln(u.Out, l)
 	}
 	if len(c.Locks) > 0 {
-		fmt.Fprintln(u.Out, "Each lock's console asks at its terminal for its policy (first start, or loosened) and the credentials it does not take from Vault:")
-	}
-	for _, n := range c.Instances() {
-		fmt.Fprintf(u.Out, "  lox attach %s\n", n)
+		fmt.Fprintln(u.Out, "Each lock's console asks for its policy (first start, or loosened) and the credentials it does not take from Vault: lox run shows each question in a card and types your answer at the console's terminal (lox attach NAME reaches it too)")
 	}
 	return nil
 }

@@ -174,4 +174,4 @@ func caChanged(d []string) bool {
 }
 
 // vaultCANote is said once when the reviewed Vault CA changes.
-const vaultCANote = "vault CA changed: the locks with vault: true restart (lox attach NAME for what they ask)"
+const vaultCANote = "vault CA changed: the locks with vault: true restart (lox run asks what they ask)"

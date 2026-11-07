@@ -335,7 +335,7 @@ func TestVaultCAChangeNote(t *testing.T) {
 	conf := strings.Replace(shortConf, "locks:", "vault:\n  address: https://vault.example.com:8200\n  ca_file: "+ca+"\nlocks:", 1) + "    vault: true\n"
 	os.WriteFile(w.file, []byte(conf), 0o644)
 	out, err := w.up("n\n", &fake{keys: f.keys})
-	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "vault CA changed: the locks with vault: true restart (lox attach NAME for what they ask)") {
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "vault CA changed: the locks with vault: true restart (lox run asks what they ask)") {
 		t.Errorf("CA note: %v\n%s", err, out)
 	}
 }

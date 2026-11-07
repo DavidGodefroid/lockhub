@@ -107,11 +107,15 @@ func (st *state) wipe() {
 		clear(t.secret)
 		t.secret = nil
 	}
+	for k, a := range st.consoleAnswers {
+		clear(a.value)
+		delete(st.consoleAnswers, k)
+	}
 }
 
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
-		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting}
+		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles()}
 	if st.overlay == "audit" && st.s.Audit != nil {
 		a := st.audit
 		v.Audit = &a
@@ -844,12 +848,16 @@ func (st *state) onKey(k Key) bool {
 			st.setFlash("the question on top just changed: read it, then press " + string(k.Rune) + " again")
 			break
 		}
-		if k.Rune == 'y' || k.Rune == 'Y' {
+		yes := k.Rune == 'y' || k.Rune == 'Y'
+		switch {
+		case top.cq != nil:
+			st.consoleKey(top, yes)
+		case yes:
 			st.approve(top)
-		} else {
+		default:
 			st.send(top, false, "", nil)
 		}
-		st.shownPrompt = top.card.Prompt != nil
+		st.shownPrompt = top.card != nil && top.card.Prompt != nil
 	case 'd', 'D':
 		if top != nil {
 			top.card.Details = !top.card.Details
@@ -863,12 +871,23 @@ func (st *state) onKey(k Key) bool {
 // forgetKey is x: drop the session's connection, endpoints and secret of
 // the question's profile, or of every profile when nothing is asked.
 func (st *state) forgetKey(top *tracked) {
+	if top != nil && top.cq != nil {
+		st.forgetConsole(top.instance)
+		if top.card.Prompt != nil {
+			top.card.Prompt = st.consolePrompt(top)
+		}
+		st.setFlash("forgot the answers typed to " + clean(top.instance) + "'s console: asked again")
+		return
+	}
 	if top != nil && top.tk != nil {
 		st.forget(top.instance, top.req.Profile())
 		st.setFlash("forgot " + clean(top.profileKey) + ": its connection, endpoints and password are asked again")
 		return
 	}
 	st.forgetAll()
+	for i := range st.consoles {
+		st.forgetConsole(i)
+	}
 	st.setFlash("forgot every profile: connections, endpoints and passwords are asked again")
 }
 
@@ -883,7 +902,7 @@ func toggle(cur, v string) string {
 // decide (none being typed into).
 func (st *state) reevaluate() {
 	for _, t := range slices.Clone(st.cards) {
-		if t.sending || t.card.Prompt != nil {
+		if t.sending || t.cq != nil || t.card.Prompt != nil {
 			continue
 		}
 		v := st.eng.Decide(t.req)
@@ -954,6 +973,10 @@ func (st *state) promptKey(t *tracked, k Key) {
 		clear(p.Typed)
 		p.Typed = nil
 		defer clear(secret)
+		if t.cq != nil {
+			st.consoleEnter(t, secret)
+			return
+		}
 		switch t.promptKind {
 		case promptRetype:
 			typed := string(secret)
