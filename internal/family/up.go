@@ -685,6 +685,7 @@ func (u *Up) Do(ctx context.Context) error {
 				f := ProfileFacts(profiles[l.Type], l.Type, LockProfile(l))
 				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
 				f.Egress = egresses[n].Short()
+				f.Unreachable = egresses[n].None
 				facts[n] = f
 			}
 			var changed []string
