@@ -477,8 +477,25 @@ detached, its console keeps running`. Attached to a console that already
 serves (to use its commands), it stays. Ctrl-P Ctrl-Q detaches at any time
 and exits 0 (`detached from NAME`); Ctrl-C at the console stops it. The
 attach does not proxy signals (`--sig-proxy=false`): closing the terminal
-only detaches. A question answered there takes lox run's card away. The consoles have no log, so attaching replays
-nothing: lox run's card is where the question shows. A console that
+only detaches. A question answered there takes lox run's card away. The
+consoles have no log, so attaching replays nothing: lox attach first reads
+the question file (only that console's own, at most 200 characters, escaped
+for the terminal) and prints one of:
+
+- `lock NAME waits for: <question>`, with `(typed, not shown)` for a
+  passphrase, a password, a token or a secret: after the restart of a
+  production lock behind an SSH bastion, `Passphrase for
+  /home/locksql/.ssh/bastion_key: (typed, not shown)`;
+- `lock NAME is serving: nothing to answer`: the console listens on its
+  socket, whatever question file is left there;
+- `lock NAME is starting` or `lock NAME is stopped (restarting, exit status
+  N)`: no question recorded and no socket, from the container's state.
+
+It never lists what a console may ask. Each following question shows on
+the attached terminal as the console asks it. A console that ends under the
+attach (a wrong answer) makes lox attach fail; it then waits a few seconds
+for the restarted console and prints its next question (`the console of
+lock NAME ended; now lock NAME waits for: ...`). A console that
 printed its policy review before lox run attached to it (the first start,
 during lox run's own start) shows the question without the lines above it;
 lox run's own review showed the profile it reviews. Locks are pending

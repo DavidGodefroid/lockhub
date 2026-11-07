@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/DavidGodefroid/lockhub/internal/family"
 )
 
 // attachWorld is a scratch HOME, state and workspace with a PATH whose
@@ -30,23 +32,223 @@ func attachWorld(t *testing.T, script string) (file string) {
 	return filepath.Join(ws, ".lockfamily", "lockfamily.yaml")
 }
 
-// The attach hint does not claim which question is pending: on a restart
-// of a production profile it is the profile name, not the policy review.
-func TestAttachHintNamesEveryStartQuestion(t *testing.T) {
-	file := attachWorld(t, "exit 0\n")
+// lockYAML declares lock orders of type locksql in file.
+func lockYAML(t *testing.T, file string) {
+	t.Helper()
+	y := "version: 1\nhub:\n  image: ghcr.io/davidgodefroid/lockhub@sha256:" + strings.Repeat("a", 64) + "\nlocks:\n  orders:\n    type: locksql\n" +
+		"    image: ghcr.io/davidgodefroid/locksql@sha256:" + strings.Repeat("b", 64) + "\n    profile: shop\n"
+	if err := os.WriteFile(file, []byte(y), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// question is the find -name of orders' question file in the world of
+// file: <workspace hash>-shop.question (lockkit's QuestionPath).
+func question(file string) string {
+	return strings.TrimPrefix(family.Project(family.Workspace(file)), "lockfamily-") + "-shop.question"
+}
+
+const (
+	unixHead   = "Num       RefCount Protocol Flags    Type St Inode Path\n"
+	unixListen = unixHead + "0000000000000000: 00000002 00000000 00010000 0001 01 4242 /run/locksql/1a2b3c4d-shop.sock\n"
+	unixNone   = unixHead + "0000000000000000: 00000003 00000000 00000000 0001 03 4243 /run/locksql/1a2b3c4d-shop.sock\n"
+)
+
+// questionWorld is attachWorld whose docker answers /proc/net/unix with
+// table, the question read with out when its arguments name the file of
+// orders (its name, the console's uid 10001, mode 0600 exactly), and
+// docker compose ps with ps.
+func questionWorld(t *testing.T, table, out, ps string) (file string) {
+	t.Helper()
+	file = attachWorld(t, "")
+	lockYAML(t, file)
+	script := `case "$*" in
+*" exec -T lock-orders cat /proc/net/unix") printf '%s' '` + table + `' ;;
+*" exec -T lock-orders sh -c "*"-perm 0600 "*" lox /run/locksql ` + question(file) + ` 10001") printf '%s' '` + out + `' ;;
+*" exec "*) exit 9 ;;
+*" ps -a --format {{.State}} {{.ExitCode}} lock-orders") printf '%s' '` + ps + `' ;;
+*) exit 0 ;;
+esac
+`
+	os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(file)), "..", "bin", "docker"), []byte("#!/bin/sh\n"+script), 0o755)
+	return file
+}
+
+func attachOut(t *testing.T, file string) string {
+	t.Helper()
 	var out, errb bytes.Buffer
 	if err := attachConsole(file, "orders", devNull(t), &out, &errb); err != nil {
 		t.Fatalf("attach: %v\n%s", err, errb.String())
 	}
-	hint := out.String()
-	for _, want := range []string{"attached to lock orders", "not shown again", "Apply these changes? [y/N]",
-		`Type the profile name "orders" to continue:`, "password", "Ctrl-P Ctrl-Q"} {
-		if !strings.Contains(hint, want) {
-			t.Errorf("hint lacks %q:\n%s", want, hint)
+	return out.String()
+}
+
+// guesses are the words of the former list of what a console may ask:
+// never printed again (#143).
+var guesses = []string{"Apply these changes", "Type the profile name", "a credential its profile", "does not tell which one"}
+
+func noGuess(t *testing.T, hint string) {
+	t.Helper()
+	for _, g := range guesses {
+		if strings.Contains(hint, g) {
+			t.Errorf("hint guesses (%q):\n%s", g, hint)
 		}
 	}
-	if strings.Contains(hint, "it is the policy review") {
-		t.Errorf("hint still claims the policy review:\n%s", hint)
+}
+
+// A console that records its question (lockkit's question file): lox
+// attach shows that question, escaped, and only it (#119, #143).
+func TestAttachShowsTheRecordedQuestion(t *testing.T) {
+	file := questionWorld(t, unixNone, "question: Vault token for https://vault.example.com:8200:\033[2J\u202e\u200b\n", "")
+	hint := attachOut(t, file)
+	want := `lock orders waits for: Vault token for https://vault.example.com:8200:\x1b[2J\u202e\u200b (typed, not shown)` + "\n  type the answer"
+	if !strings.Contains(hint, want) {
+		t.Fatalf("hint:\n%q\nwant %q", hint, want)
+	}
+	for _, not := range []string{"\033", "\u202e", "\u200b"} {
+		if strings.Contains(hint, not) {
+			t.Errorf("hint has %q:\n%q", not, hint)
+		}
+	}
+	noGuess(t, hint)
+}
+
+// The question of a restarted production lock behind an SSH bastion with
+// an encrypted key: its passphrase, typed without echo (#143). A question
+// that is not a secret is not said to be.
+func TestAttachShowsTheSSHPassphrase(t *testing.T) {
+	hint := attachOut(t, questionWorld(t, unixNone, "question: Passphrase for /home/locksql/.ssh/bastion_key:\n", ""))
+	if !strings.Contains(hint, "lock orders waits for: Passphrase for /home/locksql/.ssh/bastion_key: (typed, not shown)\n") {
+		t.Fatalf("hint:\n%s", hint)
+	}
+	noGuess(t, hint)
+	hint = attachOut(t, questionWorld(t, unixNone, `question: Type the profile name "shop" to continue:`+"\n", ""))
+	if !strings.Contains(hint, `lock orders waits for: Type the profile name "shop" to continue:`+"\n") || strings.Contains(hint, "typed, not shown") {
+		t.Fatalf("hint:\n%s", hint)
+	}
+}
+
+// A long question is cut.
+func TestAttachCutsALongQuestion(t *testing.T) {
+	file := questionWorld(t, unixNone, "question: "+strings.Repeat("x", 600)+"\n", "")
+	hint := attachOut(t, file)
+	if !strings.Contains(hint, "waits for: "+strings.Repeat("x", 200)+"…\n") || strings.Contains(hint, strings.Repeat("x", 201)) {
+		t.Fatalf("hint:\n%s", hint)
+	}
+}
+
+// A console that listens serves, whatever question file is left next to
+// its socket (a console killed while it asked): stale, never shown.
+func TestAttachServingConsoleIgnoresAStaleQuestion(t *testing.T) {
+	file := questionWorld(t, unixListen, "question: Type the profile name \"shop\" to continue:\n", "running 0")
+	hint := attachOut(t, file)
+	if !strings.Contains(hint, "lock orders is serving: nothing to answer\n") || strings.Contains(hint, "profile name") {
+		t.Fatalf("hint:\n%s", hint)
+	}
+}
+
+// No question recorded and no socket: lox attach says what the container
+// does (starting, stopped with its exit status, or unknown), never a list
+// of what the console may ask (#143). Two question files for the console
+// (it cannot be both) are no question.
+func TestAttachHintWhenNoQuestionIsRecorded(t *testing.T) {
+	for name, c := range map[string]struct{ out, ps, want string }{
+		"starting":   {"", "running 0\n", "lock orders is starting: its console asks nothing yet\n  its questions show here"},
+		"several":    {"question: Vault token for x:\nquestion: User:\n", "running 0\n", "lock orders is starting"},
+		"restarting": {"", "restarting 1\n", "lock orders is stopped (restarting, exit status 1): its console keeps no log"},
+		"exited":     {"", "exited 2\n", "lock orders is stopped (exited, exit status 2)"},
+		"created":    {"", "created 0\n", "lock orders is created: its console asks nothing yet"},
+		"no ps":      {"", "", "lock orders: its console's state cannot be read"},
+		"odd ps":     {"", "running 0 x;y\n", "lock orders: its console's state cannot be read"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hint := attachOut(t, questionWorld(t, unixNone, c.out, c.ps))
+			if !strings.Contains(hint, c.want) || strings.Contains(hint, "waits for") {
+				t.Errorf("hint:\n%s\nwant %q", hint, c.want)
+			}
+			noGuess(t, hint)
+		})
+	}
+	file := attachWorld(t, "case \"$*\" in *\" exec \"*) exit 1 ;; *) exit 0 ;; esac\n")
+	lockYAML(t, file)
+	if hint := attachOut(t, file); !strings.Contains(hint, "state cannot be read") {
+		t.Errorf("exec fails: hint:\n%s", hint)
+	}
+}
+
+// When the console ends under the attach (a wrong passphrase: it exits,
+// its container restarts it), lox attach shows its next question, polled
+// until it asks one, so the next attach is not blind (#143).
+func TestAfterExitShowsTheNextQuestion(t *testing.T) {
+	attachStep = time.Millisecond
+	t.Cleanup(func() { attachStep = 500 * time.Millisecond })
+	n := 0
+	ask := func() pending {
+		n++
+		if n < 3 {
+			return pending{state: "restarting", exit: "1"}
+		}
+		return pending{question: "Passphrase for /home/locksql/.ssh/bastion_key:"}
+	}
+	got := afterExit("orders", ask, 10)
+	if n != 3 || !strings.Contains(got, "the console of lock orders ended; now lock orders waits for: Passphrase for /home/locksql/.ssh/bastion_key: (typed, not shown)\n  lox attach orders") {
+		t.Fatalf("%d asks: %s", n, got)
+	}
+	n = 0
+	got = afterExit("orders", func() pending { n++; return pending{state: "exited", exit: "1"} }, 3)
+	if n != 3 || !strings.Contains(got, "now lock orders is stopped (exited, exit status 1)") {
+		t.Fatalf("%d asks: %s", n, got)
+	}
+	noGuess(t, got)
+}
+
+// A console that ends under the attach: lox attach fails, and says what
+// it does now.
+func TestAttachConsoleEndsShowsWhatNext(t *testing.T) {
+	attachTries, attachStep = 1, time.Millisecond
+	t.Cleanup(func() { attachTries, attachStep = 10, 500*time.Millisecond })
+	file := questionWorld(t, unixNone, "question: Passphrase for /k:\n", "")
+	script, _ := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(file)), "..", "bin", "docker"))
+	os.WriteFile(filepath.Join(filepath.Dir(filepath.Dir(file)), "..", "bin", "docker"),
+		[]byte(strings.Replace(string(script), "*) exit 0 ;;", "*\" attach \"*) echo 'console: ssh.key: /k: the passphrase is incorrect'; exit 1 ;;\n*) exit 0 ;;", 1)), 0o755)
+	var out, errb bytes.Buffer
+	if err := attachConsole(file, "orders", devNull(t), &out, &errb); err == nil {
+		t.Fatal("an ended console reported no error")
+	}
+	if strings.Count(out.String(), "lock orders waits for: Passphrase for /k: (typed, not shown)") != 2 ||
+		!strings.Contains(out.String(), "the passphrase is incorrect\nthe console of lock orders ended; now lock orders waits for") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+}
+
+// What lox attach asks for, by lock: the uid of its kind, the workspace
+// hash for a project-keyed console, "user" otherwise, lockfile's default
+// profile; names that are not a console's run nothing.
+func TestPendingQuestionAsksForTheConsolesOwnFile(t *testing.T) {
+	var got []string
+	exec := func(args ...string) (string, error) {
+		got = append(got, strings.Join(args, " "))
+		return "", nil
+	}
+	pendingQuestion(console{typ: "lockfile", profile: "default", key: "user", uid: "10031"}, exec)
+	if len(got) != 2 || got[0] != "cat /proc/net/unix" || !strings.HasSuffix(got[1], " lox /run/lockfile user-default.question 10031") {
+		t.Fatalf("calls %q", got)
+	}
+	got = nil
+	pendingQuestion(console{typ: "locksql", key: "1a2b3c4d", uid: "10001"}, exec)
+	if len(got) != 2 || !strings.HasSuffix(got[1], " lox /run/locksql 1a2b3c4d-*.question 10001") {
+		t.Fatalf("no profile: calls %q", got)
+	}
+	for _, c := range []console{
+		{typ: "lock sql;x", key: "user", uid: "10001"},
+		{typ: "locksql", key: "user", uid: "10001", profile: "a*"},
+		{typ: "locksql", key: "../x", uid: "10001"},
+		{typ: "locksql", key: "user", uid: ""},
+	} {
+		got = nil
+		if p := pendingQuestion(c, exec); p != (pending{}) || len(got) != 0 {
+			t.Errorf("%+v: pending %+v, calls %q", c, p, got)
+		}
 	}
 }
 
@@ -91,6 +293,7 @@ func ttyWorld(t *testing.T, attach func(marks string) string) (file, marks strin
 *" exec "*)
 	[ -f `+marks+`/served ] && echo '0000000000000000: 00000002 00000000 00010000 0001 01 4242 /run/locksql/abcd-orders.sock'
 	exit 0 ;;
+*" ps "*) exit 0 ;;
 esac
 echo "$@" >`+marks+`/args
 `+attach(marks))
