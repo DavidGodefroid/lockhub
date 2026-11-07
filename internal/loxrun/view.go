@@ -62,7 +62,10 @@ type Entry struct {
 	Target string
 	Status Status
 	// Rule is the rule that decided (auto), "" for the human.
-	Rule   string
+	Rule string
+	// Asked is why the human was asked (the auto mode's reason), on a
+	// question and the human's decision on it.
+	Asked  string
 	Result Result
 	Count  int
 	Note   string
@@ -633,6 +636,8 @@ func auditLines(v View, w int, st Style) []line {
 		who := "you"
 		if e.Rule != "" {
 			who = "rule " + e.Rule
+		} else if e.Asked != "" {
+			who += " (asked: " + e.Asked + ")"
 		}
 		switch e.Status {
 		case Elsewhere:

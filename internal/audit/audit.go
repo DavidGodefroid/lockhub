@@ -51,6 +51,9 @@ type Record struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 	// Rule is the auto rule of lox run that decided, when no human did.
 	Rule string `json:"rule,omitempty"`
+	// Asked is why the human was asked, on a human's decision at lox run
+	// (the auto mode's reason for not deciding it itself).
+	Asked string `json:"asked,omitempty"`
 	// Outbox is the id of the outbox row the record came from (records
 	// from before the outbox have none): ids only grow along the log, so
 	// a row logged already, or replayed, is told apart exactly.
