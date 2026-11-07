@@ -208,22 +208,33 @@ jq -e '.lockhttp_gate == 1 and (has("devices") | not) and ([.locks[] | select(.d
 	die "up.json does not say what the lockhttp gate pins (lockhttp_gate 1)"
 hub_is_local "$p"
 
-say "each console asks its policy at its terminal: lox attach"
+say "closing the terminal of lox attach only detaches: the console keeps running (#144)"
+# The same container, never restarted (restart: unless-stopped would hide
+# a console the hang-up ended).
+n=${LOCKS%%:*}
+id=$(docker compose -p "$p" --project-directory "$state" -f "$state/compose.yaml" ps -q "lock-$n")
+before=$(docker inspect -f '{{.RestartCount}} {{.State.StartedAt}}' "$id")
+python3 "$here/hangup.py" 30 -- "$lox" attach "$n" >hangup.out 2>&1 || { cat hangup.out; die "lox attach $n did not end on a closed terminal"; }
+sleep 3
+after=$(docker inspect -f '{{.State.Running}} {{.RestartCount}} {{.State.StartedAt}}' "$id")
+[ "$after" = "true $before" ] || { cat hangup.out; die "closing the terminal of lox attach stopped the console of $n ($before, then $after)"; }
+
+say "each console asks its policy at its terminal: lox attach, which detaches by itself once it serves"
 for l in $LOCKS; do
 	n=${l%%:*}
 	case "${l#*:}" in
 	locksql)
 		# y to the policy, the password, a to the PII proposal (the first
 		# rule set, written in the console's volume), then detach.
-		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for ro@' 'ro-e2e-only\n' 'Accept all [a]' 'a\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
-			{ cat attach.out; die "the console of $n did not start listening"; }
+		python3 "$here/attach.py" 90 'y\n' "lock $n serves: detached" 'Password for ro@' 'ro-e2e-only\n' 'Accept all [a]' 'a\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
+			{ cat attach.out; die "lox attach $n did not detach by itself once its console served"; }
 		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 		grep -q 'Accept all \[a\]' attach.out || { cat attach.out; die "no PII proposal at the first start of $n: the email column must be proposed"; }
 		;;
 	lockmq)
 		# y to the policy, the broker user's password, then detach.
-		python3 "$here/attach.py" 90 'y\n' 'Listening' 'Password for mqro@' 'mq-e2e-only\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
-			{ cat attach.out; die "the console of $n did not start listening"; }
+		python3 "$here/attach.py" 90 'y\n' "lock $n serves: detached" 'Password for mqro@' 'mq-e2e-only\n' -- "$lox" attach "$n" >attach.out 2>&1 ||
+			{ cat attach.out; die "lox attach $n did not detach by itself once its console served"; }
 		grep -q '(approved policy)' attach.out || { cat attach.out; die "the console of $n did not approve its policy"; }
 		;;
 	*)

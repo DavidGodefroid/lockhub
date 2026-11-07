@@ -152,7 +152,7 @@ python3 "$here/expect.py" 900 \
 	'Password for shop@' "$inv_pw\\n" \
 	'Type "continue" to proceed' 'continue\n' \
 	'Accept all [a]' 'a\n' \
-	'Listening' '<detach>' \
+	'lock orders serves: detached' '' \
 	-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/add1.out" 2>&1 ||
 	{ cat "$out/add1.out"; die "lox add locksql (orders) failed"; }
 cat "$out/add1.out"
@@ -227,7 +227,7 @@ if [ "$vault" = 1 ]; then
 		'attached to lock inventory' '<pause>y\n' \
 		'Vault token for http://host.docker.internal:58200:' "$E2E_VAULT_TOKEN\\n" \
 		'Type "continue" to proceed' 'continue\n' \
-		'Listening' '<detach>' \
+		'lock inventory serves: detached' '' \
 		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/add2.out" 2>&1 ||
 		{ cat "$out/add2.out"; die "lox add locksql (inventory, vault) failed"; }
 	cat "$out/add2.out"
