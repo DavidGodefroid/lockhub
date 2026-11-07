@@ -224,6 +224,28 @@ func (l *lock) submitFlags(t *testing.T, risk ticket.Risk, f ticket.Flags, sql s
 	return p.ID, id
 }
 
+// submitSQL is a ticket of risk whose masked and clear screens show sql
+// and whose requester is agent.
+func (l *lock) submitSQL(t *testing.T, risk ticket.Risk, agent, sql string) (planID, ticketID string) {
+	t.Helper()
+	hash, _ := ticket.HashOf(sql + time.Now().String())
+	fp, _ := ticket.HashOf("policy")
+	p, err := l.st.Create(plans.Binding{UID: 1000, Agent: agent, TokenHash: plans.HashToken("tok"), PolicyFP: fp, PlanHash: hash},
+		json.RawMessage(`{}`), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := ticket.NewTicket(ticket.Source{Lock: "locksql"}, risk, hash, fp, time.Now(), ticket.ClampTTL(risk, 0))
+	tk.Requester = ticket.Requester{Agent: agent, Session: "s"}
+	masked := render.MaskScreen(render.ScreenSource{Header: "crm / shop · read", Body: []render.Line{{{Text: sql}}}}, render.Masking{})
+	clear := &ticket.Screen{Header: "crm / shop · read", Body: []string{sql}}
+	id, err := l.c.SubmitClear(context.Background(), l.st, p.ID, l.calls, tk, masked, clear)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.ID, id
+}
+
 // run is the lock acting on its ticket: poll, then Begin.
 func (l *lock) run(t *testing.T, ticketID string) (*plans.Plan, *ticket.Decision, error) {
 	t.Helper()
