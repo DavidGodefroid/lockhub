@@ -409,7 +409,14 @@ start and after a loosening, the typed profile name of a production
 profile, the credentials its profile does not take from Vault. lox run runs
 each console with a terminal (`tty: true`, `stdin_open: true`) as its
 image's console account, and prints `lox attach <instance>` for each; that
-command attaches the terminal (detach: Ctrl-P Ctrl-Q). The consoles have no
+command attaches the terminal and, at a terminal, detaches by itself once
+a console that did not serve yet listens on its socket (its start questions
+answered): `lock NAME serves: detached, its console keeps running`. Attached
+to a console that already serves (to use its commands), it stays. Ctrl-P
+Ctrl-Q detaches at any time and exits 0 (`detached from NAME`); Ctrl-C at
+the console stops it. The attach does not proxy signals
+(`--sig-proxy=false`): closing the terminal only detaches, the console keeps
+running. The consoles have no
 Docker log (`logging: none`, as with their own launchers: the log would keep
 every screen), so attaching does not replay the pending question, and lox
 cannot tell which one it is: the policy review, `Apply these changes?
