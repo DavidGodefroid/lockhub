@@ -137,7 +137,7 @@ func TestAMQPDefaultFromTheManagementURL(t *testing.T) {
 	for url, want := range map[string]string{
 		"http://mq.example.com:15672":  "amqp://mq.example.com:5672",
 		"https://mq.example.com:15671": "amqps://mq.example.com:5671",
-		"http://[2001:db8::1]:15672":   "amqp://[2001:db8::1]:5672",
+		"http://[::1]:15672":           "amqp://[::1]:5672",
 	} {
 		a, err := f.Run("lockmq", fieldsOf(t, "lockmq", Defaults{}), Answers{"url": url})
 		if err != nil || a["amqp-url"] != want {

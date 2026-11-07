@@ -73,14 +73,14 @@ func TestEgressFromReviewedProfile(t *testing.T) {
 		"postgres": {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"DB.example.com\"\nport = 6432\n", want: []string{"db.example.com:6432"}},
 		"default port": {typ: "locksql", toml: "[profiles.p]\nengine = \"mariadb\"\nhost = \"host.docker.internal\"\n",
 			want: []string{"host.docker.internal:3306"}},
-		"sqlite":   {typ: "locksql", toml: "[profiles.p]\nengine = \"sqlite\"\npath = \"/data/x.db\"\n", none: "lock reaches no host"},
-		"ssh":      {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"10.0.0.5\"\n[profiles.p.ssh]\nhost = \"bastion.example.com\"\nuser = \"u\"\n", want: []string{"bastion.example.com:22"}},
-		"proxy":    {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n", none: "proxy_command"},
-		"ip":       {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"10.1.2.3\"\n", none: "10.1.2.3: an IP address"},
-		"loopback": {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"127.0.0.1\"\n", none: "lock reaches no host"},
-		"odd port": {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db.example.com\"\nport = \"5432\"\n", none: "engine, host or port cannot be read"},
-		"no file":  {typ: "locksql", none: "no config.toml"},
-		"not toml": {typ: "locksql", toml: "[profiles.p\n", none: "not TOML"},
+		"sqlite":      {typ: "locksql", toml: "[profiles.p]\nengine = \"sqlite\"\npath = \"/data/x.db\"\n", none: "lock reaches no host"},
+		"ssh":         {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"10.0.0.5\"\n[profiles.p.ssh]\nhost = \"bastion.example.com\"\nuser = \"u\"\n", want: []string{"bastion.example.com:22"}},
+		"proxy":       {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n", none: "proxy_command"},
+		"loopback":    {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"127.0.0.1\"\n", none: "lock reaches no host"},
+		"loopback v6": {typ: "lockmq", toml: "[profiles.e]\nurl = \"http://[::1]:15672\"\n", none: "lock reaches no host"},
+		"odd port":    {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db.example.com\"\nport = \"5432\"\n", none: "engine, host or port cannot be read"},
+		"no file":     {typ: "locksql", none: "no config.toml"},
+		"not toml":    {typ: "locksql", toml: "[profiles.p\n", none: "not TOML"},
 		"named profile only": {typ: "locksql", lock: "    profile: b\n",
 			toml: "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.b]\nengine = \"postgres\"\nhost = \"b.example.com\"\n", want: []string{"b.example.com:5432"}},
 		"every profile when none named": {typ: "locksql",
@@ -171,6 +171,51 @@ func TestEgressPortCollisions(t *testing.T) {
 				t.Errorf("front %v back %v", front, back)
 			}
 		})
+	}
+}
+
+// An IP address is refused before anything starts (lockhub#145): the
+// gateway answers by host name only, so the lock could never reach it.
+// The refusal names the key and the fix.
+func TestEgressRefusesIPAddresses(t *testing.T) {
+	for name, tc := range map[string]struct{ typ, vault, lock, toml, key string }{
+		"database host": {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"10.1.2.3\"\n", key: "profiles.p.host in config.toml (database): 10.1.2.3"},
+		"ssh bastion": {typ: "locksql", toml: "[profiles.shop-prod]\nengine = \"postgres\"\nhost = \"db.internal\"\n[profiles.shop-prod.ssh]\nhost = \"203.0.113.10\"\nuser = \"u\"\n",
+			key: "profiles.shop-prod.ssh.host in config.toml (ssh): 203.0.113.10"},
+		"ipv6":        {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"2001:db8::5\"\n", key: "profiles.p.host in config.toml (database): 2001:db8::5"},
+		"broker url":  {typ: "lockmq", toml: "[profiles.e]\nurl = \"http://[2001:db8::1]:15672\"\n", key: "profiles.e.url in config.toml (broker management API): 2001:db8::1"},
+		"s3 endpoint": {typ: "lockfile", toml: "[profiles.default]\nsource = \"s3\"\nbucket = \"docs\"\nendpoint = \"http://192.0.2.7:9000\"\n", key: "profiles.default.endpoint in config.toml (s3): 192.0.2.7"},
+		"sftp":        {typ: "lockfile", toml: "[profiles.default]\nsource = \"sftp\"\nhost = \"192.0.2.8\"\n", key: "profiles.default.host in config.toml (sftp): 192.0.2.8"},
+		"vault": {typ: "locksql", vault: "vault:\n  address: https://192.0.2.9:8200\n", lock: "    vault: true\n",
+			toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db.example.com\"\n", key: "vault.address in lockfamily.yaml (vault): 192.0.2.9"},
+		"one of every profile": {typ: "locksql",
+			toml: "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.b]\nengine = \"postgres\"\nhost = \"10.9.9.9\"\n", key: "profiles.b.host in config.toml (database): 10.9.9.9"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := lockConf(t, tc.typ, tc.vault, tc.lock)
+			es, err := Egresses(c, map[string]*Profile{tc.typ: profileOf(t, tc.toml)})
+			if err == nil {
+				t.Fatalf("no refusal: %+v", es)
+			}
+			for _, w := range []string{"egress of lock x: ", tc.key + " is an IP address", "name the host instead", "host.docker.internal"} {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("err lacks %q: %v", w, err)
+				}
+			}
+		})
+	}
+	// A named profile that is not the IP's: only what the lock serves.
+	c := lockConf(t, "locksql", "", "    profile: a\n")
+	if _, err := Egresses(c, map[string]*Profile{"locksql": profileOf(t, "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.b]\nengine = \"postgres\"\nhost = \"10.9.9.9\"\n")}); err != nil {
+		t.Errorf("profile a refused for b's IP: %v", err)
+	}
+}
+
+func TestIPHost(t *testing.T) {
+	for h, refused := range map[string]bool{"203.0.113.10": true, "[2001:db8::1]": true, "2001:db8::1": true, "127.0.0.1": false, "::1": false, "db.example.com": false, "host.docker.internal": false, "": false} {
+		if got := IPHost(h) != ""; got != refused {
+			t.Errorf("IPHost(%q) refused %v, want %v", h, got, refused)
+		}
 	}
 }
 
@@ -342,6 +387,22 @@ func TestEgressCollisionStopsUp(t *testing.T) {
 	}
 	if f.upCompose != "" {
 		t.Error("applied despite the collision")
+	}
+}
+
+// An SSH bastion named by its IP stops lox run before the review and
+// before anything starts, naming the key and the fix (lockhub#145).
+func TestEgressIPBastionStopsUp(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	ws := filepath.Dir(filepath.Dir(w.file))
+	os.WriteFile(filepath.Join(ws, ".locksql", "config.toml"), []byte("[profiles.p]\nengine = \"postgres\"\nhost = \"db.internal\"\n[profiles.p.ssh]\nhost = \"203.0.113.10\"\nuser = \"u\"\n"), 0o644)
+	f := newFake()
+	out, err := w.up("y\n", f)
+	if err == nil || !strings.Contains(err.Error(), "profiles.p.ssh.host in config.toml (ssh): 203.0.113.10 is an IP address") || !strings.Contains(err.Error(), "name the host instead") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Apply? [y/N]") || f.upCompose != "" {
+		t.Errorf("asked or applied despite the IP:\n%s", out)
 	}
 }
 

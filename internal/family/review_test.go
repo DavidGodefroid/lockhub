@@ -214,6 +214,24 @@ func TestShortReviewFocus(t *testing.T) {
 	}
 }
 
+// What the lock reaches by nothing is a row of its own, not a tail of the
+// egress row (lockhub#145).
+func TestShortReviewShowsUnreachable(t *testing.T) {
+	c := &Config{Locks: map[string]Lock{"o": {Type: "locksql", Image: sqlImg}}}
+	e := Egress{Endpoints: []Endpoint{{Host: "db.example.com", Port: 5432, What: "database"}}, None: []string{"profile p: proxy_command runs a program the gateway cannot follow"}}
+	var out strings.Builder
+	renderShort(&out, c, "", map[string]Facts{"o": {Egress: e.Short(), Unreachable: e.None}}, true, nil)
+	got := out.String()
+	for _, want := range []string{
+		"  egress       only db.example.com:5432\n",
+		"  unreachable  WARNING: profile p: proxy_command runs a program the gateway cannot follow\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 const shortConf = `version: 1
 hub:
   image: ` + hubImg + `

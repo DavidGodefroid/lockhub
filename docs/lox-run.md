@@ -509,9 +509,14 @@ The review shows the allowlist (the `egress` row of each lock; `lox run
 --review` lists the lines `lock <name> egress host:port (what)`), so a
 profile change that changes it is reviewed again. Fail closed: what the
 allowlist cannot name exactly is reached by nothing, and the review says why
-(`egress unreachable: …`): an IP address (the gateway answers for names; name
-the host, or `host.docker.internal` for this machine), a `proxy_command`, a
-value it cannot read. `lox doctor` checks each lock's effective egress: every
+in an `unreachable` row of its own (`egress unreachable: …` in the lines): a
+`proxy_command`, a value it cannot read. An IP address (a `host`, an
+`ssh.host`, a URL's host or the Vault address; loopback aside) is refused
+outright: the gateway answers by host name only, so the lock could never reach
+it. `lox add` refuses it as an answer, and `lox run` stops before the review,
+naming the key (`profiles.<p>.ssh.host in config.toml`) and the fix: name the
+host (a DNS name that resolves to it, or `host.docker.internal` for this
+machine). `lox doctor` checks each lock's effective egress: every
 network of its container is internal, and its gateway runs and forwards exactly
 what the last `lox run` reviewed. A hub image older than the gateway (pinned
 with `--pin`) cannot run it: the lock then reaches nothing until `lox run`
