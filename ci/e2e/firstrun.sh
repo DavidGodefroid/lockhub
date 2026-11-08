@@ -111,7 +111,7 @@ if [ -n "${E2E_HUB_IMAGE:-}" ]; then
 	hubflag="--hub-image $E2E_HUB_IMAGE"
 fi
 
-endline='Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`.'
+endline='Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.'
 
 say "lox init: no question, the hub alone"
 # shellcheck disable=SC2086

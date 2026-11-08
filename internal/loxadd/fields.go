@@ -98,8 +98,10 @@ func Fields(lock string, d Defaults) ([]Field, error) {
 		fs = []Field{nameField(d, "web")}
 	case "locklog":
 		fs = logFields(d)
+	case "lockssh":
+		fs = sshFields(d)
 	default:
-		return nil, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp or locklog")
+		return nil, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp, locklog or lockssh")
 	}
 	for i := range fs {
 		f := &fs[i]
@@ -556,4 +558,73 @@ func logFields(d Defaults) []Field {
 		productionField(nil),
 		nameField(d, "logs"),
 	}
+}
+
+// sshFields are lockssh's: one SSH host and login. The key file and a
+// known_hosts file are paths in the console's account ("~/" is its home
+// volume): lox run checks them there and offers to copy a host file in.
+// The allow rules are the commands the agent runs freely; exec lets it
+// ask for any other, each on a ticket.
+func sshFields(d Defaults) []Field {
+	host, user, port := "", "", "22"
+	name := "ssh"
+	if s := d.Source; s != nil && s.Kind == loxinit.KindSSH {
+		host, user = s.Host, s.User
+		if s.Port > 0 {
+			port = strconv.Itoa(s.Port)
+		}
+		if s.Name != "" {
+			name = s.Name
+		}
+	}
+	keyAuth := not(eq("auth", "password"))
+	n := nameField(d, cleanName(name))
+	fs := []Field{
+		{Key: "host", Label: "SSH host, a name (host.docker.internal for this machine)", Default: host, Check: checkHost},
+		{Key: "port", Label: "Port", Default: port, Check: checkPort},
+		{Key: "user", Label: "Login", Default: user, Check: text("user")},
+		{Key: "auth", Label: "Auth: key or password", Choices: []string{"key", "password"}, Default: "key", Check: oneOf("auth", "want key or password", "key", "password")},
+		{Key: "key", Label: "Private key file in the lock's home (~/ is its home; lox run offers to copy yours there)", Default: "~/.ssh/id_ed25519", Check: checkConsolePath("key"), When: keyAuth},
+		{Key: "known-hosts", Label: "Known hosts file in the lock's home", Empty: "the console's own: a new host key is confirmed at the console", Check: checkConsolePath("known-hosts")},
+		{Key: "allow", Label: "Allowed commands, separated by ;, such as uptime; df -h; systemctl status *", Empty: "none yet (edit .lockssh/config.toml)", Check: checkRules},
+		{Key: "exec", Label: "May the agent ask for other commands (each one approved on a ticket)?", YesNo: true, Default: "n", Check: func(v string, a Answers) string {
+			if checkYesNo(v, a) != "" {
+				return "exec: want y or n"
+			}
+			return ""
+		}},
+		productionField(nil),
+		{Key: "credentials", Label: "Credentials: none (an unencrypted key), ask (typed at the console's start) or vault", Choices: []string{CredNone, CredAsk, CredVault}, Default: CredNone,
+			Check: oneOf("credentials", "want none, ask or vault", CredNone, CredAsk, CredVault), When: keyAuth},
+		{Key: "credentials", Label: "Credentials: ask (the password typed at the console's start) or vault", Choices: []string{CredAsk, CredVault}, Default: CredAsk,
+			Check: oneOf("credentials", "want ask or vault", CredAsk, CredVault), When: eq("auth", "password")},
+	}
+	fs = append(fs, vaultFields(d, "secret/data/lockssh/", n.Default, nil)...)
+	return append(fs, n)
+}
+
+// checkConsolePath accepts a file path in the console's account: under
+// its home (~/...) or absolute.
+func checkConsolePath(key string) func(string, Answers) string {
+	return func(v string, _ Answers) string {
+		if r := safe(key, v); r != "" {
+			return r
+		}
+		if !strings.HasPrefix(v, "~/") && !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \t") || strings.HasSuffix(v, "/") {
+			return key + ": a file of the lock's account, such as ~/.ssh/id_ed25519"
+		}
+		return ""
+	}
+}
+
+// checkRules accepts allow rules separated by ";": no control character,
+// at least one rule.
+func checkRules(v string, _ Answers) string {
+	if r := safe("allow", v); r != "" {
+		return r
+	}
+	if len(splitRules(v)) == 0 {
+		return "allow: commands separated by ;, such as uptime; df -h"
+	}
+	return ""
 }

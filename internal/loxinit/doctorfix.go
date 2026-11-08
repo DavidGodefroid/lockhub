@@ -37,10 +37,14 @@ type doctorFix struct {
 //     its first hub-only release) wires the agents not wired yet, and
 //     lox add has run `locklog init claude` already; its .locklog/ is
 //     the user's from profile add on (lox run copies it as it is).
+//   - lockssh's --fix (v0.1.0, its first release) only takes group and
+//     others' write away from the user's files in .lockssh/ and gives
+//     back what an older --fix gave the console account.
 var doctorFixes = map[string]doctorFix{
 	"locksql":  {Min: "0.13.1", Notice: "locksql doctor --fix also wires your installed agents for your account"},
 	"lockmq":   {Min: "0.6.1"},
 	"lockhttp": {},
+	"lockssh":  {},
 }
 
 // FixNotice is what lox add says before it runs the lock's doctor with

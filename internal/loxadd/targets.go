@@ -6,6 +6,7 @@ package loxadd
 // Credential sources a profile add takes (the console asks at its start,
 // or reads Vault).
 const (
+	CredNone  = "none"
 	CredAsk   = "ask"
 	CredVault = "vault"
 )

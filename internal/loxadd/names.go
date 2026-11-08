@@ -60,7 +60,7 @@ func uniqueName(name string, taken func(string) bool) string {
 // uid, when it is one a console takes (not root, not nobody, not the
 // console's own account).
 func UIDsFor(lock string, lea bool, uid int) []int {
-	if !lea || uid <= 0 || uid == 65534 || !slices.Contains([]string{"locksql", "lockmq", "lockfile", "locklog"}, lock) ||
+	if !lea || uid <= 0 || uid == 65534 || !slices.Contains(family.AllowedUIDTypes, lock) ||
 		strconv.Itoa(uid) == family.Kinds[lock].UID {
 		return nil
 	}

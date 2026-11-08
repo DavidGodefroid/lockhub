@@ -29,13 +29,14 @@ var targetKeys = map[string][]string{
 	"lockfile": {"source", "bucket", "endpoint", "region", "path", "host", "port", "user", "auth", "key", "known-hosts", "base-dir"},
 	"lockhttp": nil,
 	"locklog":  {"only"},
+	"lockssh":  {"host", "port", "user", "auth", "key", "known-hosts", "allow", "exec"},
 }
 
 // Build is the lock the answers describe. An empty answer gives no flag.
 func Build(lock string, a Answers) (Lock, error) {
 	keys, ok := targetKeys[lock]
 	if !ok {
-		return Lock{}, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp or locklog")
+		return Lock{}, fmt.Errorf("lock: want locksql, lockmq, lockfile, lockhttp, locklog or lockssh")
 	}
 	name := a["name"]
 	if name == "" {
@@ -60,8 +61,20 @@ func Build(lock string, a Answers) (Lock, error) {
 	}
 	for _, k := range keys {
 		if v := a[k]; v != "" {
-			if lock == "locklog" && k == "only" {
+			switch {
+			case lock == "locklog" && k == "only":
 				v = normDirs(v) // locklog profile add --only does not trim
+			case lock == "lockssh" && k == "allow":
+				// One --allow per rule (lockssh profile add repeats it).
+				for _, r := range splitRules(v) {
+					l.Target = append(l.Target, "--allow", r)
+				}
+				continue
+			case lock == "lockssh" && k == "exec":
+				if yes(v) {
+					l.Target = append(l.Target, "--exec")
+				}
+				continue
 			}
 			l.Target = append(l.Target, "--"+k, v)
 		}
@@ -87,12 +100,38 @@ func takesCredentials(lock string, a Answers) bool {
 	return true
 }
 
+// yes: a y/n answer that says yes.
+func yes(v string) bool {
+	switch strings.ToLower(v) {
+	case "y", "yes":
+		return true
+	}
+	return false
+}
+
+// splitRules are the allow rules of a lockssh answer: separated by ";",
+// each trimmed, none empty.
+func splitRules(v string) []string {
+	var out []string
+	for _, r := range strings.Split(v, ";") {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // checkRequired refuses a missing key the lock's profile add needs.
 func checkRequired(lock string, a Answers) error {
 	var need []string
 	switch lock {
 	case "lockmq":
 		need = []string{"url"}
+	case "lockssh":
+		need = []string{"host", "user"}
+		if a["auth"] != "password" {
+			need = append(need, "key")
+		}
 	case "lockfile":
 		switch a["source"] {
 		case "local":

@@ -393,7 +393,7 @@ func draftAnswers(a Answers) Answers {
 }
 
 func accepted(key, v string, a Answers) bool {
-	for _, lock := range []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog"} {
+	for _, lock := range []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog", "lockssh"} {
 		fs, err := Fields(lock, Defaults{})
 		if err != nil {
 			continue
