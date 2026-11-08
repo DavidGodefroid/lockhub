@@ -10,21 +10,21 @@
 [2m lock-side feed (masked; o shows the statements in clear)[0m
 [2m 14:02:00 [0m[1mpolicy: the loosening was refused: the last approved policy applies[0m
 [2m 14:02:00 [0m[2mconsole serving[0m
-[2m 14:02:30 [0m[1;36mplan[0m[94m uid 1000[0m[2m: Q3: editions of supplier ‹?› books[0m
-          [1;36mSELECT[0m title [1;36mFROM[0m book [1;36mWHERE[0m supplier = ‹?› [1;36mLIMIT[0m 100
+[2m 14:02:30 [0m[1;36mplan[0m[94m uid 1000[0m[2m: Q3: editions of supplier ‹?›[0m
+          [1;36mSELECT[0m title [1;36mFROM[0m book [1;36mWHERE[0m supplier = ‹?›
           class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
 [2m            - a policy change in the config files was refused by the human; the last approved policy applies[0m
 [2m          reads: appdb.book · returns at most 100 rows · k-anonymity count (k=5): SELECT COUNT(*) FROM book WHERE isbn [0m[2m…[0m
 [2m          → [0mpending: ticket 01M[2m · [0m[32mdone: 93 rows in 3946 ms[0m
 [2m 14:03:50 [0m[31;1m✘ refused [E_COST][0m[1;33;1m ×11[0m weight check: estimated rows examined 1 943 473 > 200 000[2m (uid 1000)[0m
-[2m 14:05:20 [0m[1;36mplan[0m[94m uid 1000[0m[2m: Q3: editions of supplier ‹?› books[0m
+[2m 14:05:20 [0m[1;36mplan[0m[94m uid 1000[0m[2m: Q3: editions of supplier ‹?›[0m
           [1;36mSELECT[0m ‹?› ‹?›
-          [1;36mWHERE[0m a = ‹?› ‹?›
+          ‹?›
+          ‹?›
           class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
 [2m          reads: appdb.book · returns at most 100 rows · k-anonymity count (k=5): SELECT COUNT(*) FROM book WHERE isbn [0m[2m…[0m
 [2m          → [0mpending: ticket 01M[2m · [0m[35mnot submitted[0m
 [2m 14:05:21 [0m[31;1m✘ refused [THROTTLED][0m too many tickets: 20 tickets already pending (limit 20, raised by limits.max_pending); …
-
 
 
 

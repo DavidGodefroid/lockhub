@@ -100,9 +100,14 @@ can neither read nor write this channel, and nothing of it goes to the hub).
   the agent's words, the statement, its class, EXPLAIN summary and verdict,
   the verdict's reasons, the row bound and PII masking), how it was sent on
   (`pending: ticket …`) and what it gave (`done: 93 rows in 3946 ms`, an
-  error). The statement's literals (and the agent's words', a k-anonymity
-  count's) are masked as `‹?›`; `o` shows the statements in clear on this
-  screen only (they never leave `lox run`'s memory). A line the tab does not
+  error). The statement (and the agent's words, a k-anonymity count's
+  statement) shows in clear only up to its first byte that may open a
+  literal, a quoted identifier or a comment in some dialect (`'` `"` `` ` ``
+  `[` `$` `#` `--` `/*`, or a non-ASCII byte): from there on each line is
+  one `‹?›`, so no dialect's reading can show a value; numbers before it
+  are masked too, but for a `LIMIT`, `OFFSET` or `TOP` bound. `o` shows
+  the statements in clear on this screen only (they never leave
+  `lox run`'s memory). A line the tab does not
   know (a result row printed with results on) is left out.
 - **Lock-side refusals** (`refused [E_COST]: …`, a refused construct, a
   ticket not submitted because the lock's rate limits are reached,

@@ -10,14 +10,14 @@
  lock-side feed (statements IN CLEAR: o hides them)
  14:02:00 policy: the loosening was refused: the last approved policy applies
  14:02:00 console serving
- 14:02:30 plan uid 1000: Q3: editions of supplier ‹?› books
+ 14:02:30 plan uid 1000: Q3: editions of supplier ‹?›
           SELECT title FROM book WHERE supplier = 'ACME' LIMIT 100
           class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
             - a policy change in the config files was refused by the human; the last approved polic…
           reads: appdb.book · returns at most 100 rows · k-anonymity count (k=5): SELECT COUNT(*) F…
           → pending: ticket 01M · done: 93 rows in 3946 ms
  14:03:50 ✘ refused [E_COST] ×11 weight check: estimated rows examined 1 943 473 > 200 000 (uid 100…
- 14:05:20 plan uid 1000: Q3: editions of supplier ‹?› books
+ 14:05:20 plan uid 1000: Q3: editions of supplier ‹?›
           SELECT 1 -- SECRETD
           WHERE a = 'line one SECRETA
           SECRETB end' /* SECRETC */

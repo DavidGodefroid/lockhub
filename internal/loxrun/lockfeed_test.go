@@ -3,6 +3,7 @@ package loxrun
 import (
 	"math/rand/v2"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,13 +49,13 @@ func TestLockFeedPlan(t *testing.T) {
 	if p.Head != "SHOP-PROD · 10.0.0.5 / appdb · user app_ro · tier read" || p.Agent != "uid 1000" {
 		t.Errorf("head %q agent %q", p.Head, p.Agent)
 	}
-	if want := "SELECT title FROM book WHERE supplier = ‹?› AND price > ‹?› LIMIT 100"; !slices.Equal(p.Statement, []string{want}) {
+	if want := "SELECT title FROM book WHERE supplier = ‹?›"; !slices.Equal(p.Statement, []string{want}) {
 		t.Errorf("statement %q, want %q", p.Statement, want)
 	}
 	if !slices.Equal(p.clear, []string{sql}) {
 		t.Errorf("clear %q", p.clear)
 	}
-	if p.Intent != "Q3: editions of supplier ‹?› books" {
+	if p.Intent != "Q3: editions of supplier ‹?›" {
 		t.Errorf("intent %q", p.Intent)
 	}
 	if !strings.HasPrefix(p.Class, "class READ") || !strings.HasSuffix(p.Class, "verdict OK") {
@@ -202,32 +203,54 @@ func TestLockFeedSession(t *testing.T) {
 
 func TestMaskLiterals(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
-		{"SELECT a FROM t WHERE b = 'x''y' AND c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE b = ‹?› AND c = ‹?› LIMIT 10 OFFSET 5"},
-		{`WHERE email = "a@b.c"`, `WHERE email = ‹?›`},
+		{"SELECT a FROM t WHERE c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE c = ‹?› LIMIT 10 OFFSET 5"},
 		{"SELECT col1, t2.x FROM t2", "SELECT col1, t2.x FROM t2"},
-		// A backslash escapes under MySQL, not under PostgreSQL or SQLite:
-		// both readings are masked, so all from the quote on.
+		// From the first ' " ` [ $ # -- /* or non-ASCII byte on, all is
+		// masked, one ‹?› per line: no dialect's reading can show a value.
+		{"SELECT a FROM t WHERE b = 'x''y' AND c = 42 LIMIT 10", "SELECT a FROM t WHERE b = ‹?›"},
+		{`WHERE email = "a@b.c"`, `WHERE email = ‹?›`},
 		{"WHERE a = 'it\\'s SECRET' AND b = 1", "WHERE a = ‹?›"},
-		{`WHERE a = 'x\' AND b = 'SECRET'`, "WHERE a = ‹?›"},
-		{`WHERE a = "a\" , "SECRET"`, "WHERE a = ‹?›"},
-		{"SELECT `it's` FROM t WHERE x='SECRET'", "SELECT `it‹?›"},
-		{"SELECT [it's] FROM t WHERE x='SECRET'", "SELECT [it‹?›"},
-		{"SELECT `a` FROM t WHERE x = 'SECRET' AND [b] = 1", "SELECT `a` FROM t WHERE x = ‹?› AND [b] = ‹?›"},
-		{"WHERE a = $é$ SECRET $é$ AND b = 1", "WHERE a = ‹?› AND b = ‹?›"},
-		{"SELECT /* a /* b */ SECRET */ a FROM t", "SELECT ‹?› a FROM t"},
-		{"WHERE a = $1 AND b = $2", "WHERE a = $‹?› AND b = $‹?›"},
-		{"WHERE a = $$SECRET$$ AND b = $tag$x$$SECRET$tag$ LIMIT 5", "WHERE a = ‹?› AND b = ‹?› LIMIT 5"},
-		{"SELECT a -- SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
-		{"SELECT a # SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
-		{"SELECT /* SECRET\n SECRET */ a FROM t", "SELECT ‹?› a FROM t"},
-		{"WHERE a = 'line one SECRET\nSECRET end' LIMIT\n10", "WHERE a = ‹?› LIMIT\n10"},
-		{"WHERE a = 'open SECRET\nSECRET", "WHERE a = ‹?›"},
-		{"WHERE a = $q$open SECRET", "WHERE a = ‹?›"},
-		{"SELECT a /* open SECRET", "SELECT a ‹?›"},
-		{"SELECT `col` FROM t WHERE x = $1", "SELECT `col` FROM t WHERE x = $‹?›"},
+		{"SELECT `a` FROM t WHERE x = 'SECRET'", "SELECT ‹?›"},
+		{"SELECT [b] FROM t", "SELECT ‹?›"},
+		{"WHERE a = $1 AND b = 'SECRET'", "WHERE a = ‹?›"},
+		{"SELECT a # SECRET\nFROM t", "SELECT a ‹?›\n‹?›"},
+		{"SELECT a -- SECRET\nFROM t\n\nWHERE 1", "SELECT a ‹?›\n‹?›\n\n‹?›"},
+		{"SELECT a /* SECRET */ FROM t", "SELECT a ‹?›"},
+		{"SELECT a - b FROM t", "SELECT a - b FROM t"},
+		{"SELECT a / b * c FROM t", "SELECT a / b * c FROM t"},
+		{"WHERE name = é", "WHERE name = ‹?›"},
+		{"WHERE a = 1\nLIMIT 10", "WHERE a = ‹?›\nLIMIT 10"},
+		{"'SECRET'", "‹?›"},
+		// The leaks of the dialect lexer (#164 review): a PostgreSQL
+		// identifier with $, a $tag$ opening mid-identifier.
+		{`SELECT E'\'', a$E'\', 'SECRET', '`, "SELECT E‹?›"},
+		{`SELECT a$b$ , $$ x $b$ ' $$ , 'SECRET' , '`, "SELECT a‹?›"},
 	} {
 		if got := maskLiterals(c.in, true); got != c.want {
 			t.Errorf("%q: %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Whatever follows the first trigger byte never shows, wherever it is.
+func TestMaskLiteralsAfterTrigger(t *testing.T) {
+	triggers := []string{"'", `"`, "`", "[", "$", "#", "--", "/*", "é", "\x80"}
+	r := rand.New(rand.NewPCG(1, 2))
+	for range 20000 {
+		head := strings.ReplaceAll(body(r, func(string) bool { return true }), "SECRET", "x")
+		cut := len(head)
+		for _, x := range triggers {
+			if i := strings.Index(head, x); i >= 0 && i < cut {
+				cut = i
+			}
+		}
+		stmt := head[:cut] + triggers[r.IntN(len(triggers))] + body(r, func(string) bool { return true }) + "SECRET" + body(r, func(string) bool { return true })
+		got := maskLiterals(stmt, true)
+		if strings.Contains(got, "SECRET") {
+			t.Fatalf("%q masked to %q", stmt, got)
+		}
+		if strings.Count(got, "\n") != strings.Count(stmt, "\n") {
+			t.Fatalf("%q masked to %q: line breaks lost", stmt, got)
 		}
 	}
 }
@@ -237,18 +260,6 @@ func TestMaskLiterals(t *testing.T) {
 func TestMaskLiteralsProperty(t *testing.T) {
 	for seed := range int64(20000) {
 		checkMasked(t, seed)
-	}
-}
-
-// A 200-line statement, masked anew as each of its lines comes in.
-func BenchmarkMaskLongStatement(b *testing.B) {
-	line := "AND t.x = 'it''s' /* c */ AND y IN (\"a\", `b`, [c], $1) -- d"
-	for b.Loop() {
-		var clear []string
-		for range 200 {
-			clear = append(clear, line)
-			maskLiterals(strings.Join(clear, "\n"), true)
-		}
 	}
 }
 
@@ -405,7 +416,7 @@ func TestLockFeedMultiLineStatement(t *testing.T) {
 			t.Errorf("%q in clear in the statement:\n%s", v, all)
 		}
 	}
-	if !strings.HasPrefix(all, "SELECT title FROM book ‹?›\nWHERE note = ‹?›") {
+	if all != "SELECT title FROM book ‹?›\n‹?›\n‹?›\n‹?›\n‹?›" {
 		t.Errorf("statement:\n%s", all)
 	}
 	if len(p.clear) != 5 || !strings.Contains(strings.Join(p.clear, "\n"), "SECRETA") {
@@ -432,5 +443,26 @@ func TestLockFeedLoopAlertsAgain(t *testing.T) {
 	f.take([]string{"✓ done: 1 rows in 3 ms"}, f0.Add(time.Minute), RefusalLoop)
 	if n := loop(2 * time.Minute); n != 1 {
 		t.Errorf("second loop after a plan went through: %d alerts, want 1", n)
+	}
+}
+
+// A 2000-line statement is masked as its lines come in, in linear time.
+func TestLockFeedLongStatement(t *testing.T) {
+	box := planBox("SELECT a FROM t", "OK")
+	i := slices.Index(box, "│   SELECT a FROM t")
+	var lines []string
+	for n := range 2000 {
+		lines = append(lines, "│   AND t.x = 'it''s SECRET' /* c */ AND y IN (\"a\", `b`, [c], $1) -- d"+strconv.Itoa(n))
+	}
+	box = slices.Insert(box, i+1, lines...)
+	f := &LockFeed{Instance: "shop"}
+	start := time.Now()
+	f.take(box, f0, RefusalLoop)
+	if d := time.Since(start); d > 100*time.Millisecond {
+		t.Errorf("a 2000-line statement took %v", d)
+	}
+	p := f.Items[0]
+	if len(p.Statement) != 2001 || strings.Contains(strings.Join(p.Statement, "\n"), "SECRET") {
+		t.Errorf("statement: %d lines, %q…", len(p.Statement), p.Statement[:3])
 	}
 }

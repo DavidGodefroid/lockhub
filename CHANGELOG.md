@@ -10,8 +10,8 @@ digest).
   console's terminal (the docker attach `lox run` holds, which no agent
   reaches; nothing goes to the hub): its plans (class, EXPLAIN summary,
   verdict, row bound, PII masking, the decision and `done: N rows in T
-  ms`), statements' literals masked (`o` shows them in clear, on screen
-  only); its lock-side refusals with code and reason, identical ones folded
+  ms`), each statement masked from its first quote, comment or non-ASCII
+  byte on, whatever the dialect (`o` shows it in clear, on screen only); its lock-side refusals with code and reason, identical ones folded
   with a counter, a loop of three raising an alert in the global feed;
   tickets not submitted under the lock's rate limits (`THROTTLED`,
   DavidGodefroid/lockkit#150); its policy state (approved, pending,

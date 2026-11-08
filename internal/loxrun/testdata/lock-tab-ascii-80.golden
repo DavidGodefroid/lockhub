@@ -10,21 +10,21 @@
  lock-side feed (masked; o shows the statements in clear)
  14:02:00 policy: the loosening was refused: the last approved policy applies
  14:02:00 console serving
- 14:02:30 plan uid 1000: Q3: editions of supplier <?> books
-          SELECT title FROM book WHERE supplier = <?> LIMIT 100
+ 14:02:30 plan uid 1000: Q3: editions of supplier <?>
+          SELECT title FROM book WHERE supplier = <?>
           class READ - EXPLAIN: book full ~1 943 473 - est. 1 943 473 rows ex...
             - a policy change in the config files was refused by the human; t...
           reads: appdb.book - returns at most 100 rows - k-anonymity count (k...
           -> pending: ticket 01M - done: 93 rows in 3946 ms
  14:03:50 x refused [E_COST] x11 weight check: estimated rows examined 1 943 ...
- 14:05:20 plan uid 1000: Q3: editions of supplier <?> books
+ 14:05:20 plan uid 1000: Q3: editions of supplier <?>
           SELECT <?> <?>
-          WHERE a = <?> <?>
+          <?>
+          <?>
           class READ - EXPLAIN: book full ~1 943 473 - est. 1 943 473 rows ex...
           reads: appdb.book - returns at most 100 rows - k-anonymity count (k...
           -> pending: ticket 01M - not submitted
  14:05:21 x refused [THROTTLED] too many tickets: 20 tickets already pending ...
-
 
 --------------------------------------------------------------------------------
  0-9 tabs  r review policy  i status  o clear  Shift+Tab mode  a audit  ? hel...
