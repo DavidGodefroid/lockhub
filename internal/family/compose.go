@@ -127,11 +127,15 @@ type Kind struct {
 	// plan its image derives from the profile (locklog mounts), which
 	// lox run checks, reviews and mounts (locklog.go).
 	Mounts bool
+	// HomeFiles is locksql: its profile names files (tls_ca, tls_cert,
+	// tls_key, ssh.key) the console reads, "~/" being its home volume;
+	// lox run checks them there (homefiles.go).
+	HomeFiles bool
 }
 
 // Kinds are the lock types' images (their Dockerfiles).
 var Kinds = map[string]Kind{
-	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256},
+	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256, HomeFiles: true},
 	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256},
 	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512},
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
@@ -549,6 +553,37 @@ func Compose(c *Config, p Paths) string {
 		hardening(w)
 		w("    volumes:")
 		w("      - %s", q(vol+":"+home))
+	}
+	for _, name := range c.Instances() {
+		l := c.Locks[name]
+		k := Kinds[l.Type]
+		if !k.HomeFiles {
+			continue
+		}
+		// homefiles-<instance> tells, as the console's account, what each
+		// path on its stdin is in the console's filesystem (its home
+		// volume); homecopy-<instance> writes its stdin to the path it is
+		// given there (lox add, a file the human named after the review).
+		for _, s := range []struct{ svc, script string }{{"homefiles-", homeFilesScript}, {"homecopy-", homeCopyScript}} {
+			w("  %s:", q(s.svc+name))
+			w("    image: %s", q(l.Image))
+			w("    profiles: [setup]")
+			w("    user: %s", q(k.UID+":"+k.GID))
+			if s.svc == "homefiles-" {
+				w("    working_dir: %s", q(p.Workspace))
+			}
+			// $$: compose would otherwise read the script's own $ as its variables.
+			w("    entrypoint: [\"/bin/sh\", \"-c\", %s, %s]", q(strings.ReplaceAll(s.script, "$", "$$")), q(s.svc[:len(s.svc)-1]))
+			w("    network_mode: none")
+			hardening(w)
+			w("    volumes:")
+			w("      - %s", q(name+"-home:"+ConsoleHome(l.Type)))
+			if s.svc == "homefiles-" {
+				// The console's working directory holds its profile's
+				// copy, as in the console (a relative path resolves there).
+				w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
+			}
+		}
 	}
 	// profile-<type> copies the reviewed profile into its volume (lox
 	// up runs it after the human's yes), as root: the lock reads it only.

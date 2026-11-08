@@ -269,7 +269,7 @@ func applyAdd(abs, project, state, draftPath string, l loxadd.Lock, a loxadd.Ans
 		Up: func(ctx context.Context, focus string) error {
 			u := &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 				User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: family.QuietExec{Verbose: verbose, Stderr: stderr},
-				In: in, Out: stdout, Review: review, Focus: focus}
+				In: in, Out: stdout, Review: review, Focus: focus, OfferCopy: true}
 			return u.Do(ctx)
 		},
 		Attach: func(_ context.Context, name string) error { return attachConsole(abs, name, stdin, stdout, stderr) },

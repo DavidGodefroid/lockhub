@@ -20,6 +20,15 @@ digest).
   (idle time, time left before `idle_timeout` and `max_session`, the limits
   in force from the console's `:status`, typed once per attach and on `i`).
   A badge marks a tab that wants you (#146).
+- The `lox add` and `lox run` review checks the files a locksql profile
+  names (`tls_ca`, `tls_cert`, `tls_key`, `ssh.key`) in the lock's home
+  volume, as the console account, with locksql's `~/` rule (one rule,
+  documented in docs/lox-add.md): a missing file gets a `file` row with
+  the command that copies it there, a private key readable by others the
+  command that runs `chmod 600` on it; a present file says nothing. `lox
+  add` offers to copy a missing file from a host path, once you answer
+  `y` (#158, follow-up of DavidGodefroid/locksql#194).
+
 - `lox attach NAME` shows the question the console actually waits for,
   read in the lock's container from the question file its console keeps
   next to its socket (DavidGodefroid/lockkit#127,
