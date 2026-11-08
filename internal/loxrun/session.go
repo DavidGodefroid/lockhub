@@ -171,23 +171,23 @@ type state struct {
 	// locks are the locks' feeds read at their consoles, by instance;
 	// tab the lock tab shown ("" the global feed), reveal whether its
 	// statements show in clear (o); loops the refusal loops' lines.
-	locks  map[string]*LockFeed
-	tab    string
-	reveal bool
-	loops  []loopAlert
-	hubOK          bool
-	hubErr         string
-	overlay        string
-	audit          auditView
-	flash          string
-	flashTo        time.Time
-	quitting       bool
-	pending        []effect
-	bell           bool
-	dirty          bool
-	muted          bool      // the sound is off (Sound.Off, the s key)
-	calledAt       time.Time // when the human was last called for the questions waiting
-	drawn          int       // frames drawn (a terminal's first one clears it)
+	locks    map[string]*LockFeed
+	tab      string
+	reveal   bool
+	loops    []loopAlert
+	hubOK    bool
+	hubErr   string
+	overlay  string
+	audit    auditView
+	flash    string
+	flashTo  time.Time
+	quitting bool
+	pending  []effect
+	bell     bool
+	dirty    bool
+	muted    bool      // the sound is off (Sound.Off, the s key)
+	calledAt time.Time // when the human was last called for the questions waiting
+	drawn    int       // frames drawn (a terminal's first one clears it)
 	keyGuard
 }
 

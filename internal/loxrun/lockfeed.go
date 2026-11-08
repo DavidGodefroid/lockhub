@@ -389,7 +389,9 @@ func (f *LockFeed) refusal(now time.Time, code, reason string, loop int) *LockIt
 	return nil
 }
 
-func (f *LockFeed) loopKey(it *LockItem) string { return it.Code + "\x00" + it.Reason + "\x00" + it.Agent }
+func (f *LockFeed) loopKey(it *LockItem) string {
+	return it.Code + "\x00" + it.Reason + "\x00" + it.Agent
+}
 
 // lastPlanFailed marks the last plan with no decision as failed (why).
 func (f *LockFeed) lastPlanFailed(why string) {
