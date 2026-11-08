@@ -603,7 +603,10 @@ outright: the gateway answers by host name only, so the lock could never reach
 it. `lox add` refuses it as an answer, and `lox run` stops before the review,
 naming the key (`profiles.<p>.ssh.host in config.toml`) and the fix: name the
 host (a DNS name that resolves to it, or `host.docker.internal` for this
-machine). `lox doctor` checks each lock's effective egress: every
+machine). The files a locksql profile names (`tls_ca`, `tls_cert`, `tls_key`,
+`ssh.key`) are checked in the lock's home volume before the review, a `file`
+row per missing or open file with the command that fixes it
+([lox-add.md](lox-add.md#the-files-a-locksql-profile-names)). `lox doctor` checks each lock's effective egress: every
 network of its container is internal, and its gateway runs and forwards exactly
 what the last `lox run` reviewed. A hub image older than the gateway (pinned
 with `--pin`) cannot run it: the lock then reaches nothing until `lox run`

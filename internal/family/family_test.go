@@ -99,6 +99,11 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 	if strings.HasSuffix(line, " --no-deps profile-locklog") {
 		return []byte("2049:131074\n"), nil
 	}
+	// locksql: the profile's files in the console's container,
+	// keys["homefiles/<instance>"].
+	if i := strings.Index(line, " --no-deps homefiles-"); i >= 0 {
+		return []byte(f.keys["homefiles/"+line[i+len(" --no-deps homefiles-"):]]), nil
+	}
 	if out, ok := f.keys["docker/"+line]; ok {
 		return []byte(out), nil
 	}

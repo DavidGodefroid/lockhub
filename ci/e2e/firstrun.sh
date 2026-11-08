@@ -16,6 +16,9 @@
 # form, the review, then the console's policy, password, privilege audit
 # and PII) — with E2E_VAULT=1, the same for inventory with credentials
 # vault — a host agent's query approved through the facade on each lock —
+# without E2E_VAULT, lockhub#158: a lock whose tls_ca is missing from its
+# home flagged at lox add, copied with the review's command, then started
+# past the console's file check —
 # lox remove (the console stops, the yaml entry goes, the profile stays
 # unless --purge) — no secret on disk (the workspace but .env, and lox
 # up's state directory).
@@ -214,6 +217,63 @@ sql_query() {
 
 say "a host agent's locksql query on orders, approved through the facade"
 sql_query orders shop customers label alpha
+
+# The ask half only: the Vault half adds its own lock.
+if [ "$vault" = 0 ]; then
+	say "lockhub#158: a tls_ca missing from the lock's home is flagged, copied with the given command"
+	# The certs profile is orders' with tls_ca = "~/db-ca.pem" (tls disable:
+	# the console only checks the file is there, before its secrets).
+	awk '/^\[/ { on = ($0 == "[profiles.orders]") } on { sub(/^\[profiles\.orders\]$/, "[profiles.certs]\ntls_ca = \"~/db-ca.pem\""); print }' \
+		.locksql/config.toml >"$out/certs.toml"
+	grep -qF 'tls_ca = "~/db-ca.pem"' "$out/certs.toml" || die "no certs profile made from orders"
+	printf '\n' >>.locksql/config.toml
+	cat "$out/certs.toml" >>.locksql/config.toml
+	# The first try is declined: nothing kept, the file not copied.
+	rc=0
+	python3 "$here/expect.py" 600 \
+		'Engine: postgres, mysql, mariadb or sqlite' '\n' \
+		'Host (required)' '\n' \
+		'Port (required)' '\n' \
+		'User (optional:' 'shop\n' \
+		'Database (optional:' 'shop\n' \
+		'Production? (tickets flagged' '\n' \
+		'Credentials: ask' '\n' \
+		'Name (required)' 'certs\n' \
+		'WARNING: tls_ca: /home/locksql/db-ca.pem (~/db-ca.pem) is not in the lock' '' \
+		"Copy tls_ca into the lock's home as /home/locksql/db-ca.pem" '\n' \
+		'Apply? [y/N]' 'n\n' \
+		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/certs1.out" 2>&1 || rc=$?
+	cat "$out/certs1.out"
+	[ "$rc" != 0 ] || die "lox add certs (declined) exited 0"
+	grep -qF 'nothing kept' "$out/certs1.out" || die "lox add certs (declined): no rollback said"
+	cmd=$(tr -d '\r' <"$out/certs1.out" | sed -n 's/^.*WARNING: tls_ca: .* copy it there: //p' | head -n 1)
+	case $cmd in "docker run --rm -i --network none --user 10001:10000 -v $p"_certs-home:/home/locksql" "*) ;; *) die "no copy command in the review: $cmd" ;; esac
+	printf '%s\n' '-----BEGIN CERTIFICATE-----' 'e2e' '-----END CERTIFICATE-----' >db-ca.pem
+	sh -c "$cmd" || die "the review's copy command failed: $cmd"
+	rm db-ca.pem
+	# The second try: no warning, the console passes its file check (it asks
+	# the password only after it), detached at that question.
+	python3 "$here/expect.py" 900 \
+		'Engine: postgres, mysql, mariadb or sqlite' '\n' \
+		'Host (required)' '\n' \
+		'Port (required)' '\n' \
+		'User (optional:' 'shop\n' \
+		'Database (optional:' 'shop\n' \
+		'Production? (tickets flagged' '\n' \
+		'Credentials: ask' '\n' \
+		'Name (required)' 'certs\n' \
+		'Apply? [y/N]' 'y\n' \
+		'Ctrl-P Ctrl-Q detaches' '<pause>y\n' \
+		'Password for shop@' '<detach>' \
+		'detached from certs' '' \
+		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/certs2.out" 2>&1 ||
+		{ cat "$out/certs2.out"; die "lox add certs failed"; }
+	cat "$out/certs2.out"
+	grep -qF 'WARNING: tls_ca' "$out/certs2.out" && die "lox add certs: tls_ca still flagged once copied"
+	[ "$(docker inspect -f '{{.State.Running}}' "$p-lock-certs-1" 2>/dev/null)" = true ] || die "the certs console is not running"
+	docker logs "$p-lock-certs-1" 2>&1 | grep -F 'tls_ca:' && die "the certs console refused its tls_ca"
+	tty 'y\n' "$lox" remove certs --purge >"$out/rm-certs.out" 2>&1 || { cat "$out/rm-certs.out"; die "lox remove certs failed"; }
+fi
 
 if [ "$vault" = 1 ]; then
 	say "lox add locksql for inventory: credentials from Vault"
