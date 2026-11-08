@@ -2,6 +2,7 @@ package loxrun
 
 import (
 	"math/rand/v2"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -203,7 +204,20 @@ func TestLockFeedSession(t *testing.T) {
 
 func TestMaskLiterals(t *testing.T) {
 	for _, c := range []struct{ in, want string }{
-		{"SELECT a FROM t WHERE c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE c = ‹?› LIMIT 10 OFFSET 5"},
+		// Every token that starts with a digit is masked whole, LIMIT and
+		// OFFSET bounds too: a hex, binary, exponent or grouped literal is
+		// a value (0x4A6F686E is 'John' in MySQL).
+		{"SELECT a FROM t WHERE c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE c = ‹?› LIMIT ‹?› OFFSET ‹?›"},
+		{"WHERE name = 0x4A6F686E", "WHERE name = ‹?›"},
+		{"WHERE b = 0b1010 OR b = 0B11", "WHERE b = ‹?› OR b = ‹?›"},
+		{"WHERE n = 1e5 OR n = 12.5E3 OR n = 1e+5 OR n = 2E-3", "WHERE n = ‹?› OR n = ‹?› OR n = ‹?›+‹?› OR n = ‹?›-‹?›"},
+		{"WHERE n = 123_456_789", "WHERE n = ‹?›"},
+		{"WHERE n = .5 OR n = 1. OR n=7", "WHERE n = .‹?› OR n = ‹?› OR n=‹?›"},
+		{"WHERE n = 0xSECRET", "WHERE n = ‹?›"},
+		{"SELECT t2.x, col_1, Q3 FROM t2", "SELECT t2.x, col_1, Q3 FROM t2"},
+		// X'..' and B'..' are cut at their quote.
+		{"WHERE name = X'4A6F686E' AND b = B'1010'", "WHERE name = X‹?›"},
+		{"WHERE b = b'1010'", "WHERE b = b‹?›"},
 		{"SELECT col1, t2.x FROM t2", "SELECT col1, t2.x FROM t2"},
 		// From the first ' " ` [ $ # -- /* or non-ASCII byte on, all is
 		// masked, one ‹?› per line: no dialect's reading can show a value.
@@ -219,7 +233,7 @@ func TestMaskLiterals(t *testing.T) {
 		{"SELECT a - b FROM t", "SELECT a - b FROM t"},
 		{"SELECT a / b * c FROM t", "SELECT a / b * c FROM t"},
 		{"WHERE name = é", "WHERE name = ‹?›"},
-		{"WHERE a = 1\nLIMIT 10", "WHERE a = ‹?›\nLIMIT 10"},
+		{"WHERE a = 1\nLIMIT 10", "WHERE a = ‹?›\nLIMIT ‹?›"},
 		{"'SECRET'", "‹?›"},
 		// The leaks of the dialect lexer (#164 review): a PostgreSQL
 		// identifier with $, a $tag$ opening mid-identifier.
@@ -273,10 +287,21 @@ func FuzzMaskLiterals(f *testing.F) {
 func checkMasked(t *testing.T, seed int64) {
 	d := sqlDialects[uint64(seed)%uint64(len(sqlDialects))]
 	stmt := d.statement(rand.New(rand.NewPCG(uint64(seed), 1)))
-	if got := maskLiterals(stmt, true); strings.Contains(got, "SECRET") {
+	got := maskLiterals(stmt, true)
+	if strings.Contains(got, "SECRET") {
 		t.Fatalf("seed %d, %s: %q masked to %q", seed, d.name, stmt, got)
 	}
+	// No token that starts with a digit shows.
+	if m := digitToken.FindString(got); m != "" {
+		t.Fatalf("seed %d, %s: %q masked to %q: %q shows", seed, d.name, stmt, got, m)
+	}
 }
+
+// digitToken is a token that starts with a digit.
+var digitToken = regexp.MustCompile(`\b\d`)
+
+// numerals are numeric literals of some dialect.
+var numerals = []string{"0x5EC", "0X5ec", "0b1010", "0B1", "1e5", "12.5E3", "1e+5", "2E-3", "123_456_789", ".5", "1.", "42", "0o17", "1_0.2_5e1_0"}
 
 // sqlDialect is how a database lexes literals, comments and quoted
 // identifiers: statement writes a random statement it reads that way.
@@ -341,7 +366,7 @@ func quoted(r *rand.Rand, q string, backslash bool) string {
 
 func (d sqlDialect) token(r *rand.Rand) string {
 	for {
-		switch r.IntN(12) {
+		switch r.IntN(14) {
 		case 0, 1:
 			return []string{"SELECT", "a", "t.x", "=", ",", "(", ")", "1", "é", "AND"}[r.IntN(10)]
 		case 2:
@@ -393,6 +418,11 @@ func (d sqlDialect) token(r *rand.Rand) string {
 			if d.dollar {
 				return "$1"
 			}
+		case 12:
+			return numerals[r.IntN(len(numerals))]
+		case 13:
+			// A digit-initial token with the SECRET glued on.
+			return numerals[r.IntN(len(numerals))] + "SECRET"
 		}
 	}
 }
@@ -421,6 +451,50 @@ func TestLockFeedMultiLineStatement(t *testing.T) {
 	}
 	if len(p.clear) != 5 || !strings.Contains(strings.Join(p.clear, "\n"), "SECRETA") {
 		t.Errorf("clear %q", p.clear)
+	}
+}
+
+// A blank line inside a statement keeps it a statement until its class
+// line: its next lines, whatever they start with, stay statement lines,
+// numbers masked (#164 review).
+func TestLockFeedBlankLineInStatement(t *testing.T) {
+	f := &LockFeed{Instance: "shop"}
+	box := planBox("SELECT a FROM t", "OK")
+	i := slices.Index(box, "│   SELECT a FROM t")
+	box = slices.Insert(box, i+1,
+		"│",
+		"│   reads: x = 4242",
+		"│",
+		"│",
+		"│   writes 0x4A6F686E",
+		"│   PII 7777",
+		"│   result: 12.5E3",
+		"│   returns at most 99",
+		"│   warning: 1e5",
+		"│   class READ 5150",
+		"│   k-anonymity count (k=5): 6161",
+		"│   - 7272")
+	f.take(box, f0, RefusalLoop)
+	p := f.Items[0]
+	want := []string{"SELECT a FROM t", "", "reads: x = ‹?›", "", "", "writes ‹?›", "PII ‹?›", "result: ‹?›",
+		"returns at most ‹?›", "warning: ‹?›", "class READ ‹?›", "k-anonymity count (k=‹?›): ‹?›", "- ‹?›"}
+	if !slices.Equal(p.Statement, want) {
+		t.Errorf("statement:\n%q\nwant\n%q", p.Statement, want)
+	}
+	if len(p.clear) != len(want) {
+		t.Errorf("clear %q", p.clear)
+	}
+	if !strings.HasPrefix(p.Class, "class READ · EXPLAIN") {
+		t.Errorf("class %q", p.Class)
+	}
+	all := strings.Join(append(append(p.Details, p.Reasons...), append(p.Statement, p.Class)...), "\n")
+	for _, v := range []string{"4242", "4A6F686E", "7777", "12.5", "5E3", "99", "1e5", "5150", "6161", "7272"} {
+		if strings.Contains(all, v) {
+			t.Errorf("%q in clear in the feed:\n%s", v, all)
+		}
+	}
+	if len(p.Details) != 4 {
+		t.Errorf("details %q", p.Details)
 	}
 }
 

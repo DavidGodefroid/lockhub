@@ -145,7 +145,8 @@ type LockFeed struct {
 
 	// The parser's state.
 	box       *LockItem
-	stage     int // in a box: 0 requester and intent, 1 statement, 2 verdict and details
+	stage     int // in a box: 0 requester and intent, 1 statement (to the class line), 2 verdict and details
+	blanks    int // blank lines of the statement not yet followed by one
 	diff      *[]string
 	diffState PolicyState
 	lastAgent string
@@ -172,15 +173,17 @@ var (
 	refusedLine = regexp.MustCompile(`^refused \[([A-Za-z0-9_.-]+)\]: (.*)$`)
 	statusEnds  = regexp.MustCompile(`ends in (\d+) min \(max_session ([^)]+)\) · idle_timeout (\S+)`)
 	startLimits = regexp.MustCompile(`^session: idle_timeout (\S+) · max_session (\S+)`)
-	number      = regexp.MustCompile(`(?i)(\b(?:limit|offset|top)\s+)?\b\d+(?:\.\d+)?\b`)
+	// number is a token that starts with a digit: a decimal, hex, binary,
+	// exponent or grouped literal (0x4A6F686E, 0b1010, 12.5E3, 123_456).
+	number = regexp.MustCompile(`\b\d[\w.]*`)
 )
 
 // maskLiterals masks s (a statement, an agent's words) from its first
 // byte that may open a literal, a quoted identifier or a comment in some
 // dialect (cut) to its end, one ‹?› per line, its line breaks kept: no
 // reading of what follows can show a value, as none is attempted. With
-// numbers, the numbers before the cut are masked too, but for a LIMIT,
-// OFFSET or TOP bound.
+// numbers, every token before the cut that starts with a digit is masked
+// too, whole, a LIMIT bound as well.
 func maskLiterals(s string, numbers bool) string {
 	m, _ := maskCut(s, numbers)
 	return m
@@ -192,12 +195,7 @@ func maskCut(s string, numbers bool) (m string, cut bool) {
 	i := cutAt(s)
 	head := s[:i]
 	if numbers {
-		head = number.ReplaceAllStringFunc(head, func(m string) string {
-			if sm := number.FindStringSubmatch(m); sm[1] != "" {
-				return m
-			}
-			return "‹?›"
-		})
+		head = number.ReplaceAllLiteralString(head, "‹?›")
 	}
 	if i == len(s) {
 		return head, false
@@ -264,7 +262,7 @@ func (f *LockFeed) line(raw string, now time.Time, loop int) *LockItem {
 	case strings.HasPrefix(t, "╭─"):
 		f.diff = nil
 		f.box = &LockItem{At: now, Kind: ItemPlan, Head: strings.TrimSpace(strings.TrimRight(strings.TrimPrefix(t, "╭─"), "─ "))}
-		f.stage = 0
+		f.stage, f.blanks = 0, 0
 		f.push(f.box)
 		f.LastActive = now
 		return nil
@@ -351,8 +349,15 @@ func (f *LockFeed) line(raw string, now time.Time, loop int) *LockItem {
 func (f *LockFeed) boxLine(c string) {
 	b := f.box
 	if strings.TrimSpace(c) == "" {
-		if f.stage < 2 {
-			f.stage++
+		// The blank line after the intent opens the statement; a blank
+		// line in the statement is kept once a line follows it.
+		switch f.stage {
+		case 0:
+			f.stage = 1
+		case 1:
+			if len(b.Statement) > 0 {
+				f.blanks++
+			}
 		}
 		return
 	}
@@ -362,8 +367,17 @@ func (f *LockFeed) boxLine(c string) {
 		f.lastAgent = b.Agent
 	case f.stage == 0 && strings.HasPrefix(c, "agent: "):
 		b.Intent = maskLiterals(strings.TrimPrefix(c, "agent: "), true)
+	case f.stage < 2 && strings.HasPrefix(c, "class "):
+		// The console indents the statement's lines: only its own
+		// class line, unindented, ends the statement.
+		f.stage, f.blanks = 2, 0
+		b.Class = c
 	case f.stage == 1:
 		c = strings.TrimSpace(c)
+		for ; f.blanks > 0; f.blanks-- {
+			b.clear = append(b.clear, "")
+			b.Statement = append(b.Statement, "")
+		}
 		// Once a line is cut, the statement's next lines are masked
 		// whole: a literal or comment may span lines.
 		b.clear = append(b.clear, c)
@@ -375,7 +389,6 @@ func (f *LockFeed) boxLine(c string) {
 		b.Statement = append(b.Statement, m)
 		b.cut = cut
 	case strings.HasPrefix(c, "class "):
-		f.stage = 2
 		b.Class = c
 	case strings.HasPrefix(c, "  - "):
 		r := strings.TrimPrefix(c, "  - ")
