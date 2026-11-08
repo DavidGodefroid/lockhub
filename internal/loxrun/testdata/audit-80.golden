@@ -2,17 +2,17 @@
  connected shop/prod! 4m · shop/dev 50s
 ────────────────────────────────────────────────────────────────────────────────
  this session's decisions (the hub's signed audit: lox audit verify)
- 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_note… ! error   
+ 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_… ! error       
             └ decided by nobody: hub refused
- 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions     ✘ denied  
+ 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions ✘ denied      
             └ decided by you
- 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com/v1/… ✔ you ✓   
+ 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com… ✔ you ✓       
             └ decided by you
- 14:03:01 web-age… ◇ mq       local    action PEEK orders.created (1… auto ✓    
+ 14:03:01 web-age… ◇ mq       local    action PEEK orders.create… auto:action ✓ 
             └ decided by rule default:action
- 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on orders   auto ✓    
+ 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on ord… auto:read ✓   
             └ decided by rule default:read
- 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connect db… ✔ you ✓   
+ 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connec… ✔ you ✓       
             └ decided by you
 
 

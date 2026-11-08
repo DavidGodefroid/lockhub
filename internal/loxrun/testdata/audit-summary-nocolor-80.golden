@@ -6,7 +6,7 @@
  │ masked plan (as the lock masked it: the hub never sees it in clear)        │
  │   SELECT id, total FROM orders WHERE customer = ‹c***(8)›                  │
  │                                                                            │
- │ decision   auto ✓  by the auto rule default:read                           │
+ │ decision   auto:read ✓  by the auto rule default:read                      │
  │ timings    asked 2026-11-06 14:02:14.000 · decided +40ms · consumed +860ms │
  │ state      consumed                                                        │
  │ signature  ✓ ticket signed by its lock's pinned key                        │

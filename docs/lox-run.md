@@ -70,9 +70,17 @@ locks' idle timeout.
 status, locks, waiting questions, connected profiles), the feed (one line per
 ticket: time, agent in a stable colour, lock icon and instance, profile in red
 for production, kind, the masked request with SQL/HTTP/MQ keywords
-highlighted and masked values set apart as `‹…›` in dim italic, the decision:
-`auto` dim green, `✔ you` green, `◆ asked` bold yellow, `✘ denied` red,
-`! error` magenta, then `✓` once the lock ran it), and the footer's keys.
+highlighted and masked values set apart as `‹…›` in dim italic, the decision
+with the rule that made it: `auto:read` (`auto:action`, `auto:session` for a
+connection or endpoint approved earlier in the session) dim green, `✔ you`
+green, `◆ ask:<why>` bold yellow (`ask:write`, `ask:connect`, `ask:lock`
+when the lock wants a human: its profile's auto rule is not auto,
+`ask:name` for a production name to type, `ask:grant`, `ask:v1`,
+`ask:unsigned`, `ask:manual`), `✘ denied` red, `! error` magenta, then `✓`
+once the lock ran it; below 64 columns `auto` and `◆ asked` alone), and the
+footer's keys. A profile whose lock asked one of its reads (`read = "ask"` in
+its auto table) shows `reads asked` next to it in the header: production
+alone never asks a read.
 Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
 framed card above the feed: what, who, which profile, the masked screen,
 why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
