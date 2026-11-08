@@ -352,3 +352,47 @@ func TestEngineProduction(t *testing.T) {
 		t.Fatalf("production reconnect: %+v", v)
 	}
 }
+
+// Every verdict names its rule in a short tag for the feed's decision
+// column (#149): auto:<action> for an approval, ask:<why> for a question.
+func TestDecideTag(t *testing.T) {
+	never := func(r Request) Request { r.NeverAuto = true; return r }
+	retype := func(r Request) Request { r.Retype = true; return r }
+	v1 := func(r Request) Request { r.V = 1; return r }
+	unverified := func(r Request) Request { r.Verified = false; return r }
+	cases := []struct {
+		name string
+		mode Mode
+		r    Request
+		tag  string
+	}{
+		{"select", Auto, req(ticket.KindRead, ticket.RiskRead, "a"), "auto:read"},
+		{"mq peek", Auto, req(ticket.KindAction, ticket.RiskRead, "a"), "auto:action"},
+		{"update", Auto, req(ticket.KindWrite, ticket.RiskWrite, "a"), "ask:write"},
+		{"ddl", Auto, req(ticket.KindDDL, ticket.RiskWrite, "a"), "ask:ddl"},
+		{"connect", Auto, req(ticket.KindConnect, ticket.RiskRead, "a"), "ask:connect"},
+		{"endpoint", Auto, req(ticket.KindEndpoint, ticket.RiskRead, "a"), "ask:endpoint"},
+		{"read = ask", Auto, never(req(ticket.KindRead, ticket.RiskRead, "a")), "ask:lock"},
+		{"grant", Auto, req(ticket.KindRead, ticket.RiskGrant, "a"), "ask:grant"},
+		{"typed name", Auto, retype(req(ticket.KindRead, ticket.RiskRead, "a")), "ask:name"},
+		{"version 1", Auto, v1(req(ticket.KindRead, ticket.RiskRead, "a")), "ask:v1"},
+		{"unverified", Auto, unverified(req(ticket.KindRead, ticket.RiskRead, "a")), "ask:unsigned"},
+		{"manual", Manual, req(ticket.KindRead, ticket.RiskRead, "a"), "ask:manual"},
+	}
+	for _, c := range cases {
+		if got := NewEngine(c.mode).Decide(c.r); got.Tag != c.tag {
+			t.Errorf("%s: tag %q, want %q (%+v)", c.name, got.Tag, c.tag, got)
+		}
+	}
+	e := NewEngine(Auto)
+	c := req(ticket.KindConnect, ticket.RiskRead, "a")
+	e.Answered(c, true)
+	if got := e.Decide(c); got.Tag != "auto:session" {
+		t.Errorf("reconnect: tag %q, want auto:session", got.Tag)
+	}
+	deny := NewEngine(Auto)
+	deny.Rules = func(_, _, _ string) ProfileRules { return ProfileRules{ActDDL: Deny} }
+	if got := deny.Decide(req(ticket.KindDDL, ticket.RiskWrite, "a")); got.Tag != "deny:ddl" {
+		t.Errorf("deny: tag %q, want deny:ddl", got.Tag)
+	}
+}

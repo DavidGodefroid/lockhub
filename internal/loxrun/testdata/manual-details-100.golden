@@ -19,12 +19,12 @@
 
 
 
- 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connect db.internal:5432/shop   ✔ you ✓   
- 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on orders                       auto ✓    
- 14:03:01 web-age… ◇ mq       local    action PEEK orders.created (10 messages)           auto ✓    
- 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com/v1/charges               ✔ you ✓   
- 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions                         ✘ denied  
- 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_notes (note) VALUES (‹re… ! error   
- 14:06:59 dev-1    ◆ shop     prod!    write  UPDATE customers SET email = ‹j***(20)› WH… ◆ asked   
+ 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connect db.internal:5432/s… ✔ you ✓       
+ 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on orders                   auto:read ✓   
+ 14:03:01 web-age… ◇ mq       local    action PEEK orders.created (10 messages)       auto:action ✓ 
+ 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com/v1/charges           ✔ you ✓       
+ 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions                     ✘ denied      
+ 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_notes (note) VALUES … ! error       
+ 14:06:59 dev-1    ◆ shop     prod!    write  UPDATE customers SET email = ‹j***(20)… ◆ ask:write   
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Shift+Tab mode  y/n answer  d details  a audit  ? help  q quit

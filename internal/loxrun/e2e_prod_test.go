@@ -3,6 +3,7 @@ package loxrun_test
 import (
 	"context"
 	"crypto/ed25519"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 )
+
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-z]")
 
 // A production profile in auto mode (#149): its connection is asked once
 // per session; a plain masked SELECT, with an OK or a WARN verdict, is
@@ -72,6 +75,11 @@ func TestRunE2EProductionAuto(t *testing.T) {
 			t.Fatalf("%s: %+v, want the human's approval", c.sql, d)
 		}
 		asked[id] = c.why
+		// An unmask is not a read its profile asks: the header must not
+		// say so before the read = ask ticket comes.
+		if c.risk == ticket.RiskReadPII && strings.Contains(ansiRE.ReplaceAllString(w.out.String(), ""), prodProfile+" reads asked") {
+			t.Errorf("an unmask marked %s reads asked", prodProfile)
+		}
 	}
 
 	// After an idle close, the connection comes back on the session's
@@ -85,6 +93,15 @@ func TestRunE2EProductionAuto(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.bells(4) // the connection and the three questions
+
+	// The feed names each line's rule, and the header says the profile's
+	// lock asks its reads.
+	screen := ansiRE.ReplaceAllString(w.out.String(), "")
+	for _, want := range []string{"auto:read", "◆ ask:connect", "◆ ask:write", "◆ ask:lock", "auto:session", prodProfile + " reads asked"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("the screen never showed %q", want)
+		}
+	}
 
 	// lox audit: the reason of every question, none on auto decisions.
 	asked[conn] = "first connection to this profile in this session"

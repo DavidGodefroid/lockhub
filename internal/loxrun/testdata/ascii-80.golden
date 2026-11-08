@@ -13,12 +13,12 @@
  +----------------------------------------------------------------------------+
 
 
- 14:02:12 dev-1    S shop     prod!    conn   shop/prod - connect ... + you ok  
- 14:02:14 dev-1    S shop     prod!    read   x 12 SELECT on orders   auto ok   
- 14:03:01 web-a... Q mq       local    action PEEK orders.created ... auto ok   
- 14:03:30 web-a... H api      stripe   route  GET api.stripe.com/v... + you ok  
- 14:04:30 dev-2    S shop     dev      ddl    DROP TABLE sessions     x denied  
- 14:05:20 dev-1    S shop     prod!    write  INSERT INTO audit_no... ! error   
- 14:06:59 dev-1    S shop     prod!    write  UPDATE customers SET... ? asked   
+ 14:02:12 dev-1    S shop     prod!    conn   shop/prod - conn... + you ok      
+ 14:02:14 dev-1    S shop     prod!    read   x 12 SELECT on o... auto:read ok  
+ 14:03:01 web-a... Q mq       local    action PEEK orders.crea... auto:action ok
+ 14:03:30 web-a... H api      stripe   route  GET api.stripe.c... + you ok      
+ 14:04:30 dev-2    S shop     dev      ddl    DROP TABLE sessions x denied      
+ 14:05:20 dev-1    S shop     prod!    write  INSERT INTO audi... ! error       
+ 14:06:59 dev-1    S shop     prod!    write  UPDATE customers... ? ask:write   
 --------------------------------------------------------------------------------
  Shift+Tab mode  y/n answer  d details  a audit  ? help  q quit

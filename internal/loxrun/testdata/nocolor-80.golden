@@ -13,12 +13,12 @@
  └────────────────────────────────────────────────────────────────────────────┘
 
 
- 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connect db… ✔ you ✓   
- 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on orders   auto ✓    
- 14:03:01 web-age… ◇ mq       local    action PEEK orders.created (1… auto ✓    
- 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com/v1/… ✔ you ✓   
- 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions     ✘ denied  
- 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_note… ! error   
- 14:06:59 dev-1    ◆ shop     prod!    write  UPDATE customers SET e… ◆ asked   
+ 14:02:12 dev-1    ◆ shop     prod!    conn   shop/prod · connec… ✔ you ✓       
+ 14:02:14 dev-1    ◆ shop     prod!    read   × 12 SELECT on ord… auto:read ✓   
+ 14:03:01 web-age… ◇ mq       local    action PEEK orders.create… auto:action ✓ 
+ 14:03:30 web-age… ⇄ api      stripe   route  GET api.stripe.com… ✔ you ✓       
+ 14:04:30 dev-2    ◆ shop     dev      ddl    DROP TABLE sessions ✘ denied      
+ 14:05:20 dev-1    ◆ shop     prod!    write  INSERT INTO audit_… ! error       
+ 14:06:59 dev-1    ◆ shop     prod!    write  UPDATE customers S… ◆ ask:write   
 ────────────────────────────────────────────────────────────────────────────────
  Shift+Tab mode  y/n answer  d details  a audit  ? help  q quit

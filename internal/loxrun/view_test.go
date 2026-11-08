@@ -52,7 +52,7 @@ func sampleView() View {
 			{At: at(200), Agent: "dev-1", Instance: "shop", Lock: "locksql", Profile: "prod", Production: true, Kind: ticket.KindWrite,
 				Summary: "INSERT INTO audit_notes (note) VALUES (<redacted>)", Status: Failed, Note: "hub refused"},
 			{At: at(299), Agent: "dev-1", Instance: "shop", Lock: "locksql", Profile: "prod", Production: true, Kind: ticket.KindWrite,
-				Summary: "UPDATE customers SET email = j***(20) WHERE id = 4***(3)", Status: Waiting},
+				Summary: "UPDATE customers SET email = j***(20) WHERE id = 4***(3)", Status: Waiting, Tag: "ask:write"},
 		},
 	}
 }
@@ -212,5 +212,48 @@ func TestTrunc(t *testing.T) {
 	}
 	if got := l.pad(10, "…").width(); got != 10 {
 		t.Errorf("pad: %d", got)
+	}
+}
+
+// The decision column names the rule of each line (#149): auto:read,
+// ask:<why>; the entries of lox audit (no tag) fall back on their rule.
+func TestStatusCellTag(t *testing.T) {
+	st := Style{Unicode: true}
+	cases := []struct {
+		e    Entry
+		want string
+	}{
+		{Entry{Status: AutoApproved, Rule: "default:read", Tag: "auto:read", Result: ResRan}, "auto:read ✓"},
+		{Entry{Status: AutoApproved, Rule: "profile:read-pii"}, "auto:read-pii"},
+		{Entry{Status: AutoApproved, Rule: "session:connect"}, "auto:session"},
+		{Entry{Status: AutoApproved}, "auto"},
+		{Entry{Status: Waiting, Tag: "ask:lock"}, "◆ ask:lock"},
+		{Entry{Status: Waiting}, "◆ asked"},
+		{Entry{Status: Approved, Tag: "ask:write"}, "✔ you"},
+	}
+	for _, c := range cases {
+		if got := statusCell(c.e, st).text(); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.e, got, c.want)
+		}
+	}
+	if got := statusCell(Entry{Status: Waiting, Tag: "ask:lock"}, Style{}).text(); got != "? ask:lock" {
+		t.Errorf("ascii: %q", got)
+	}
+}
+
+// A profile whose lock asks its reads (its auto rule for reads is ask)
+// says so in the header's connected line (#149), never implicitly.
+func TestHeaderReadsAsked(t *testing.T) {
+	v := sampleView()
+	v.Profiles[0].ReadsAsked = true
+	got := ""
+	for _, l := range header(v, 120, Style{Color: true, Unicode: true}) {
+		got += l.text() + "\n"
+	}
+	if !strings.Contains(got, "shop/prod reads asked") {
+		t.Errorf("header without the reads asked mark:\n%s", got)
+	}
+	if strings.Contains(got, "shop/dev reads asked") {
+		t.Errorf("header marks shop/dev:\n%s", got)
 	}
 }
