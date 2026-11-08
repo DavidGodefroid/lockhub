@@ -201,14 +201,21 @@ func (d *Doctor) routing(c *Config, ok, fail func(string, ...any)) {
 		fail("hub routing %s: %v", p, err)
 		return
 	}
-	// What lox run writes: hub.routing, narrowed (mobile, locklog).
+	// What lox run writes: hub.routing, narrowed (mobile, locklog,
+	// lockssh's local risks).
 	want := Routes(c)
-	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) {
+	if !sameSet(r.Enabled, want.Enabled) || len(r.Only) != len(want.Only) || len(r.LocalRisks) != len(want.LocalRisks) {
 		fail("hub routing %s differs from lockfamily.yaml: run lox run", p)
 		return
 	}
 	for inst, fs := range want.Only {
 		if got, has := r.Only[inst]; !has || !sameSet(got, fs) {
+			fail("hub routing %s: %s differs from lockfamily.yaml: run lox run", p, inst)
+			return
+		}
+	}
+	for inst, rs := range want.LocalRisks {
+		if got, has := r.LocalRisks[inst]; !has || !sameSet(got, rs) {
 			fail("hub routing %s: %s differs from lockfamily.yaml: run lox run", p, inst)
 			return
 		}

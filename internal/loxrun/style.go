@@ -156,6 +156,8 @@ func (st Style) lockIcon(lock string) string {
 		return st.g("⇄", "H")
 	case "locklog":
 		return st.g("≡", "L")
+	case "lockssh":
+		return st.g("❯", "R")
 	}
 	return st.g("●", "*")
 }

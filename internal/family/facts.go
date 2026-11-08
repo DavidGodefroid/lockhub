@@ -37,6 +37,7 @@ var factKeys = map[string][]string{
 	"locksql":  {"engine", "host", "port", "database"},
 	"lockmq":   {"url", "vhosts"},
 	"lockfile": {"source", "bucket", "endpoint", "base_dir"},
+	"lockssh":  {"user", "host", "port", "auth", "key", "known_hosts", "exec"},
 }
 
 var (
@@ -107,6 +108,41 @@ func ProfileFacts(p *Profile, typ, profile string) Facts {
 			if v := use(k, 0); v != "" {
 				parts = append(parts, k+" "+v)
 			}
+		}
+	case "lockssh":
+		// user@host:port, how it logs in, which host keys it trusts, and
+		// whether the agent may ask for commands outside the allow list.
+		addr := use("host", 's')
+		port := use("port", 'b')
+		if _, odd := f.Odd["port"]; port == "" && !odd {
+			port = "22"
+		}
+		if addr != "" {
+			if u := use("user", 's'); u != "" {
+				addr = u + "@" + addr
+			}
+			if port != "" {
+				addr += ":" + port
+			}
+			parts = append(parts, "ssh "+addr)
+		}
+		auth := use("auth", 's')
+		if auth == "" {
+			auth = "key"
+		}
+		if _, odd := f.Odd["auth"]; !odd {
+			if k := use("key", 's'); auth == "key" && k != "" {
+				auth += " " + k
+			}
+			parts = append(parts, "auth "+auth)
+		}
+		if kh := use("known_hosts", 's'); kh != "" {
+			parts = append(parts, "host keys "+kh+" only")
+		} else if _, odd := f.Odd["known_hosts"]; !odd {
+			parts = append(parts, "host keys: the console's known_hosts (a new key is confirmed at the console)")
+		}
+		if use("exec", 'b') == "true" {
+			parts = append(parts, "exec on (commands outside the allow list asked)")
 		}
 	}
 	f.Credentials = use("credentials", 's')

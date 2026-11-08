@@ -396,3 +396,47 @@ func TestDecideTag(t *testing.T) {
 		t.Errorf("deny: tag %q, want deny:ddl", got.Tag)
 	}
 }
+
+// lockssh: SSHRules map connect, run, exec and unmask onto the engine's
+// actions, unmask never auto; with no rules every lockssh action is asked.
+func TestSSHRules(t *testing.T) {
+	r := SSHRules(func(a string) string {
+		return map[string]string{"connect": "auto", "run": "deny", "exec": "ask", "unmask": "auto"}[a]
+	})
+	want := ProfileRules{ActConnect: Allow, ActRead: Deny, ActWrite: Ask, ActReadPII: Ask}
+	if len(r) != len(want) {
+		t.Fatalf("rules %v", r)
+	}
+	for k, v := range want {
+		if r[k] != v {
+			t.Errorf("%s: %s, want %s", k, r[k], v)
+		}
+	}
+	if r := SSHRules(func(string) string { return "yes" }); r[ActRead] != Ask || r[ActConnect] != Ask {
+		t.Errorf("odd values: %v", r)
+	}
+	e := NewEngine(Auto)
+	for _, c := range []struct {
+		kind ticket.Kind
+		risk ticket.Risk
+		verb string
+	}{
+		{ticket.KindConnect, ticket.RiskReadPII, ""},
+		{ticket.KindAction, ticket.RiskRead, "run"},
+		{ticket.KindAction, ticket.RiskReadPII, "unmask"},
+		{ticket.KindAction, ticket.RiskWrite, "exec"},
+		{ticket.KindAction, ticket.RiskRead, "other"},
+	} {
+		v := e.Decide(Request{Instance: "web", Lock: LockLockssh, V: ticket.VersionKinds, Kind: c.kind, Risk: c.risk,
+			Subject: &ticket.Subject{Profile: "p", Verb: c.verb}, Verified: true})
+		if v.Outcome != Question {
+			t.Errorf("no rules, %s %s: %+v", c.kind, c.verb, v)
+		}
+	}
+	// The same tickets from another lock keep the defaults: an action
+	// of risk read is approved.
+	if v := e.Decide(Request{Instance: "q", Lock: "lockmq", V: ticket.VersionKinds, Kind: ticket.KindAction, Risk: ticket.RiskRead,
+		Subject: &ticket.Subject{Profile: "p", Verb: "run"}, Verified: true}); v.Outcome != Approve {
+		t.Errorf("lockmq action: %+v", v)
+	}
+}

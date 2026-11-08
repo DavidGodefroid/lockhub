@@ -566,6 +566,16 @@ func loadRoutes(path string, locks map[string]ed25519.PublicKey) (route.Rules, e
 			return route.Rules{}, fmt.Errorf("%s: only: an instance the hub does not know", path)
 		}
 	}
+	for inst, risks := range r.LocalRisks {
+		if _, ok := locks[inst]; !ok {
+			return route.Rules{}, fmt.Errorf("%s: local_risks: an instance the hub does not know", path)
+		}
+		for _, k := range risks {
+			if !route.KnownRisk(k) {
+				return route.Rules{}, fmt.Errorf("%s: local_risks: unknown risk class (want one of %s)", path, strings.Join(route.Risks(), ", "))
+			}
+		}
+	}
 	return r, nil
 }
 

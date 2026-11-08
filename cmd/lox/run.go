@@ -82,12 +82,14 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	locks := 0
 	// Without the lock file, no lock's rules are known: the engine's
-	// defaults, and a locklog ticket's reads are asked (fail closed).
+	// defaults, and a locklog ticket's reads and every lockssh ticket are
+	// asked (fail closed).
 	var rules func(lock, instance, profile string) loxrun.ProfileRules
 	var consoleLocks []lockconsoles.Lock
 	if c, err := family.Load(abs); err == nil {
 		locks = len(c.Locks)
-		rules = profileRules(family.AppliedLogRules(stateDir(family.Project(family.Workspace(abs))), c))
+		st := stateDir(family.Project(family.Workspace(abs)))
+		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedSSHRules(st, c))
 		for _, name := range c.Instances() {
 			consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
 		}
@@ -162,21 +164,29 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 
 // profileRules are the engine's per-profile rules from the locks' own
 // auto rules as lox run applied them: a locklog ticket's lock's (by
-// instance), for the profile its console serves. A locklog ticket on
-// another of its profiles, or on an instance whose rules lox run could
-// not read (the lock file no longer loads, the instance left it), gets
-// no rules here, and the engine asks its reads (fail closed). The other
-// locks keep the defaults (nil).
-func profileRules(logs map[string]*family.LogRules) func(lock, instance, profile string) loxrun.ProfileRules {
+// instance), for the profile its console serves; a lockssh ticket's
+// lock's, for its profile. A ticket on another profile, or on an
+// instance whose rules lox run could not read (the lock file no longer
+// loads, the instance left it), gets no rules here, and the engine asks
+// it (fail closed: a locklog lock's reads, every lockssh action). The
+// other locks keep the defaults (nil).
+func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*family.LogRules) func(lock, instance, profile string) loxrun.ProfileRules {
 	return func(lock, instance, profile string) loxrun.ProfileRules {
-		if lock != loxrun.LockLocklog {
-			return nil
+		switch lock {
+		case loxrun.LockLocklog:
+			r, ok := logs[instance]
+			if !ok || r.Profile != profile {
+				return nil
+			}
+			return loxrun.LocklogRules(r.Get)
+		case loxrun.LockLockssh:
+			r, ok := ssh[instance][profile]
+			if !ok || profile == "" || r.Unknown != "" {
+				return nil
+			}
+			return loxrun.SSHRules(r.Get)
 		}
-		r, ok := logs[instance]
-		if !ok || r.Profile != profile {
-			return nil
-		}
-		return loxrun.LocklogRules(r.Get)
+		return nil
 	}
 }
 

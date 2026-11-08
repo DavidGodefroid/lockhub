@@ -381,6 +381,18 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 		default:
 			bad("source")
 		}
+	case "lockssh":
+		// One SSH host per profile (no bastion: lockssh has no ProxyJump).
+		h, hok := str("host")
+		port, pok := num(pr, "port")
+		if !hok || !pok {
+			bad("host or port")
+			return
+		}
+		if port == 0 {
+			port = 22
+		}
+		add(h, port, false, "ssh", "host")
 	case "locklog":
 		// The remote sources (Loki, Elasticsearch, OpenSearch): their url,
 		// http or https. File, journald and docker sources read mounts.
