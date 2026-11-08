@@ -154,7 +154,8 @@ type View struct {
 	Profiles  []ProfileConn
 	Cards     []Card
 	Feed      []Entry
-	// Overlay is "help" or "audit" (the session's decisions), "" none.
+	// Overlay is "help", "audit" (the session's decisions) or
+	// "withdraw" (the hub's pending tickets), "" none.
 	Overlay string
 	// Flash is a short message on the footer line.
 	Flash string
@@ -170,6 +171,8 @@ type View struct {
 	Consoles []LockConsole
 	// Sound is the session's sound state in the header (SoundNone: not shown).
 	Sound SoundState
+	// Withdraw is the w overlay (the hub's pending tickets), when open.
+	Withdraw *WithdrawView
 }
 
 // SoundState is whether a question plays a sound.
@@ -236,11 +239,13 @@ func frameLines(v View, w, h int, st Style) []line {
 	}
 	var body []line
 	switch v.Overlay {
-	case "help", "audit":
+	case "help", "audit", overlayWithdraw:
 		// An overlay reads from its top; the feed from its newest line.
 		switch {
 		case v.Overlay == "help":
 			body = helpLines(w, st)
+		case v.Overlay == overlayWithdraw && v.Withdraw != nil:
+			body = withdrawLines(v, w, room, st)
 		case v.Audit != nil:
 			body = hubAuditLines(v, w, room, st)
 		default:
@@ -718,9 +723,9 @@ func helpLines(w int, st Style) []line {
 		{"y / n", "approve / deny the question on top"},
 		{"d", "the question's whole masked screen"},
 		{"x", "forget the profile on top (none up: all): asked again, password too"},
-		{"s", "sound on / off for this session (a question plays a sound)"},
+		{"w", "pending tickets and their age: withdraw one (x), its lock's (X), unverifiable (U)"},
 		{"a", "the hub's audit (lox audit): each exchange and the rule or human that decided it"},
-		{"?", "this help; Esc or ? again to close"},
+		{"s / ?", "sound on / off (a question plays a sound) / this help; Esc or ? closes"},
 		{"q q, Ctrl-C", "quit: decisions stop, tickets wait (fail closed)"},
 	}
 	out := []line{{{" keys", sgrBold}}}

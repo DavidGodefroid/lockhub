@@ -18,6 +18,8 @@ const (
 	KeyCtrlC
 	KeyCtrlD
 	KeyUnknown
+	KeyUp
+	KeyDown
 )
 
 // Key is one key press: Code, and Rune for KeyRune.
@@ -30,8 +32,8 @@ type Key struct {
 func R(r rune) Key { return Key{Code: KeyRune, Rune: r} }
 
 // ParseKeys splits what a terminal in raw mode sent into keys. Shift+Tab
-// is CSI Z (ESC [ Z); other escape sequences (arrows, function keys) are
-// KeyUnknown; an ESC alone at the end of b is Esc (a terminal sends a
+// is CSI Z (ESC [ Z), the up and down arrows CSI or SS3 A and B; other
+// escape sequences (other arrows, function keys) are KeyUnknown; an ESC alone at the end of b is Esc (a terminal sends a
 // sequence in one write).
 func ParseKeys(b []byte) []Key {
 	var out []Key
@@ -54,9 +56,14 @@ func ParseKeys(b []byte) []Key {
 					out = append(out, Key{Code: KeyUnknown})
 					return out
 				}
-				if b[1] == '[' && i == 2 && b[i] == 'Z' {
+				switch {
+				case b[1] == '[' && i == 2 && b[i] == 'Z':
 					out = append(out, Key{Code: KeyShiftTab})
-				} else {
+				case i == 2 && b[i] == 'A':
+					out = append(out, Key{Code: KeyUp})
+				case i == 2 && b[i] == 'B':
+					out = append(out, Key{Code: KeyDown})
+				default:
 					out = append(out, Key{Code: KeyUnknown})
 				}
 				b = b[i+1:]

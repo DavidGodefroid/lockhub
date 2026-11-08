@@ -139,6 +139,9 @@ func (st *state) view() View {
 			v.Sound = SoundOff
 		}
 	}
+	if st.overlay == overlayWithdraw {
+		v.Withdraw = st.withdrawView()
+	}
 	if st.overlay == "audit" && st.s.Audit != nil {
 		a := st.audit
 		v.Audit = &a
@@ -209,6 +212,7 @@ func (st *state) onQueue(res api.QueueResult, err error) {
 		st.hubOK, st.hubErr = true, ""
 		st.observeHub(nil)
 	}
+	st.withdraw.queue = res.Tickets
 	inQueue := map[string]bool{}
 	for _, it := range res.Tickets {
 		k := key(it.Instance, it.ID)
@@ -843,6 +847,10 @@ func (st *state) onKey(k Key) bool {
 		}
 	}
 	st.flash = ""
+	if st.overlay == overlayWithdraw {
+		st.withdrawKey(k)
+		return false
+	}
 	switch k.Code {
 	case KeyShiftTab:
 		st.eng.Mode = st.eng.Mode.Toggle()
@@ -897,6 +905,9 @@ func (st *state) onKey(k Key) bool {
 		if top != nil {
 			top.card.Details = !top.card.Details
 		}
+	case 'w', 'W':
+		st.overlay = overlayWithdraw
+		st.withdraw.sel, st.withdraw.confirm = 0, nil
 	case 'x', 'X':
 		st.forgetKey(top)
 	case 's', 'S':
