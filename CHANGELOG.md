@@ -5,14 +5,22 @@ digest).
 
 ## Unreleased
 
+- `lox add` / `lox run` home-file checks (#167): a path into the
+  profile's directory (such as `tls_ca = ".locksql/ca.pem"`) is checked
+  in the copy the review applies, so a first run or a profile change no
+  longer reports it "not found"; a key in an inline table
+  (`ssh = { auth = "key", key = "…" }`) is checked, and an `ssh` value
+  the review cannot read is listed as not checked instead of skipped.
+
 - `lox run` has a tab per lock (`1`…`9`, `Tab`; `0` the global feed, the
   default) with what the lock decides on its own side, read at its
   console's terminal (the docker attach `lox run` holds, which no agent
   reaches; nothing goes to the hub): its plans (class, EXPLAIN summary,
   verdict, row bound, PII masking, the decision and `done: N rows in T
   ms`), each statement masked from its first quote, comment or non-ASCII
-  byte on, whatever the dialect (`o` shows it in clear, on screen only); its lock-side refusals with code and reason, identical ones folded
-  with a counter, a loop of three raising an alert in the global feed;
+  byte on, whatever the dialect, and every number before it (`o` shows
+  it in clear, on screen only); its lock-side refusals with code and
+  reason, identical ones folded with a counter, a loop of three raising an alert in the global feed;
   tickets not submitted under the lock's rate limits (`THROTTLED`,
   DavidGodefroid/lockkit#150); its policy state (approved, pending,
   refused: the last approved policy applies) with the change, reviewed
