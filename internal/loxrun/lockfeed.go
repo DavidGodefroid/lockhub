@@ -170,7 +170,6 @@ var (
 	refusedLine = regexp.MustCompile(`^refused \[([A-Za-z0-9_.-]+)\]: (.*)$`)
 	statusEnds  = regexp.MustCompile(`ends in (\d+) min \(max_session ([^)]+)\) · idle_timeout (\S+)`)
 	startLimits = regexp.MustCompile(`^session: idle_timeout (\S+) · max_session (\S+)`)
-	dollarTag   = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
 	number      = regexp.MustCompile(`(?i)(\b(?:limit|offset|top)\s+)?\b\d+(?:\.\d+)?\b`)
 )
 
@@ -192,63 +191,183 @@ func maskLiterals(s string, numbers bool) string {
 }
 
 // maskQuoted replaces each quoted string ('…', "…", $tag$…$tag$) and
-// comment (-- …, # …, /* … */) of s with ‹?›. A quote may span lines and
-// escape a character with \ or by doubling itself; a line comment ends at
-// its newline, which stays.
+// comment (-- …, # …, /* … */) of s with ‹?›. It fails closed: what
+// PostgreSQL, MySQL or SQLite reads as one, under any of their modes, is
+// masked. Each lexing marks the literals and comments of s as it reads
+// them, and maskQuoted masks their union. A line comment ends at its
+// newline, which stays; a literal left open masks everything after it.
 func maskQuoted(s string) string {
+	masked := make([]bool, len(s))
+	for _, l := range lexings {
+		if l.reads(s) {
+			l.mark(s, masked)
+		}
+	}
 	var b strings.Builder
-	for i := 0; i < len(s); {
-		end := literalEnd(s, i)
-		if end < 0 {
+	for i := 0; i < len(s); i++ {
+		if !masked[i] {
 			b.WriteByte(s[i])
-			i++
 			continue
 		}
 		b.WriteString("‹?›")
-		i = end
+		for i+1 < len(s) && masked[i+1] {
+			i++
+		}
 	}
 	return b.String()
 }
 
-// literalEnd is where the literal or comment opening at s[i] ends (len(s)
-// when it is left open), or -1 when none opens there.
-func literalEnd(s string, i int) int {
-	switch c := s[i]; {
-	case c == '\'' || c == '"':
-		for j := i + 1; j < len(s); j++ {
-			switch s[j] {
-			case '\\':
-				j++
-			case c:
-				if j+1 < len(s) && s[j+1] == c {
-					j++
-					continue
-				}
-				return j + 1
-			}
+// A lexing is one way a dialect may read literals and comments: whether
+// a backslash escapes in '…' (never, always, after E as in E'…') and in
+// "…", whether `…` and […] quote identifiers, whether # opens a comment,
+// whether -- needs a space after it (MySQL), whether /* … */ nests and
+// whether $tag$…$tag$ quotes (PostgreSQL).
+type lexing struct {
+	sqEscape                      int
+	dqEscape, backtick, bracket   bool
+	hash, dashSpace, nest, dollar bool
+}
+
+const (
+	escapeNever = iota
+	escapeAlways
+	escapeAfterE
+)
+
+// lexings are all the combinations of these readings.
+var lexings = func() (ls []lexing) {
+	for sq := range 3 {
+		for bits := range 1 << 7 {
+			on := func(n int) bool { return bits&(1<<n) != 0 }
+			ls = append(ls, lexing{sq, on(0), on(1), on(2), on(3), on(4), on(5), on(6)})
 		}
-		return len(s)
-	case c == '-' && strings.HasPrefix(s[i:], "--"), c == '#':
-		if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
-			return i + j
-		}
-		return len(s)
-	case c == '/' && strings.HasPrefix(s[i:], "/*"):
-		if j := strings.Index(s[i+2:], "*/"); j >= 0 {
-			return i + 2 + j + 2
-		}
-		return len(s)
-	case c == '$':
-		m := dollarTag.FindString(s[i:])
-		if m == "" {
-			return -1
-		}
-		if j := strings.Index(s[i+len(m):], m); j >= 0 {
-			return i + len(m) + j + len(m)
-		}
-		return len(s)
 	}
-	return -1
+	return ls
+}()
+
+// reads tells l reads s otherwise than the lexing without the readings s
+// has no byte for: the one lexing among those alike that marks s.
+func (l lexing) reads(s string) bool {
+	no := func(sub string) bool { return !strings.Contains(s, sub) }
+	return !((l.sqEscape != escapeNever || l.dqEscape) && no(`\`) ||
+		l.backtick && no("`") || l.bracket && no("[") || l.hash && no("#") ||
+		l.dashSpace && no("--") || l.nest && no("/*") || l.dollar && no("$"))
+}
+
+// mark sets masked over each literal and comment of s as l reads it.
+func (l lexing) mark(s string, masked []bool) {
+	fill := func(from, to int) {
+		for k := from; k < to; k++ {
+			masked[k] = true
+		}
+	}
+	for i := 0; i < len(s); {
+		end := i + 1
+		switch c := s[i]; {
+		case c == '\'':
+			esc := l.sqEscape == escapeAlways || l.sqEscape == escapeAfterE && eString(s, i)
+			end = quoteEnd(s, i, esc)
+			fill(i, end)
+		case c == '"':
+			end = quoteEnd(s, i, l.dqEscape)
+			fill(i, end)
+		case c == '`' && l.backtick:
+			end = quoteEnd(s, i, false)
+		case c == '[' && l.bracket:
+			end = closeAt(s, i+1, "]")
+		case c == '-' && strings.HasPrefix(s[i:], "--") && (!l.dashSpace || i+2 == len(s) || s[i+2] <= ' '),
+			c == '#' && l.hash:
+			end = len(s)
+			if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+				end = i + j
+			}
+			fill(i, end)
+		case c == '/' && strings.HasPrefix(s[i:], "/*"):
+			end = commentEnd(s, i, l.nest)
+			fill(i, end)
+		case c == '$' && l.dollar && dollarTag(s, i) != "":
+			tag := dollarTag(s, i)
+			end = closeAt(s, i+len(tag), tag)
+			fill(i, end)
+		}
+		i = end
+	}
+}
+
+// quoteEnd is where the quote opening at s[i] closes (len(s) when it is
+// left open): at its next quote but a doubled one, or one a backslash
+// escapes when escape.
+func quoteEnd(s string, i int, escape bool) int {
+	q := s[i]
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case '\\':
+			if escape {
+				j++
+			}
+		case q:
+			if j+1 < len(s) && s[j+1] == q {
+				j++
+				continue
+			}
+			return j + 1
+		}
+	}
+	return len(s)
+}
+
+// closeAt is the end of the first end in s from i on, len(s) without one.
+func closeAt(s string, i int, end string) int {
+	if j := strings.Index(s[i:], end); j >= 0 {
+		return i + j + len(end)
+	}
+	return len(s)
+}
+
+// commentEnd is where the comment opening at s[i] ends (len(s) when it is
+// left open); a nested one closes on its outer */.
+func commentEnd(s string, i int, nest bool) int {
+	if !nest {
+		return closeAt(s, i+2, "*/")
+	}
+	depth := 0
+	for j := i; j+1 < len(s); j++ {
+		switch s[j : j+2] {
+		case "/*":
+			depth++
+			j++
+		case "*/":
+			if depth--; depth == 0 {
+				return j + 2
+			}
+			j++
+		}
+	}
+	return len(s)
+}
+
+// eString tells a quote at s[i] opens an E'…' string: an E or e before it
+// that ends no longer identifier.
+func eString(s string, i int) bool {
+	return i > 0 && (s[i-1] == 'E' || s[i-1] == 'e') && (i == 1 || !identByte(s[i-2]))
+}
+
+// dollarTag is the $tag$ opening at s[i], or "": a tag of letters (of any
+// script), digits and _, so that $1 stays a parameter.
+func dollarTag(s string, i int) string {
+	for j := i + 1; j < len(s); j++ {
+		if s[j] == '$' {
+			return s[i : j+1]
+		}
+		if !identByte(s[j]) {
+			return ""
+		}
+	}
+	return ""
+}
+
+func identByte(c byte) bool {
+	return c == '_' || c >= 0x80 || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
 // unmark drops the marks a console paints before a line (✓, ✗, ▸…).

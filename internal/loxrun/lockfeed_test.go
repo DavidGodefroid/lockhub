@@ -1,6 +1,7 @@
 package loxrun
 
 import (
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -204,7 +205,17 @@ func TestMaskLiterals(t *testing.T) {
 		{"SELECT a FROM t WHERE b = 'x''y' AND c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE b = ‹?› AND c = ‹?› LIMIT 10 OFFSET 5"},
 		{`WHERE email = "a@b.c"`, `WHERE email = ‹?›`},
 		{"SELECT col1, t2.x FROM t2", "SELECT col1, t2.x FROM t2"},
-		{"WHERE a = 'it\\'s SECRET' AND b = 1", "WHERE a = ‹?› AND b = ‹?›"},
+		// A backslash escapes under MySQL, not under PostgreSQL or SQLite:
+		// both readings are masked, so all from the quote on.
+		{"WHERE a = 'it\\'s SECRET' AND b = 1", "WHERE a = ‹?›"},
+		{`WHERE a = 'x\' AND b = 'SECRET'`, "WHERE a = ‹?›"},
+		{`WHERE a = "a\" , "SECRET"`, "WHERE a = ‹?›"},
+		{"SELECT `it's` FROM t WHERE x='SECRET'", "SELECT `it‹?›"},
+		{"SELECT [it's] FROM t WHERE x='SECRET'", "SELECT [it‹?›"},
+		{"SELECT `a` FROM t WHERE x = 'SECRET' AND [b] = 1", "SELECT `a` FROM t WHERE x = ‹?› AND [b] = ‹?›"},
+		{"WHERE a = $é$ SECRET $é$ AND b = 1", "WHERE a = ‹?› AND b = ‹?›"},
+		{"SELECT /* a /* b */ SECRET */ a FROM t", "SELECT ‹?› a FROM t"},
+		{"WHERE a = $1 AND b = $2", "WHERE a = $‹?› AND b = $‹?›"},
 		{"WHERE a = $$SECRET$$ AND b = $tag$x$$SECRET$tag$ LIMIT 5", "WHERE a = ‹?› AND b = ‹?› LIMIT 5"},
 		{"SELECT a -- SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
 		{"SELECT a # SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
@@ -217,6 +228,160 @@ func TestMaskLiterals(t *testing.T) {
 	} {
 		if got := maskLiterals(c.in, true); got != c.want {
 			t.Errorf("%q: %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// A random statement of a dialect, with a SECRET in each of its literals
+// and comments: no SECRET shows once masked.
+func TestMaskLiteralsProperty(t *testing.T) {
+	for seed := range int64(20000) {
+		checkMasked(t, seed)
+	}
+}
+
+// A 200-line statement, masked anew as each of its lines comes in.
+func BenchmarkMaskLongStatement(b *testing.B) {
+	line := "AND t.x = 'it''s' /* c */ AND y IN (\"a\", `b`, [c], $1) -- d"
+	for b.Loop() {
+		var clear []string
+		for range 200 {
+			clear = append(clear, line)
+			maskLiterals(strings.Join(clear, "\n"), true)
+		}
+	}
+}
+
+func FuzzMaskLiterals(f *testing.F) {
+	for seed := range int64(64) {
+		f.Add(seed)
+	}
+	f.Fuzz(checkMasked)
+}
+
+func checkMasked(t *testing.T, seed int64) {
+	d := sqlDialects[uint64(seed)%uint64(len(sqlDialects))]
+	stmt := d.statement(rand.New(rand.NewPCG(uint64(seed), 1)))
+	if got := maskLiterals(stmt, true); strings.Contains(got, "SECRET") {
+		t.Fatalf("seed %d, %s: %q masked to %q", seed, d.name, stmt, got)
+	}
+}
+
+// sqlDialect is how a database lexes literals, comments and quoted
+// identifiers: statement writes a random statement it reads that way.
+type sqlDialect struct {
+	name                    string
+	sqBackslash, eStrings   bool // \ escapes in '…'; E'…' strings (\ escapes)
+	dq                      byte // '"' : "…" is a string; 'i': an identifier
+	dqBackslash             bool
+	backtick, bracket, hash bool
+	dashSpace, nest, dollar bool
+}
+
+var sqlDialects = []sqlDialect{
+	{name: "postgres", eStrings: true, dq: 'i', nest: true, dollar: true},
+	{name: "mysql", sqBackslash: true, dq: '"', dqBackslash: true, backtick: true, hash: true, dashSpace: true},
+	{name: "mysql ansi", sqBackslash: true, dq: 'i', backtick: true, hash: true, dashSpace: true},
+	{name: "mysql no backslash", dq: '"', backtick: true, hash: true, dashSpace: true},
+	{name: "sqlite", dq: 'i', backtick: true, bracket: true},
+}
+
+// tricky are the bytes that open or close something in some dialect.
+var tricky = []string{"'", `"`, "`", "[", "]", `\`, "$", "$$", "$é$", "/*", "*/", "--", "#", "\n", " ", "é", "x", "1", "E"}
+
+func (d sqlDialect) statement(r *rand.Rand) string {
+	var b strings.Builder
+	for range 1 + r.IntN(8) {
+		b.WriteString(d.token(r))
+		b.WriteByte(' ')
+	}
+	return b.String()
+}
+
+// body is random content holding a SECRET, none of whose bytes is in
+// banned; closing ends it but for a byte doubled or escaped by the caller.
+func body(r *rand.Rand, ok func(string) bool) string {
+	var b strings.Builder
+	n := 1 + r.IntN(6)
+	at := r.IntN(n)
+	for i := range n {
+		if i == at {
+			b.WriteString("SECRET")
+		}
+		if p := tricky[r.IntN(len(tricky))]; ok(b.String() + p) {
+			b.WriteString(p)
+		}
+	}
+	return b.String()
+}
+
+func quoted(r *rand.Rand, q string, backslash bool) string {
+	s := body(r, func(string) bool { return true })
+	esc := strings.ReplaceAll(s, q, q+q)
+	if backslash {
+		esc = strings.ReplaceAll(s, `\`, `\\`)
+		esc = strings.ReplaceAll(esc, q, `\`+q)
+		if r.IntN(2) == 0 {
+			esc = strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), q, q+q)
+		}
+	}
+	return q + esc + q
+}
+
+func (d sqlDialect) token(r *rand.Rand) string {
+	for {
+		switch r.IntN(12) {
+		case 0, 1:
+			return []string{"SELECT", "a", "t.x", "=", ",", "(", ")", "1", "é", "AND"}[r.IntN(10)]
+		case 2:
+			return quoted(r, "'", d.sqBackslash)
+		case 3:
+			if d.eStrings {
+				return "E" + quoted(r, "'", true)
+			}
+		case 4:
+			if d.dq == '"' {
+				return quoted(r, `"`, d.dqBackslash)
+			}
+			// A quoted identifier: masked all the same.
+			return quoted(r, `"`, false)
+		case 5:
+			if d.backtick {
+				s := body(r, func(string) bool { return true })
+				return "`" + strings.ReplaceAll(strings.ReplaceAll(s, "SECRET", "ident"), "`", "``") + "`"
+			}
+		case 6:
+			if d.bracket {
+				s := body(r, func(s string) bool { return !strings.Contains(s, "]") })
+				return "[" + strings.ReplaceAll(s, "SECRET", "ident") + "]"
+			}
+		case 7:
+			s := body(r, func(s string) bool { return !strings.Contains(s, "\n") })
+			return "-- " + s + "\n"
+		case 8:
+			if d.hash {
+				s := body(r, func(s string) bool { return !strings.Contains(s, "\n") })
+				return "#" + s + "\n"
+			}
+		case 9:
+			if d.nest {
+				s := body(r, func(s string) bool {
+					return !strings.Contains(s, "/*") && !strings.Contains(s, "*/") && !strings.HasSuffix(s, "/") && !strings.HasSuffix(s, "*")
+				})
+				return "/* /* " + s + " */ SECRET */"
+			}
+			s := body(r, func(s string) bool { return !strings.Contains(s, "*/") && !strings.HasSuffix(s, "*") })
+			return "/*" + s + "*/"
+		case 10:
+			if d.dollar {
+				tag := []string{"", "q", "é", "tag_1"}[r.IntN(4)]
+				s := body(r, func(s string) bool { return !strings.Contains(s, "$"+tag+"$") && !strings.HasSuffix(s, "$") })
+				return "$" + tag + "$" + s + "$" + tag + "$"
+			}
+		case 11:
+			if d.dollar {
+				return "$1"
+			}
 		}
 	}
 }
