@@ -5,6 +5,26 @@ digest).
 
 ## Unreleased
 
+- lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
+  or password, the key and known_hosts files in the lock's home, the allow
+  rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to
+  `ghcr.io/davidgodefroid/lockssh` (v0.1.0 or later; shipped: v0.1.0). The
+  console runs as `10041`, its clients group `10040`, with its launcher's
+  limits; its egress reaches the profile's `host`:`port` only (an IP address
+  refused); the review shows `ssh user@host:port`, the login and the trusted
+  host keys, and checks the key and known_hosts in the lock's home (with the
+  command that copies them there). lox run reads its auto rules (`lockssh
+  profile rules --json`: connect, run, exec, unmask), keeps them in
+  `lockssh/<instance>/rules.json` and applies them by verb; `unmask` and a
+  production `exec` are never auto, and unknown rules ask everything. A
+  lockssh lock's `read-pii` is never answered in a chat: `routing.json`'s new
+  `local_risks`, which the hub applies and `lox doctor` checks. `lox init`
+  lists the lockssh launcher and proposes the plain hosts of
+  `~/.ssh/config`. e2e: `ci/e2e/lockssh-agent.sh`, a host agent's `lockssh
+  mcp` against an SSH server in a container. Supported locks: lockssh joins
+  `lox run` (lockssh v0.1.0 or later; `lox run` upgrades an older image to
+  v0.1.0).
+
 - Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
   ticket pending at the hub, oldest first, with its age, per lock with
   how many lox run cannot verify; `x` withdraws the selected one, `X` all
