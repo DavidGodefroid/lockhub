@@ -18,7 +18,9 @@
 # vault — a host agent's query approved through the facade on each lock —
 # without E2E_VAULT, lockhub#158: a lock whose tls_ca is missing from its
 # home flagged at lox add, copied with the review's command, then started
-# past the console's file check —
+# past the console's file check; lockhub#167: a relative tls_ca in the
+# profile's directory not flagged, an inline ssh table's missing key
+# flagged —
 # lox remove (the console stops, the yaml entry goes, the profile stays
 # unless --purge) — no secret on disk (the workspace but .env, and lox
 # up's state directory).
@@ -273,6 +275,36 @@ if [ "$vault" = 0 ]; then
 	[ "$(docker inspect -f '{{.State.Running}}' "$p-lock-certs-1" 2>/dev/null)" = true ] || die "the certs console is not running"
 	docker logs "$p-lock-certs-1" 2>&1 | grep -F 'tls_ca:' && die "the certs console refused its tls_ca"
 	tty 'y\n' "$lox" remove certs --purge >"$out/rm-certs.out" 2>&1 || { cat "$out/rm-certs.out"; die "lox remove certs failed"; }
+
+	say "lockhub#167: a relative CA in the profile's directory passes, an inline SSH key table is checked"
+	# The rel profile is orders' with tls_ca in .locksql/ (only in the copy
+	# this review applies: the volume holds the previous one) and a key
+	# file in an inline ssh table, missing from the lock's home.
+	awk '/^\[/ { on = ($0 == "[profiles.orders]") } on { sub(/^\[profiles\.orders\]$/, "[profiles.rel]\ntls_ca = \".locksql/rel-ca.pem\"\nssh = { host = \"bastion.invalid\", auth = \"key\", key = \"~/.ssh/id_e2e\" }"); print }' \
+		.locksql/config.toml >"$out/rel.toml"
+	grep -qF 'tls_ca = ".locksql/rel-ca.pem"' "$out/rel.toml" || die "no rel profile made from orders"
+	printf '\n' >>.locksql/config.toml
+	cat "$out/rel.toml" >>.locksql/config.toml
+	printf '%s\n' '-----BEGIN CERTIFICATE-----' 'e2e' '-----END CERTIFICATE-----' >.locksql/rel-ca.pem
+	rc=0
+	python3 "$here/expect.py" 600 \
+		'Engine: postgres, mysql, mariadb or sqlite' '\n' \
+		'Host (required)' '\n' \
+		'Port (required)' '\n' \
+		'User (optional:' 'shop\n' \
+		'Database (optional:' 'shop\n' \
+		'Production? (tickets flagged' '\n' \
+		'Credentials: ask' '\n' \
+		'Name (required)' 'rel\n' \
+		'WARNING: ssh.key: /home/locksql/.ssh/id_e2e (~/.ssh/id_e2e) is not in the lock' '' \
+		"Copy ssh.key into the lock's home as /home/locksql/.ssh/id_e2e" '\n' \
+		'Apply? [y/N]' 'n\n' \
+		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/rel.out" 2>&1 || rc=$?
+	cat "$out/rel.out"
+	[ "$rc" != 0 ] || die "lox add rel (declined) exited 0"
+	grep -qF 'WARNING: tls_ca' "$out/rel.out" && die "lox add rel: the relative tls_ca in .locksql/ flagged"
+	grep -qF 'WARNING: ssh: ' "$out/rel.out" && die "lox add rel: the inline ssh table not read"
+	rm .locksql/rel-ca.pem
 fi
 
 if [ "$vault" = 1 ]; then
