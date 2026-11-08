@@ -252,3 +252,94 @@ func TestOfferCopyCopiesAfterYes(t *testing.T) {
 		t.Errorf("empty answer: %v\n%s", err, out)
 	}
 }
+
+// lockhub#167: inline tables are looked into; a form the review cannot
+// read is listed, not skipped.
+func TestProfileFileKeysInlineTable(t *testing.T) {
+	p := tomlProfile(`[profiles.p]`, `tls_ca = ".locksql/ca.pem"`, `ssh = { host = "bastion", auth = "key", key = "~/.ssh/id" }  # the bastion`)
+	got, odd := ProfileFileKeys(p, "")
+	if want := []FileKey{{"tls_ca", ".locksql/ca.pem"}, {"ssh.key", "~/.ssh/id"}}; !reflect.DeepEqual(got, want) || odd != nil {
+		t.Errorf("inline: %v %v", got, odd)
+	}
+	p = tomlProfile(`[profiles.p]`, `ssh = {auth='agent', key="~/k"}`)
+	if got, odd := ProfileFileKeys(p, ""); got != nil || odd != nil {
+		t.Errorf("inline agent: %v %v", got, odd)
+	}
+	for _, v := range []string{
+		`{ auth = "key", key = "a\"b" }`,
+		`{ auth = "key", opts = { x = 1 }, key = "~/k" }`,
+		`{ auth = "key", key = "~/k"`,
+		`{ auth = "key" key = "~/k" }`,
+		`"bastion"`,
+	} {
+		p = tomlProfile(`[profiles.p]`, `ssh = `+v)
+		if got, odd := ProfileFileKeys(p, ""); got != nil || !reflect.DeepEqual(odd, []string{"ssh"}) {
+			t.Errorf("%s: %v %v", v, got, odd)
+		}
+	}
+}
+
+func TestReviewInlineSSHKey(t *testing.T) {
+	prof := "[profiles.orders]\nengine = \"postgres\"\nhost = \"db.example.com\"\nssh = { host = \"b\", auth = \"key\", key = \"~/.ssh/id\" }\n"
+	w, f := homeWS(t, prof)
+	f.keys["homefiles/orders"] = "missing\n"
+	out, err := w.up("y\n", f)
+	if err != nil || !strings.Contains(out, "WARNING: ssh.key: /home/locksql/.ssh/id (~/.ssh/id) is not in the lock's home volume") {
+		t.Errorf("missing key: %v\n%s", err, out)
+	}
+	w, f = homeWS(t, prof)
+	f.keys["homefiles/orders"] = "ok 600\n"
+	if out, err := w.up("y\n", f); err != nil || strings.Contains(out, "WARNING") || strings.Contains(out, "warning:") {
+		t.Errorf("present key: %v\n%s", err, out)
+	}
+	w, f = homeWS(t, "[profiles.orders]\nengine = \"postgres\"\nhost = \"db.example.com\"\nssh = { auth = \"key\", key = \"a\\\"b\" }\n")
+	if out, err := w.up("y\n", f); err != nil || !strings.Contains(out, "WARNING: ssh: not a table the review can read") {
+		t.Errorf("odd inline: %v\n%s", err, out)
+	}
+}
+
+// lockhub#167: a path into the profile's directory is checked against the
+// copy the review applies, not the volume's previous one (empty on a first
+// run, the old profile after a change).
+func TestReviewRelativeProfileFile(t *testing.T) {
+	w, f := homeWS(t, "[profiles.orders]\nengine = \"postgres\"\nhost = \"db.example.com\"\ntls_ca = \".locksql/ca.pem\"\n")
+	dir := filepath.Join(w.dir, "projects", ".locksql")
+	os.WriteFile(filepath.Join(dir, "ca.pem"), []byte("PEM\n"), 0o644)
+	// The volume would say missing: it is not asked.
+	f.keys["homefiles/orders"] = "missing\n"
+	out, err := w.up("y\n", f)
+	if err != nil || strings.Contains(out, "WARNING") || strings.Contains(out, "warning:") || f.ran("homefiles-") {
+		t.Fatalf("first run: %v %v\n%s", err, f.calls, out)
+	}
+	// A profile change: the new files are in the new copy only.
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[profiles.orders]\nengine = \"postgres\"\nhost = \"db.example.com\"\ntls_ca = \".locksql/certs/new-ca.pem\"\ntls_key = \"./.locksql/client.key\"\n"), 0o644)
+	os.Mkdir(filepath.Join(dir, "certs"), 0o700)
+	os.WriteFile(filepath.Join(dir, "certs", "new-ca.pem"), []byte("PEM\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "client.key"), []byte("KEY\n"), 0o600)
+	f2 := &fake{keys: f.keys}
+	out, err = w.up("y\n", f2)
+	if err != nil || strings.Contains(out, "WARNING") || strings.Contains(out, "warning:") || f2.ran("homefiles-") {
+		t.Fatalf("changed profile: %v %v\n%s", err, f2.calls, out)
+	}
+	// Missing from the directory, a directory, a key others can read:
+	// each said with the host's fix.
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[profiles.orders]\nengine = \"postgres\"\nhost = \"db.example.com\"\ntls_ca = \".locksql/absent.pem\"\ntls_cert = \".locksql/certs\"\ntls_key = \".locksql/open.key\"\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "open.key"), []byte("KEY\n"), 0o640)
+	f3 := &fake{keys: f.keys}
+	out, err = w.up("y\n", f3)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"WARNING: tls_ca: .locksql/absent.pem is not in the profile's directory: write it " + filepath.Join(dir, "absent.pem") + " (the review copies it)",
+		"WARNING: tls_cert: .locksql/certs is not a regular file",
+		"WARNING: tls_key: .locksql/open.key is readable by others (mode 0644): chmod 600 " + filepath.Join(dir, "open.key"),
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("review lacks %q:\n%s", want, out)
+		}
+	}
+	if f3.ran("homefiles-") {
+		t.Errorf("homefiles run: %v", f3.calls)
+	}
+}
