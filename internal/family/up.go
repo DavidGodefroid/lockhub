@@ -93,6 +93,10 @@ type Up struct {
 	// LogHost is what a locklog lock's mount plan is checked against
 	// (nil: this host).
 	LogHost *LogHost
+	// OfferCopy (lox add, at a terminal): before Apply?, a file key of the
+	// focus lock missing from its home volume is offered a host file to
+	// copy there, copied once the human said yes.
+	OfferCopy bool
 	// Upgrade (lox run) replaces the pinned images older than the
 	// releases this lox ships with, once verified (upgrade.go); nil: the
 	// pins are applied as they are.
@@ -577,6 +581,45 @@ func (u *Up) Do(ctx context.Context) error {
 		plans[n] = pl
 	}
 
+	// The files the locksql profiles name, checked in each console's
+	// container now that its home volume exists (homefiles.go): what the
+	// console would refuse at its start is said in the review.
+	homeWarn := map[string][]string{}
+	homeMissing := map[string][]HomeFile{}
+	if !u.Probe {
+		for _, n := range c.Instances() {
+			l := c.Locks[n]
+			if !Kinds[l.Type].HomeFiles {
+				continue
+			}
+			fk, odd := ProfileFileKeys(profiles[l.Type], LockProfile(l))
+			if len(fk) == 0 && len(odd) == 0 {
+				continue
+			}
+			files, err := u.checkHomeFiles(ctx, project, composeYAML, n, l.Type, fk)
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			homeWarn[n] = HomeFileWarnings(project, n, l, files, odd, err)
+			if err == nil {
+				for _, h := range files {
+					if h.State == "missing" && h.InHome(l.Type) {
+						homeMissing[n] = append(homeMissing[n], h)
+					}
+				}
+			}
+		}
+	}
+	// warnHome says the file warnings where no short block shows them.
+	warnHome := func() {
+		for _, n := range c.Instances() {
+			for _, w := range homeWarn[n] {
+				fmt.Fprintf(u.Out, "warning: lock %s: %s\n", n, w)
+			}
+		}
+	}
+	var copies []homeCopy
+
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := append(Summary(c, hp, lockPubs, facadePubs), chatTokens(c, hubData)...)
@@ -648,10 +691,12 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if prev.Fingerprint == fp {
 		fmt.Fprintln(u.Out, "configuration unchanged since the last lox run")
+		warnHome()
 	} else if d := diff(prev.Summary, sum); !first && !u.Review && onlyUpgrades(d, ups) {
 		// The new images change nothing that was reviewed: the profiles,
 		// the policies and every other line are the ones applied before.
 		fmt.Fprintln(u.Out, "only the upgraded images changed since the last lox run: applied without a question")
+		warnHome()
 	} else {
 		switch {
 		case u.Review && first:
@@ -686,6 +731,7 @@ func (u *Up) Do(ctx context.Context) error {
 				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
 				f.Egress = egresses[n].Short()
 				f.Unreachable = egresses[n].None
+				f.Files = homeWarn[n]
 				facts[n] = f
 			}
 			var changed []string
@@ -713,6 +759,9 @@ func (u *Up) Do(ctx context.Context) error {
 		if u.Review && !first && caChanged(d) {
 			fmt.Fprintln(u.Out, vaultCANote)
 		}
+		if u.Review {
+			warnHome()
+		}
 		if u.DryRun {
 			fmt.Fprintln(u.Out, "dry run: nothing applied")
 			return nil
@@ -720,6 +769,11 @@ func (u *Up) Do(ctx context.Context) error {
 		if len(c.Locks) == 0 && countLocks(prev.Summary) == 0 && !u.Review {
 			fmt.Fprintln(u.Out, "Hub only, no lock: nothing can reach a credential yet; applied without a question (--review shows everything and asks)")
 		} else {
+			if u.OfferCopy {
+				if copies, err = u.askCopies(ctx, u.Focus, homeMissing[u.Focus]); err != nil {
+					return err
+				}
+			}
 			fmt.Fprint(u.Out, "Apply? [y/N] ")
 			a, err := readAnswer(ctx, u.In)
 			if cerr := ctx.Err(); cerr != nil {
@@ -838,6 +892,12 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "hubkey", hp)...); err != nil {
 		return fmt.Errorf("hub key for the locks: %w", err)
+	}
+	for _, cp := range copies {
+		if _, err := u.runSetup(ctx, project, composeYAML, cp.content, "homecopy-"+cp.lock, cp.dst); err != nil {
+			return fmt.Errorf("lock %s: copying %s to %s: %w", cp.lock, cp.key, cp.dst, err)
+		}
+		fmt.Fprintf(u.Out, "lock %s: %s copied to %s\n", cp.lock, cp.key, cp.dst)
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
 		return err
@@ -1165,7 +1225,7 @@ func validPub(s string) bool {
 // runSetup runs the setup service svc of the compose file with stdin on
 // its stdin (the compose file is then read from a private file in the
 // state directory, not from stdin).
-func (u *Up) runSetup(ctx context.Context, project string, composeYAML, stdin []byte, svc string) ([]byte, error) {
+func (u *Up) runSetup(ctx context.Context, project string, composeYAML, stdin []byte, svc string, args ...string) ([]byte, error) {
 	f, err := os.CreateTemp(u.State, ".compose-*.yaml")
 	if err != nil {
 		return nil, err
@@ -1178,8 +1238,8 @@ func (u *Up) runSetup(ctx context.Context, project string, composeYAML, stdin []
 	if err != nil {
 		return nil, err
 	}
-	return u.Run.Run(ctx, stdin, "docker", "compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
-		"run", "--rm", "-T", "--no-deps", svc)
+	return u.Run.Run(ctx, stdin, "docker", append([]string{"compose", "-p", project, "--project-directory", u.State, "--env-file", os.DevNull, "-f", f.Name(),
+		"run", "--rm", "-T", "--no-deps", svc}, args...)...)
 }
 
 var devInoLine = regexp.MustCompile(`^[0-9]{1,20}:[0-9]{1,20}$`)
