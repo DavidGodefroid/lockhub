@@ -187,7 +187,8 @@ if jq -e '.data.status == "pending"' run1.json >/dev/null 2>&1; then
 fi
 masked run1.json
 jq -e '.data.exit_status == 0' run1.json >/dev/null || die "lockssh_run: cat did not exit 0"
-grep -q '⟦email:' run1.json || die "lockssh_run: the output holds no e-mail pseudonym"
+# mcp.py prints JSON: the pseudonyms' brackets are \u escapes there.
+jq -r '.. | strings' run1.json | grep -q '⟦email:' || die "lockssh_run: the output holds no e-mail pseudonym"
 
 say "a host agent: a command outside the allow list, pending on the hub (exec)"
 touched=/home/deploy/lockssh-$E2E_ID
