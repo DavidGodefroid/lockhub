@@ -5,6 +5,13 @@ digest).
 
 ## Unreleased
 
+- `lox run` keeps a session password per profile and endpoint (#165): a
+  profile with two `credentials = "ask"` legs (an SSH bastion, then its
+  database) asks each leg its own password once, the prompt names the
+  endpoint, the database leg right after the bastion's is no longer
+  taken for a failed reconnect, and an idle reconnect reuses each leg's
+  own password without asking.
+
 - Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
   ticket pending at the hub, oldest first, with its age, per lock with
   how many lox run cannot verify; `x` withdraws the selected one, `X` all

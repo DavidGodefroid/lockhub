@@ -460,8 +460,13 @@ func TestParseKeys(t *testing.T) {
 // connectItem is a connect ticket of an "ask" profile that asks for the
 // password, sealed to priv's public half.
 func (k lockKey) connectItem(t *testing.T, profile string, priv *ecdh.PrivateKey) api.QueueItem {
+	return k.connectItemAt(t, profile, "db.internal:5432", priv)
+}
+
+// connectItemAt is connectItem to endpoint.
+func (k lockKey) connectItemAt(t *testing.T, profile, endpoint string, priv *ecdh.PrivateKey) api.QueueItem {
 	return k.item(t, ticket.KindConnect, ticket.RiskRead, profile, "connect", func(tk *ticket.Ticket) {
-		tk.Subject.Endpoint = "db.internal:5432"
+		tk.Subject.Endpoint = endpoint
 		tk.Subject.Credential = ticket.CredentialAsk
 		tk.Subject.SecretTo = ticket.EncodeX25519(priv.PublicKey())
 	})
@@ -579,6 +584,76 @@ func TestSessionWrongPasswordAskedAgain(t *testing.T) {
 	h.wait(EvDecided, c4.ID)
 	if s := sealed(t, hub, lk, c4, k4); s != "other" {
 		t.Fatalf("sealed %q", s)
+	}
+}
+
+// A profile with two "ask" legs (an SSH bastion, then its database right
+// after it) keeps one password per endpoint (#165): the second leg is
+// asked its own, not sealed the first's nor taken for a quick
+// reconnect, and each leg's next connect reuses its own.
+func TestSessionSecretPerEndpoint(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
+		s.Size = func() (int, int) { return 140, 40 } // draws the prompt
+	})
+	key := func() *ecdh.PrivateKey { k, _ := ecdh.X25519().GenerateKey(rand.Reader); return k }
+	consume := func(id string) {
+		hub.mu.Lock()
+		hub.states[id] = "consumed"
+		hub.mu.Unlock()
+		if e := h.wait(EvResult, id); e.Result != ResRan {
+			t.Fatalf("%+v", e)
+		}
+	}
+	const ssh, db = "bastion.internal:22", "db.internal:5432/shop"
+
+	k1 := key()
+	c1 := lk.connectItemAt(t, "dev", ssh, k1)
+	hub.push(c1)
+	h.wait(EvQuestion, c1.ID)
+	h.keys <- R('y')
+	typeIn(h, "sshpw")
+	h.wait(EvDecided, c1.ID)
+	if s := sealed(t, hub, lk, c1, k1); s != "sshpw" {
+		t.Fatalf("sealed %q", s)
+	}
+	consume(c1.ID)
+
+	// The database leg, right after the bastion's: its own password.
+	k2 := key()
+	c2 := lk.connectItemAt(t, "dev", db, k2)
+	hub.push(c2)
+	h.wait(EvQuestion, c2.ID)
+	if strings.Contains(h.output(), "right after connecting") {
+		t.Fatalf("the second leg was taken for a quick reconnect:\n%s", h.output())
+	}
+	h.keys <- R('y')
+	h.keys <- Key{Code: KeyEnter}
+	noDecision(t, hub, c2.ID, "Enter alone sealed the bastion's password to the database")
+	if !strings.Contains(h.output(), "password for shop/dev ("+db+")") {
+		t.Fatalf("the prompt does not name the leg:\n%s", h.output())
+	}
+	typeIn(h, "dbpw")
+	h.wait(EvDecided, c2.ID)
+	if s := sealed(t, hub, lk, c2, k2); s != "dbpw" {
+		t.Fatalf("sealed %q, want the database's", s)
+	}
+	consume(c2.ID)
+	runRead(t, h, hub, lk)
+
+	// Reconnect: each leg is the session's, with its own password.
+	for _, c := range []struct{ ep, want string }{{ssh, "sshpw"}, {db, "dbpw"}} {
+		k := key()
+		it := lk.connectItemAt(t, "dev", c.ep, k)
+		hub.push(it)
+		if e := h.wait(EvDecided, it.ID); e.Rule != "session:connect" {
+			t.Fatalf("%s: %+v, want session:connect", c.ep, e)
+		}
+		if s := sealed(t, hub, lk, it, k); s != c.want {
+			t.Fatalf("%s: sealed %q, want %q", c.ep, s, c.want)
+		}
+		consume(it.ID)
 	}
 }
 

@@ -306,10 +306,12 @@ func (st *state) add(it api.QueueItem) {
 	dropped := false
 	if ran, ok := st.ran[t.profileKey]; ok {
 		delete(st.ran, t.profileKey)
-		if tk.Kind == ticket.KindConnect && st.s.ReconnectAsk > 0 && now.Sub(ran) < st.s.ReconnectAsk {
+		if tk.Kind == ticket.KindConnect && st.s.ReconnectAsk > 0 && now.Sub(ran.at) < st.s.ReconnectAsk &&
+			ran.endpoint == endpointOf(tk) {
 			// It connected and asks again before anything ran on it: the
 			// connection did not work. The same credentials are not
-			// sent again on their own.
+			// sent again on their own. A connect to another endpoint is
+			// the profile's next leg (its database behind a bastion).
 			st.forget(it.Instance, t.req.Profile())
 			t.gen = st.gen[t.profileKey]
 			dropped = true
@@ -342,9 +344,11 @@ func (st *state) add(it api.QueueItem) {
 // them back.
 func (st *state) forget(instance, profile string) {
 	pk := instance + "/" + profile
-	if s, ok := st.secrets[pk]; ok {
-		clear(s)
-		delete(st.secrets, pk)
+	for k, s := range st.secrets {
+		if k.profile == pk {
+			clear(s)
+			delete(st.secrets, k)
+		}
 	}
 	st.eng.Forget(instance, profile)
 	delete(st.conns, pk)
@@ -399,15 +403,37 @@ func needsSecret(t *tracked) bool {
 	return t.tk != nil && t.tk.Kind == ticket.KindConnect && t.tk.Subject != nil && t.tk.Subject.SecretTo != ""
 }
 
+// secretKey keys a session secret: the profile and the endpoint the lock
+// connected to with it.
+type secretKey struct{ profile, endpoint string }
+
+// ranAt is when, and to which endpoint, the lock last connected on a
+// profile.
+type ranAt struct {
+	at       time.Time
+	endpoint string
+}
+
+func endpointOf(tk *ticket.Ticket) string {
+	if tk == nil || tk.Subject == nil {
+		return ""
+	}
+	return tk.Subject.Endpoint
+}
+
+func (t *tracked) secretKey() secretKey {
+	return secretKey{t.profileKey, endpointOf(t.tk)}
+}
+
 // cachedSecret is the secret typed earlier in this session for an "ask"
-// profile that the lock connected with (a copy: the caller wipes it),
-// nil otherwise. A Vault token is
+// profile's endpoint that the lock connected with (a copy: the caller
+// wipes it), nil otherwise. A Vault token is
 // asked each time the lock asks: it asks only once its own expired.
 func (st *state) cachedSecret(t *tracked) []byte {
 	if t.tk.Subject.Credential != ticket.CredentialAsk {
 		return nil
 	}
-	if s, ok := st.secrets[t.profileKey]; ok {
+	if s, ok := st.secrets[t.secretKey()]; ok {
 		return slices.Clone(s)
 	}
 	return nil
@@ -694,20 +720,20 @@ func (st *state) settleConnect(t *tracked, ran bool) {
 	if !ran {
 		clear(secret)
 		if t.cached {
-			if s, ok := st.secrets[t.profileKey]; ok {
+			if s, ok := st.secrets[t.secretKey()]; ok {
 				clear(s)
-				delete(st.secrets, t.profileKey)
+				delete(st.secrets, t.secretKey())
 			}
 			st.eng.Disconnect(t.instance, t.req.Profile())
 		}
 		return
 	}
-	st.ran[t.profileKey] = st.s.now()
+	st.ran[t.profileKey] = ranAt{st.s.now(), endpointOf(t.tk)}
 	if secret != nil {
-		if old, ok := st.secrets[t.profileKey]; ok {
+		if old, ok := st.secrets[t.secretKey()]; ok {
 			clear(old)
 		}
-		st.secrets[t.profileKey] = secret
+		st.secrets[t.secretKey()] = secret
 	}
 	if t.human {
 		st.eng.Answered(t.req, true)
@@ -978,14 +1004,20 @@ func (st *state) approve(t *tracked) {
 			return
 		}
 		t.promptKind = promptSecret
-		label := "password for " + clean(t.profileKey) + ":"
+		// The endpoint tells a profile's legs apart (its bastion, its
+		// database): each asks its own password.
+		of := clean(t.profileKey)
+		if ep := clean(t.tk.Subject.Endpoint); ep != "" {
+			of += " (" + ep + ")"
+		}
+		label := "password for " + of + ":"
 		if t.tk.Subject.Credential == ticket.CredentialVault {
-			label = "Vault token for " + clean(t.profileKey) + " (its token expired):"
+			label = "Vault token for " + of + " (its token expired):"
 		}
 		p := &Prompt{Label: label, Secret: true}
 		if c := st.cachedSecret(t); c != nil {
 			clear(c)
-			p.Label = "password for " + clean(t.profileKey) + " (Enter alone: this session's):"
+			p.Label = "password for " + of + " (Enter alone: this session's):"
 			p.Default = true
 		}
 		t.card.Prompt = p
