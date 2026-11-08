@@ -18,13 +18,13 @@
           → pending: ticket 01M · done: 93 rows in 3946 ms
  14:03:50 ✘ refused [E_COST] ×11 weight check: estimated rows examined 1 943 473 > 200 000 (uid 100…
  14:05:20 plan uid 1000: Q3: editions of supplier ‹?› books
-          SELECT 1
+          SELECT 1 -- SECRETD
+          WHERE a = 'line one SECRETA
+          SECRETB end' /* SECRETC */
           class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
           reads: appdb.book · returns at most 100 rows · k-anonymity count (k=5): SELECT COUNT(*) F…
           → pending: ticket 01M · not submitted
  14:05:21 ✘ refused [THROTTLED] too many tickets: 20 tickets already pending (limit 20, raised by l…
-
-
 
 
 
