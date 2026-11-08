@@ -229,6 +229,42 @@ func TestProfileFileKeysLockssh(t *testing.T) {
 	if got, _ := ProfileFileKeys(tomlProfile(`[profiles.p]`, `key = "~/k"`), "locksql", ""); got != nil {
 		t.Errorf("key on locksql: %v", got)
 	}
+	// An inline ssh table is locksql's bastion (lockhub#167): on lockssh it
+	// adds no ssh.key and is not listed as unreadable; its own keys stay.
+	for _, v := range []string{`{ auth = "key", key = "~/.ssh/bastion" }`, `{ auth = "key", opts = { x = 1 } }`} {
+		p = tomlProfile(`[profiles.prod]`, `host = "web1"`, `key = "~/.ssh/id"`, `ssh = `+v)
+		if got, odd := ProfileFileKeys(p, "lockssh", ""); !reflect.DeepEqual(got, []FileKey{{"key", "~/.ssh/id"}}) || odd != nil {
+			t.Errorf("inline ssh on lockssh %s: %v %v", v, got, odd)
+		}
+	}
+}
+
+// lockhub#167 on lockssh: a key and known_hosts into the profile's
+// directory are checked in the reviewed copy, not in the home volume.
+func TestUpLocksshProfileFiles(t *testing.T) {
+	w := newWS(t, sshConf("    profile: prod\n"))
+	dir := filepath.Join(w.dir, "projects", ".lockssh")
+	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("[profiles.prod]\nhost = \"web1.example.com\"\nuser = \"deploy\"\nkey = \".lockssh/id\"\nknown_hosts = \".lockssh/known_hosts\"\nssh = { auth = \"key\", key = \"~/.ssh/bastion\" }\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "id"), []byte("KEY\n"), 0o640)
+	f := newFake()
+	f.keys["web"] = pubKey()
+	f.keys["rules/web"] = sshRulesJSON("ask", "auto", "ask", "ask", "prod")
+	f.keys["homefiles/web"] = "missing\nmissing\n"
+	out, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"WARNING: key: .lockssh/id is readable by others (mode 0644): chmod 600 " + filepath.Join(dir, "id"),
+		"WARNING: known_hosts: .lockssh/known_hosts is not in the profile's directory: write it " + filepath.Join(dir, "known_hosts") + " (the review copies it)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("review lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "ssh.key") || strings.Contains(out, "ssh: not a table") || f.ran("homefiles-") {
+		t.Errorf("inline ssh or volume check on lockssh: %v\n%s", f.calls, out)
+	}
 }
 
 // lockssh profile rules --json is read strictly, as locklog's: the four

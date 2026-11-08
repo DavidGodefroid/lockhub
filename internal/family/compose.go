@@ -602,6 +602,8 @@ func Compose(c *Config, p Paths) string {
 			if s.svc == "homefiles-" {
 				// The console's working directory holds its profile's
 				// copy, as in the console (a relative path resolves there).
+				// Paths into it are checked in the reviewed copy, not
+				// here: this one is the last applied (homefiles.go).
 				w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
 			}
 		}
