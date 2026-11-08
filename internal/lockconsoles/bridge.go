@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,15 @@ type Docker interface {
 	Question(ctx context.Context, id, dir string) (string, error)
 	// Attach is the command that attaches to the container's terminal.
 	Attach(ctx context.Context, id string) *exec.Cmd
+}
+
+// Logger is a Docker that reads what a container printed (docker logs):
+// the bridge reads the lines a console printed before it attached (its
+// start, a policy change refused there) for the lock's feed.
+type Logger interface {
+	// Logs is what container id printed since since, or its last tail
+	// lines when since is zero.
+	Logs(ctx context.Context, id string, since time.Time, tail int) ([]byte, error)
 }
 
 // Exec is Docker through the docker CLI, on the compose project lox run
@@ -80,6 +90,21 @@ func (d Exec) Question(ctx context.Context, id, dir string) (string, error) {
 	}
 	q, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
 	return strings.TrimSpace(q), nil
+}
+
+func (d Exec) Logs(ctx context.Context, id string, since time.Time, tail int) ([]byte, error) {
+	args := []string{"logs"}
+	if since.IsZero() {
+		args = append(args, "--tail", strconv.Itoa(tail))
+	} else {
+		args = append(args, "--since", since.UTC().Format(time.RFC3339Nano))
+	}
+	// A console runs in a terminal: its output is all on stdout.
+	out, err := exec.CommandContext(ctx, "docker", append(args, id)...).Output()
+	if err != nil {
+		return nil, cmdErr(err)
+	}
+	return out, nil
 }
 
 func (d Exec) Attach(ctx context.Context, id string) *exec.Cmd {
@@ -127,7 +152,11 @@ type Bridge struct {
 	wg     sync.WaitGroup
 }
 
-var _ loxrun.Consoles = (*Bridge)(nil)
+var (
+	_ loxrun.Consoles         = (*Bridge)(nil)
+	_ loxrun.ConsoleCommander = (*Bridge)(nil)
+	_ Logger                  = Exec{}
+)
 
 // console is one lock's console as the bridge follows it.
 type console struct {
@@ -144,7 +173,17 @@ type console struct {
 	output   chan struct{}
 	state    loxrun.ConsoleState
 	err      string
+	// id is the container attached to; detached when the last attach
+	// ended (the next one reads the logs printed since); statusAsked: the
+	// console's :status was typed in this attach.
+	id          string
+	detached    time.Time
+	statusAsked bool
 }
+
+// backlog is how many of a console's last lines are read at the first
+// attach.
+const backlog = 200
 
 // Start follows locks until ctx ends or Close. On a system without a
 // pseudo-terminal each one is reported unreachable (lox attach reaches
@@ -193,6 +232,48 @@ func (b *Bridge) Answer(instance string, seq int, answer []byte) error {
 	}
 	c.question, c.answered = nil, true
 	c.scr.Mark()
+	return nil
+}
+
+// Command types line (one of the console's own commands: :review,
+// :status) and Enter at instance's console, when it serves and asks
+// nothing: its question file is read again first, so that a line is
+// never typed as the answer to a question.
+func (b *Bridge) Command(instance, line string) error {
+	b.mu.Lock()
+	c, ok := b.cons[instance]
+	if !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("no console %q", instance)
+	}
+	id, serving := c.id, c.master != nil && c.question == nil && c.state == loxrun.ConsoleServing
+	b.mu.Unlock()
+	if !serving {
+		return errors.New("the console is not serving, or it asks something")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	q, err := b.d.Question(ctx, id, "/run/"+c.Type)
+	if err != nil {
+		return err
+	}
+	if q != "" {
+		return errors.New("the console asks something: answer it first")
+	}
+	return b.typeLine(c, line)
+}
+
+// typeLine types line and Enter at c's terminal, if it is attached and
+// asks nothing.
+func (b *Bridge) typeLine(c *console, line string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if c.master == nil || c.question != nil {
+		return errors.New("the console is not serving, or it asks something")
+	}
+	if _, err := c.master.WriteString(line + "\r"); err != nil {
+		return fmt.Errorf("cannot type at the console's terminal: %w", err)
+	}
 	return nil
 }
 
@@ -282,6 +363,7 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 		slave.Close()
 		return err
 	}
+	b.backlog(ctx, c, id)
 	// The attach outlives ctx by the detach: it is killed only when it
 	// does not end on the detach keys.
 	actx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -296,7 +378,7 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 	}
 	slave.Close()
 	b.mu.Lock()
-	c.master, c.question, c.answered = master, nil, false
+	c.master, c.question, c.answered, c.id, c.statusAsked = master, nil, false, id, false
 	b.mu.Unlock()
 
 	done := make(chan struct{})
@@ -354,8 +436,10 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 		case <-settled:
 			settled = nil
 			b.look(ctx, c, id)
+			b.flush(ctx, c)
 		case <-tick.C:
 			b.look(ctx, c, id)
+			b.flush(ctx, c)
 		}
 	}
 }
@@ -367,9 +451,57 @@ func isExit(err error) bool {
 
 func (b *Bridge) detach(c *console, master *os.File) {
 	b.mu.Lock()
-	c.master, c.question = nil, nil
+	c.master, c.question, c.detached = nil, nil, time.Now()
 	b.mu.Unlock()
 	master.Close()
+}
+
+// backlog hands lox run what c's console printed before this attach:
+// its last lines at the first attach, what it printed since the last
+// one after (a restart's start, a policy change refused there).
+func (b *Bridge) backlog(ctx context.Context, c *console, id string) {
+	lg, ok := b.d.(Logger)
+	if !ok {
+		return
+	}
+	b.mu.Lock()
+	since := c.detached
+	b.mu.Unlock()
+	lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := lg.Logs(lctx, id, since, backlog)
+	if err != nil || len(out) == 0 {
+		return
+	}
+	var scr screen
+	scr.Write(out)
+	scr.endLine() // a last line without its newline (a prompt) is read too
+	lines, status, set := scr.Take()
+	b.send(ctx, loxrun.ConsoleEvent{Instance: c.Instance, Lock: c.Type,
+		Feed: &loxrun.ConsoleFeed{Lines: lines, Status: status, StatusSet: set, Backlog: true}})
+}
+
+// flush hands lox run the lines c's console printed since the last
+// flush, for the lock's feed. Once per attach, when the console serves
+// (its status row is drawn) and asks nothing, it types :status for the
+// limits in force (a line typed counts as the human's activity for the
+// console's idle timeout: once per attach only).
+func (b *Bridge) flush(ctx context.Context, c *console) {
+	b.mu.Lock()
+	lines, status, set := c.scr.Take()
+	ask := !c.statusAsked && c.scr.status != "" && c.question == nil && !c.answered &&
+		c.state == loxrun.ConsoleServing && c.master != nil
+	if ask {
+		c.statusAsked = true
+	}
+	b.mu.Unlock()
+	if len(lines) > 0 || set {
+		b.send(ctx, loxrun.ConsoleEvent{Instance: c.Instance, Lock: c.Type,
+			Feed: &loxrun.ConsoleFeed{Lines: lines, Status: status, StatusSet: set}})
+	}
+	if ask {
+		_ = b.Command(c.Instance, ":status")
+	}
 }
 
 // look reads c's pending question and tells what changed.

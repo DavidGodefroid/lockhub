@@ -125,3 +125,95 @@ func TestBridge(t *testing.T) {
 		t.Errorf("answers typed: %q", got)
 	}
 }
+
+// feedConsole serves (its status row drawn as lockkit draws it), prints
+// two refusals, and writes the lines typed at it (its commands).
+const feedConsole = `
+D=$1
+stty icrnl 2>/dev/null
+printf '\033[1;32m✗\033[0m refused [E_COST]: weight check\n'
+E=$(printf '\033')
+printf '%s' "${E}7${E}[24;1H${E}[2KSHOP-PROD · policy change pending :review${E}8"
+printf '✗ refused [E_COST]: weight check\n'
+while IFS= read -r l; do echo "$l" >> "$D/typed"; echo "typed $l"; done
+`
+
+type feedDocker struct{ fakeDocker }
+
+func (f feedDocker) Attach(ctx context.Context, _ string) *exec.Cmd {
+	return exec.CommandContext(ctx, "sh", "-c", feedConsole, "sh", f.dir)
+}
+
+func (f feedDocker) Logs(context.Context, string, time.Time, int) ([]byte, error) {
+	return []byte("changes refused: the last approved policy applies\r\n"), nil
+}
+
+// The bridge hands lox run what a console printed: its backlog (docker
+// logs) first, then its lines and status row as they come; it types
+// :status once the console serves, and a command lox run asks for.
+func TestBridgeFeed(t *testing.T) {
+	if _, err := exec.LookPath("stty"); err != nil {
+		t.Skip("no stty")
+	}
+	defer func(p, s, r time.Duration) { poll, settle, retry = p, s, r }(poll, settle, retry)
+	poll, settle, retry = 50*time.Millisecond, 20*time.Millisecond, 50*time.Millisecond
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := Start(ctx, feedDocker{fakeDocker{dir}}, []Lock{{Instance: "shop", Type: "locksql"}})
+	defer b.Close()
+
+	var lines []string
+	var status string
+	backlog := false
+	to := time.After(10 * time.Second)
+	for !strings.Contains(strings.Join(lines, "\n"), "typed :status") {
+		select {
+		case e := <-b.Events():
+			if e.Feed == nil {
+				continue
+			}
+			if e.Feed.Backlog {
+				backlog = len(lines) == 0 && strings.Contains(strings.Join(e.Feed.Lines, "\n"), "changes refused")
+			}
+			lines = append(lines, e.Feed.Lines...)
+			if e.Feed.StatusSet {
+				status = e.Feed.Status
+			}
+		case <-to:
+			t.Fatalf("no :status typed; lines %q", lines)
+		}
+	}
+	if !backlog {
+		t.Errorf("the backlog did not come first: %q", lines)
+	}
+	n := 0
+	for _, l := range lines {
+		if strings.Contains(l, "refused [E_COST]: weight check") {
+			n++
+		}
+		if strings.Contains(l, "\x1b") {
+			t.Errorf("an escape in a feed line: %q", l)
+		}
+	}
+	if n != 2 || status != "SHOP-PROD · policy change pending :review" {
+		t.Errorf("refusals %d status %q; lines %q", n, status, lines)
+	}
+	if err := b.Command("shop", ":review"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		got, _ := os.ReadFile(filepath.Join(dir, "typed"))
+		if string(got) == ":status\n:review\n" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("typed: %q", got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := b.Command("nope", ":review"); err == nil {
+		t.Error("a command typed at an unknown console")
+	}
+}

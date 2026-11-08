@@ -32,7 +32,17 @@ type screen struct {
 	saved bool
 	// pending holds the bytes of a UTF-8 rune cut between two writes.
 	pending []byte
+	// fresh are the lines ended since the last Take (the per-lock feed);
+	// row the status row being drawn, status the last one drawn and
+	// statusSet whether it changed since the last Take.
+	fresh     []string
+	row       []rune
+	status    string
+	statusSet bool
 }
+
+// maxFresh bounds the lines kept between two Takes.
+const maxFresh = 400
 
 // Write takes output bytes; it never fails.
 func (s *screen) Write(p []byte) (int, error) {
@@ -93,9 +103,14 @@ func (s *screen) escByte(b byte) {
 		s.inEsc = false
 		switch b {
 		case '7':
-			s.saved = true
+			s.saved, s.row = true, s.row[:0]
 		case '8':
 			s.saved = false
+			// The console clears it and sets its scroll region the same
+			// way: only a row with text is its status.
+			if r := strings.TrimSpace(string(s.row)); r != "" && r != s.status {
+				s.status, s.statusSet = r, true
+			}
 		}
 	}
 	if len(s.esc) > 64 {
@@ -105,6 +120,9 @@ func (s *screen) escByte(b byte) {
 
 func (s *screen) ctl(r rune) {
 	if s.saved {
+		if r >= 0x20 && r != 0x7f && len(s.row) < maxLine {
+			s.row = append(s.row, r)
+		}
 		return
 	}
 	switch r {
@@ -139,6 +157,10 @@ func (s *screen) put(r rune) {
 
 func (s *screen) endLine() {
 	s.lines = append(s.lines, string(s.cur))
+	s.fresh = append(s.fresh, string(s.cur))
+	if len(s.fresh) > maxFresh {
+		s.fresh = s.fresh[len(s.fresh)-maxFresh:]
+	}
 	s.cur, s.col = s.cur[:0], 0
 	if len(s.lines) > maxLines {
 		s.lines = s.lines[len(s.lines)-maxLines:]
@@ -171,4 +193,16 @@ func (s *screen) Last(n int) []string {
 // next question).
 func (s *screen) Mark() {
 	s.lines, s.cur, s.col = s.lines[:0], s.cur[:0], 0
+}
+
+// Take returns the lines ended since the last Take, each one cleaned for
+// a terminal, and the status row when it changed (set).
+func (s *screen) Take() (lines []string, status string, set bool) {
+	for _, l := range s.fresh {
+		lines = append(lines, strings.TrimRight(sanitize.Terminal(l, false), " "))
+	}
+	s.fresh = nil
+	status, set = sanitize.Terminal(s.status, false), s.statusSet
+	s.statusSet = false
+	return lines, status, set
 }

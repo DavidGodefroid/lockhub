@@ -5,6 +5,21 @@ digest).
 
 ## Unreleased
 
+- `lox run` has a tab per lock (`1`…`9`, `Tab`; `0` the global feed, the
+  default) with what the lock decides on its own side, read at its
+  console's terminal (the docker attach `lox run` holds, which no agent
+  reaches; nothing goes to the hub): its plans (class, EXPLAIN summary,
+  verdict, row bound, PII masking, the decision and `done: N rows in T
+  ms`), statements' literals masked (`o` shows them in clear, on screen
+  only); its lock-side refusals with code and reason, identical ones folded
+  with a counter, a loop of three raising an alert in the global feed;
+  tickets not submitted under the lock's rate limits (`THROTTLED`,
+  DavidGodefroid/lockkit#150); its policy state (approved, pending,
+  refused: the last approved policy applies) with the change, reviewed
+  from the tab (`r` types `:review`, the question is a card); its session
+  (idle time, time left before `idle_timeout` and `max_session`, the limits
+  in force from the console's `:status`, typed once per attach and on `i`).
+  A badge marks a tab that wants you (#146).
 - `lox attach NAME` shows the question the console actually waits for,
   read in the lock's container from the question file its console keeps
   next to its socket (DavidGodefroid/lockkit#127,
