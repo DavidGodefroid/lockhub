@@ -107,8 +107,15 @@ can neither read nor write this channel, and nothing of it goes to the hub).
   one `‹?›`, so no dialect's reading can show a value; numbers before it
   are masked too, but for a `LIMIT`, `OFFSET` or `TOP` bound. `o` shows
   the statements in clear on this screen only (they never leave
-  `lox run`'s memory). A line the tab does not
-  know (a result row printed with results on) is left out.
+  `lox run`'s memory). The tab reads only the console's own lines: an
+  unindented line in a format it knows, and the indented lines of the
+  block such a line opens (a `:status`, a policy change). A result the
+  console prints in clear (results on, or `PII: UNMASKED`) is printed
+  indented under its title: from that title on, every indented line is
+  left out until the console's next known line, so no cell is ever read
+  as a console line; any line the tab does not know is left out. A
+  failure's text, a verdict's reasons and the row bound show with their
+  numbers masked.
 - **Lock-side refusals** (`refused [E_COST]: …`, a refused construct, a
   ticket not submitted because the lock's rate limits are reached,
   `THROTTLED`, lockkit#150): their code and reason, the same refusal from

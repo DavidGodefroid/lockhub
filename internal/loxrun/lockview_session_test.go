@@ -64,6 +64,8 @@ func TestLockTabSession(t *testing.T) {
 		"  ~ limits.idle_timeout: 10m0s → 1h0m0s  (loosens)",
 		"changes refused: the last approved policy applies",
 		"▸ Requests are decided on lockhub at https://hub:8443 as shop",
+		// A :status opens on its profile row.
+		"  profile        shop-prod · mysql 10.0.0.5 · tier read · production true",
 		"  session        ends in 58 min (max_session 1h0m0s) · idle_timeout 10m0s",
 	)
 	h.wait(EvPolicy, "")
@@ -135,7 +137,9 @@ func TestLockTabSession(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("i typed no :status")
 	}
-	cons.print("shop", "  session        ends in 50 min (max_session 1h0m0s) · idle_timeout 1h0m0s")
+	cons.print("shop",
+		"  profile        shop-prod · mysql 10.0.0.5 · tier read · production true",
+		"  session        ends in 50 min (max_session 1h0m0s) · idle_timeout 1h0m0s")
 	from = len(h.output())
 	waitFrame(t, h, from, "of idle_timeout 1h (")
 }

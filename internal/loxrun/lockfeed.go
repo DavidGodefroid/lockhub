@@ -147,8 +147,7 @@ type LockFeed struct {
 	box       *LockItem
 	stage     int // in a box: 0 requester and intent, 1 statement (to the class line), 2 verdict and details
 	blanks    int // blank lines of the statement not yet followed by one
-	diff      *[]string
-	diffState PolicyState
+	block     block
 	lastAgent string
 	alerted   map[string]bool
 }
@@ -254,54 +253,96 @@ func (f *LockFeed) take(lines []string, now time.Time, loop int) []*LockItem {
 
 func (f *LockFeed) push(it *LockItem) { f.Items = append(f.Items, it) }
 
-// line reads one line.
+// block is what a console's indented lines belong to: the unindented line
+// before them opened it. Default-deny: an indented line outside a block it
+// fits is left out (a result's row, printed "  " and its cells).
+type block int
+
+const (
+	// blockDrop (the zero value: the first lines read may be a result's
+	// rows, its title before the backlog): indented lines are left out
+	// until an unindented line the feed knows.
+	blockDrop block = iota
+	// blockNone: after a known line; only a :status opens on an indented
+	// row (its profile row: the console prints no line before it).
+	blockNone
+	// blockStatus: the rows of a :status.
+	blockStatus
+	// blockDiff: the lines of a policy change (+ ~ -).
+	blockDiff
+	// blockDescribe: a profile's policy, at its first start.
+	blockDescribe
+)
+
+var (
+	// doneLine is a run's outcome, as locksql words it.
+	doneLine = regexp.MustCompile(`^done: \d+ rows( affected)?( \(truncated\))? in \d+ ms$`)
+	// statusKeys are the rows of a console's :status.
+	statusKeys = map[string]bool{"profile": true, "databases": true, "decided": true, "auto mode": true,
+		"results": true, "unmask": true, "limits": true, "session": true, "plans open": true,
+		"policy change": true, "policy": true, "grant": true, "boundary": true}
+)
+
+// line reads one line. Only an unindented line (marks aside) the feed
+// knows is read, and an indented one in the block such a line opened: a
+// console prints a result's rows indented, after a title from which on
+// every indented line is left out, so that no cell is read as a console
+// line.
 func (f *LockFeed) line(raw string, now time.Time, loop int) *LockItem {
 	l := strings.TrimRight(raw, " ")
-	t := strings.TrimSpace(l)
+	if l == "" {
+		f.box = nil
+		if f.block != blockDrop {
+			f.block = blockNone
+		}
+		return nil
+	}
+	if l[0] == ' ' || l[0] == '\t' {
+		f.box = nil
+		f.indented(l, now)
+		return nil
+	}
 	switch {
-	case strings.HasPrefix(t, "╭─"):
-		f.diff = nil
-		f.box = &LockItem{At: now, Kind: ItemPlan, Head: strings.TrimSpace(strings.TrimRight(strings.TrimPrefix(t, "╭─"), "─ "))}
+	case strings.HasPrefix(l, "╭─"):
+		f.block = blockNone
+		f.box = &LockItem{At: now, Kind: ItemPlan, Head: strings.TrimSpace(strings.TrimRight(strings.TrimPrefix(l, "╭─"), "─ "))}
 		f.stage, f.blanks = 0, 0
 		f.push(f.box)
 		f.LastActive = now
 		return nil
-	case strings.HasPrefix(t, "│") && f.box != nil:
-		f.boxLine(strings.TrimPrefix(strings.TrimPrefix(t, "│"), " "))
+	case strings.HasPrefix(l, "│"):
+		if f.box != nil {
+			f.boxLine(strings.TrimPrefix(strings.TrimPrefix(l, "│"), " "))
+		}
 		return nil
-	case strings.HasPrefix(t, "╰─"):
-		rest := strings.TrimSpace(strings.TrimPrefix(t, "╰─"))
+	case strings.HasPrefix(l, "╰─"):
+		rest := strings.TrimSpace(strings.TrimPrefix(l, "╰─"))
 		box := f.box
 		f.box = nil
 		if box == nil {
 			return nil
 		}
-		box.Decision = rest
+		f.block = blockNone
 		if r, ok := strings.CutPrefix(rest, "refused: "); ok {
+			box.Decision = "refused: " + maskLiterals(r, true)
 			box.Failed = true
 			return f.refusal(now, "REFUSED", r, loop)
 		}
+		box.Decision = maskLiterals(rest, false)
 		return nil
 	}
 	f.box = nil
-	if f.diff != nil {
-		if d, ok := diffLine(l); ok {
-			*f.diff = append(*f.diff, d)
-			return nil
-		}
-		f.diff = nil
-	}
-	if k, v, ok := statusRow(l); ok {
-		f.statusRow(k, v, now)
-		return nil
-	}
-	if m := startLimits.FindStringSubmatch(t); m != nil {
-		f.setLimits(m[1], m[2], now)
-		return nil
-	}
-	u := unmark(t)
+	return f.known(unmark(l), now, loop)
+}
+
+// known reads an unindented line, its marks dropped. A line it does not
+// know is left out, and ends the block before it (a result's stays).
+func (f *LockFeed) known(u string, now time.Time, loop int) *LockItem {
+	next := blockNone
+	defer func() { f.block = next }()
 	switch {
-	case u == "":
+	case strings.HasPrefix(u, "result in clear"), strings.HasPrefix(u, "PII: UNMASKED result"):
+		next = blockDrop
 	case refusedLine.MatchString(u):
 		m := refusedLine.FindStringSubmatch(u)
 		return f.refusal(now, m[1], m[2], loop)
@@ -313,36 +354,68 @@ func (f *LockFeed) line(raw string, now time.Time, loop int) *LockItem {
 		}
 		f.lastPlanFailed("not submitted")
 		return f.refusal(now, code, strings.TrimPrefix(r, "hubclient: "), loop)
-	case strings.HasPrefix(u, "done: "):
+	case doneLine.MatchString(u):
 		f.outcome(u, false, now)
 	case strings.HasPrefix(u, "denied: "), strings.HasPrefix(u, "error: "), strings.HasPrefix(u, "failed: "):
-		f.outcome(maskLiterals(u, false), true, now)
+		f.outcome(maskLiterals(u, true), true, now)
 	case strings.HasPrefix(u, "pending policy change (loosening)"):
 		f.setPolicy(PolicyPending, now, "a loosening of the policy waits for your review (r)")
 	case strings.HasPrefix(u, "pending policy change for profile "), strings.HasPrefix(u, "The policy of profile ") && strings.HasSuffix(u, "changed since it was approved:"):
 		f.PolicyDiff = nil
-		f.diff = &f.PolicyDiff
+		next = blockDiff
 	case strings.HasPrefix(u, "policy change refused"), strings.HasPrefix(u, "changes refused: the last approved policy applies"):
 		f.setPolicy(PolicyRefused, now, "the loosening was refused: the last approved policy applies")
 	case strings.HasPrefix(u, "policy change applied"):
 		f.setPolicy(PolicyApproved, now, "policy change applied")
 	case strings.HasPrefix(u, "policy tightened"):
 		f.PolicyDiff = nil
-		f.diff = &f.PolicyDiff
+		next = blockDiff
 		f.setPolicy(PolicyApproved, now, "policy tightened")
 	case strings.HasPrefix(u, "nothing to review"):
 		f.PolicyNote = "the console has nothing to review"
 		if f.Policy == PolicyRefused {
 			f.PolicyNote += ": a refused loosening is offered again once the config files change"
 		}
+	case strings.HasPrefix(u, "First start of profile "):
+		next = blockDescribe
 	case strings.HasPrefix(u, "Requests are decided on lockhub"), strings.HasPrefix(u, "Policy only: "):
 		f.Started, f.Ended, f.EndReason = now, time.Time{}, ""
 		f.push(&LockItem{At: now, Kind: ItemSession, Text: "console serving"})
 	case strings.HasPrefix(u, "session ended: "):
-		f.Ended, f.EndReason = now, strings.TrimPrefix(u, "session ended: ")
-		f.push(&LockItem{At: now, Kind: ItemSession, Text: u})
+		f.Ended, f.EndReason = now, maskLiterals(strings.TrimPrefix(u, "session ended: "), false)
+		f.push(&LockItem{At: now, Kind: ItemSession, Text: "session ended: " + f.EndReason})
+	default:
+		if f.block == blockDrop {
+			next = blockDrop
+		}
 	}
 	return nil
+}
+
+// indented reads an indented line, in the block it belongs to.
+func (f *LockFeed) indented(l string, now time.Time) {
+	switch f.block {
+	case blockDrop:
+		return
+	case blockDiff:
+		if d, ok := diffLine(l); ok {
+			f.PolicyDiff = append(f.PolicyDiff, d)
+			return
+		}
+	case blockDescribe:
+		if m := startLimits.FindStringSubmatch(strings.TrimSpace(l)); m != nil {
+			f.setLimits(m[1], m[2], now)
+		}
+		return
+	}
+	if k, v, ok := statusRow(l); ok && (f.block == blockStatus || k == "profile") {
+		f.block = blockStatus
+		f.statusRow(k, v, now)
+		return
+	}
+	// An indented line no block takes: what follows is not read until a
+	// known unindented line.
+	f.block = blockDrop
 }
 
 // boxLine reads a line inside a plan's frame.
@@ -395,7 +468,7 @@ func (f *LockFeed) boxLine(c string) {
 		if strings.Contains(r, "policy change in the config files was refused") {
 			f.setPolicy(PolicyRefused, b.At, "the loosening was refused: the last approved policy applies")
 		}
-		b.Reasons = append(b.Reasons, maskLiterals(r, false))
+		b.Reasons = append(b.Reasons, maskLiterals(r, true))
 	case strings.HasPrefix(c, "k-anonymity count"):
 		// Its statement quotes the agent's literals: masked like the
 		// agent's, shown once.
@@ -407,7 +480,10 @@ func (f *LockFeed) boxLine(c string) {
 			}
 		}
 		b.Details = append(b.Details, d)
-	case strings.HasPrefix(c, "returns at most"), strings.HasPrefix(c, "PII"), strings.HasPrefix(c, "warning: "),
+	case strings.HasPrefix(c, "returns at most"):
+		// Its bound is the agent's LIMIT: a number it chose.
+		b.Details = append(b.Details, maskLiterals(c, true))
+	case strings.HasPrefix(c, "PII"), strings.HasPrefix(c, "warning: "),
 		strings.HasPrefix(c, "reads"), strings.HasPrefix(c, "writes"), strings.HasPrefix(c, "row estimates"),
 		strings.HasPrefix(c, "EXPLAIN only"), strings.HasPrefix(c, "result: "):
 		b.Details = append(b.Details, maskLiterals(c, false))
@@ -521,11 +597,10 @@ func statusRow(l string) (key, val string, ok bool) {
 	if !found {
 		return "", "", false
 	}
-	switch k {
-	case "session", "policy change":
-		return k, strings.TrimSpace(v), true
+	if !statusKeys[k] {
+		return "", "", false
 	}
-	return "", "", false
+	return k, strings.TrimSpace(v), true
 }
 
 func (f *LockFeed) statusRow(k, v string, now time.Time) {

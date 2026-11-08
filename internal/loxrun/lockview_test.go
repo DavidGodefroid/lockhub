@@ -17,6 +17,7 @@ func sampleLockFeed() *LockFeed {
 		"  ~ limits.idle_timeout: 10m0s → 1h0m0s  (loosens)",
 		"changes refused: the last approved policy applies",
 		"▸ Requests are decided on lockhub at https://hub:8443 as shop",
+		"  profile        shop-prod · mysql 10.0.0.5 · tier read · production true",
 		"  session        ends in 58 min (max_session 1h0m0s) · idle_timeout 10m0s",
 	}, at(0), RefusalLoop)
 	f.take(planBox("SELECT title FROM book WHERE supplier = 'ACME' LIMIT 100", "OK",
