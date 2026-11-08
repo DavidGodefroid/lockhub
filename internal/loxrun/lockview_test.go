@@ -1,6 +1,7 @@
 package loxrun
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,10 @@ func sampleLockFeed() *LockFeed {
 	for i := range 11 {
 		f.take([]string{"✗ refused [E_COST]: weight check: estimated rows examined 1 943 473 > 200 000"}, at(60+i*5), RefusalLoop)
 	}
-	f.take(planBox("SELECT 1", "OK"), at(200), RefusalLoop)
+	multi := planBox("SELECT 1 -- SECRETD", "OK")
+	i := slices.Index(multi, "│   SELECT 1 -- SECRETD")
+	multi = slices.Insert(multi, i+1, "│   WHERE a = 'line one SECRETA", "│   SECRETB end' /* SECRETC */")
+	f.take(multi, at(200), RefusalLoop)
 	f.take([]string{"✗ not submitted: hubclient: too many tickets: 20 tickets already pending (limit 20, raised by limits.max_pending); retry once one is decided"}, at(201), RefusalLoop)
 	return f
 }
@@ -68,8 +72,10 @@ func TestLockTabAnySize(t *testing.T) {
 						}
 						all += visible(l) + "\n"
 					}
-					if !reveal && strings.Contains(all, "ACME") {
-						t.Fatalf("%dx%d: a literal in clear without o:\n%s", w, h, all)
+					for _, s := range []string{"ACME", "SECRETA", "SECRETB", "SECRETC", "SECRETD"} {
+						if !reveal && strings.Contains(all, s) {
+							t.Fatalf("%dx%d: %s in clear without o:\n%s", w, h, s, all)
+						}
 					}
 				}
 			}

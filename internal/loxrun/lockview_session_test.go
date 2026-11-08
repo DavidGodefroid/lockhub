@@ -139,3 +139,45 @@ func TestLockTabSession(t *testing.T) {
 	from = len(h.output())
 	waitFrame(t, h, from, "of idle_timeout 1h (")
 }
+
+// slowConsoles take a command only once released: a console's terminal
+// slow to answer.
+type slowConsoles struct {
+	*fakeConsoles
+	release chan struct{}
+	typed   chan string
+}
+
+func (c slowConsoles) Command(instance, line string) error {
+	<-c.release
+	c.typed <- instance + " " + line
+	return nil
+}
+
+// r (and i) type at the console without freezing the screen: keys are
+// read while the command waits; its outcome shows once it is typed.
+func TestLockTabCommandAsync(t *testing.T) {
+	cons := slowConsoles{newFakeConsoles(), make(chan struct{}), make(chan string, 1)}
+	h := start(t, newFakeHub(), nil, func(s *Session) {
+		s.Consoles = cons
+		s.Size = func() (int, int) { return 120, 40 }
+		s.Style = Style{Unicode: true}
+	})
+	cons.state("shop", ConsoleServing, "")
+	cons.print("shop", "▸ Requests are decided on lockhub at https://hub:8443 as shop")
+	from := len(h.output())
+	h.keys <- R('1')
+	h.keys <- R('r')
+	h.keys <- R('o')
+	waitFrame(t, h, from, "statements in clear on this screen")
+	close(cons.release)
+	select {
+	case c := <-cons.typed:
+		if c != "shop :review" {
+			t.Fatalf("typed %q", c)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("r typed no :review")
+	}
+	waitFrame(t, h, from, "review asked")
+}

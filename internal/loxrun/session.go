@@ -183,6 +183,7 @@ type state struct {
 	flashTo  time.Time
 	quitting bool
 	pending  []effect
+	commands []consoleCmd // to type at a console, off the key loop
 	bell     bool
 	dirty    bool
 	muted    bool      // the sound is off (Sound.Off, the s key)
@@ -311,6 +312,11 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	stateCh := make(chan stateMsg, 64)
 	polling := false
+	type commandMsg struct {
+		c   consoleCmd
+		err error
+	}
+	commandCh := make(chan commandMsg, 8)
 
 	var consoleCh <-chan ConsoleEvent
 	if s.Consoles != nil {
@@ -340,6 +346,18 @@ func (s *Session) Run(ctx context.Context) error {
 			}()
 		}
 		st.pending = nil
+		for _, c := range st.commands {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := c.cmd.Command(c.instance, c.line)
+				select {
+				case commandCh <- commandMsg{c, err}:
+				case <-ctx.Done():
+				}
+			}()
+		}
+		st.commands = nil
 		st.syncTop()
 		if st.flushKeys {
 			st.flushKeys = false
@@ -376,6 +394,8 @@ func (s *Session) Run(ctx context.Context) error {
 			st.dirty = true
 		case m := <-decideCh:
 			st.onDecided(m.t, m.req, m.err)
+		case m := <-commandCh:
+			st.onCommanded(m.c, m.err)
 		case m := <-stateCh:
 			if m.t == nil {
 				polling = false // the batch is done

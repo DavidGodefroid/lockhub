@@ -204,9 +204,68 @@ func TestMaskLiterals(t *testing.T) {
 		{"SELECT a FROM t WHERE b = 'x''y' AND c = 42 LIMIT 10 OFFSET 5", "SELECT a FROM t WHERE b = ‹?› AND c = ‹?› LIMIT 10 OFFSET 5"},
 		{`WHERE email = "a@b.c"`, `WHERE email = ‹?›`},
 		{"SELECT col1, t2.x FROM t2", "SELECT col1, t2.x FROM t2"},
+		{"WHERE a = 'it\\'s SECRET' AND b = 1", "WHERE a = ‹?› AND b = ‹?›"},
+		{"WHERE a = $$SECRET$$ AND b = $tag$x$$SECRET$tag$ LIMIT 5", "WHERE a = ‹?› AND b = ‹?› LIMIT 5"},
+		{"SELECT a -- SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
+		{"SELECT a # SECRET\nFROM t", "SELECT a ‹?›\nFROM t"},
+		{"SELECT /* SECRET\n SECRET */ a FROM t", "SELECT ‹?› a FROM t"},
+		{"WHERE a = 'line one SECRET\nSECRET end' LIMIT\n10", "WHERE a = ‹?› LIMIT\n10"},
+		{"WHERE a = 'open SECRET\nSECRET", "WHERE a = ‹?›"},
+		{"WHERE a = $q$open SECRET", "WHERE a = ‹?›"},
+		{"SELECT a /* open SECRET", "SELECT a ‹?›"},
+		{"SELECT `col` FROM t WHERE x = $1", "SELECT `col` FROM t WHERE x = $‹?›"},
 	} {
 		if got := maskLiterals(c.in, true); got != c.want {
 			t.Errorf("%q: %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// A statement the console prints over several lines is masked as a
+// whole: a literal spanning lines and a comment never show in clear.
+func TestLockFeedMultiLineStatement(t *testing.T) {
+	f := &LockFeed{Instance: "shop"}
+	box := planBox("SELECT title FROM book -- SECRETD", "OK")
+	i := slices.Index(box, "│   SELECT title FROM book -- SECRETD")
+	box = slices.Insert(box, i+1,
+		"│   WHERE note = 'line one SECRETA",
+		"│   SECRETB end' /* SECRETC",
+		"│   SECRETE */ AND id = 'open SECRETF",
+		"│   SECRETG")
+	f.take(box, f0, RefusalLoop)
+	p := f.Items[0]
+	all := strings.Join(p.Statement, "\n")
+	for _, v := range []string{"SECRETA", "SECRETB", "SECRETC", "SECRETD", "SECRETE", "SECRETF", "SECRETG"} {
+		if strings.Contains(all, v) {
+			t.Errorf("%q in clear in the statement:\n%s", v, all)
+		}
+	}
+	if !strings.HasPrefix(all, "SELECT title FROM book ‹?›\nWHERE note = ‹?›") {
+		t.Errorf("statement:\n%s", all)
+	}
+	if len(p.clear) != 5 || !strings.Contains(strings.Join(p.clear, "\n"), "SECRETA") {
+		t.Errorf("clear %q", p.clear)
+	}
+}
+
+// A loop of a refusal alerts again once a plan went through and the
+// agent loops on it anew.
+func TestLockFeedLoopAlertsAgain(t *testing.T) {
+	f := &LockFeed{Instance: "shop"}
+	f.take(planBox("SELECT * FROM book", "REFUSE"), f0, RefusalLoop)
+	cost := "✗ refused [E_COST]: weight check"
+	loop := func(from time.Duration) (alerts int) {
+		for i := range RefusalLoop {
+			alerts += len(f.take([]string{cost}, f0.Add(from+time.Duration(i)*time.Second), RefusalLoop))
+		}
+		return alerts
+	}
+	if n := loop(0); n != 1 {
+		t.Fatalf("first loop: %d alerts", n)
+	}
+	f.take(planBox("SELECT 1", "OK"), f0.Add(time.Minute), RefusalLoop)
+	f.take([]string{"✓ done: 1 rows in 3 ms"}, f0.Add(time.Minute), RefusalLoop)
+	if n := loop(2 * time.Minute); n != 1 {
+		t.Errorf("second loop after a plan went through: %d alerts, want 1", n)
 	}
 }

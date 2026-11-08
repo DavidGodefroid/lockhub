@@ -170,9 +170,11 @@ type console struct {
 	// answered: an answer was typed and the console printed nothing
 	// since; its question file may still be the answered one's.
 	answered bool
-	output   chan struct{}
-	state    loxrun.ConsoleState
-	err      string
+	// printed counts the reads of its terminal's output.
+	printed uint64
+	output  chan struct{}
+	state   loxrun.ConsoleState
+	err     string
 	// id is the container attached to; detached when the last attach
 	// ended (the next one reads the logs printed since); statusAsked: the
 	// console's :status was typed in this attach.
@@ -246,7 +248,8 @@ func (b *Bridge) Command(instance, line string) error {
 		b.mu.Unlock()
 		return fmt.Errorf("no console %q", instance)
 	}
-	id, serving := c.id, c.master != nil && c.question == nil && c.state == loxrun.ConsoleServing
+	id, printed := c.id, c.printed
+	serving := c.master != nil && c.question == nil && c.state == loxrun.ConsoleServing
 	b.mu.Unlock()
 	if !serving {
 		return errors.New("the console is not serving, or it asks something")
@@ -260,16 +263,20 @@ func (b *Bridge) Command(instance, line string) error {
 	if q != "" {
 		return errors.New("the console asks something: answer it first")
 	}
-	return b.typeLine(c, line)
+	return b.typeLine(c, line, printed)
 }
 
-// typeLine types line and Enter at c's terminal, if it is attached and
-// asks nothing.
-func (b *Bridge) typeLine(c *console, line string) error {
+// typeLine types line and Enter at c's terminal, if it is attached, asks
+// nothing and printed nothing since its question file was read (printed:
+// c.printed then): what it printed may be a question's prompt.
+func (b *Bridge) typeLine(c *console, line string, printed uint64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if c.master == nil || c.question != nil {
 		return errors.New("the console is not serving, or it asks something")
+	}
+	if c.printed != printed {
+		return errors.New("the console printed something meanwhile: try again")
 	}
 	if _, err := c.master.WriteString(line + "\r"); err != nil {
 		return fmt.Errorf("cannot type at the console's terminal: %w", err)
@@ -391,6 +398,7 @@ func (b *Bridge) attach(ctx context.Context, c *console, id string) error {
 				b.mu.Lock()
 				c.scr.Write(buf[:n])
 				c.answered = false
+				c.printed++
 				b.mu.Unlock()
 				select {
 				case c.output <- struct{}{}:

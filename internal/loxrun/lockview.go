@@ -243,11 +243,27 @@ func (st *state) consoleCommand(line, done string) {
 		st.setFlash("the console of " + clean(st.tab) + " is not serving (it asks something, or it is not reached)")
 		return
 	}
-	if err := cmd.Command(st.tab, line); err != nil {
-		st.setFlash("cannot type " + line + ": " + shortNote(err.Error()))
+	// Typed off the key loop: a docker exec reads the console's question
+	// file first, up to 5 s.
+	st.commands = append(st.commands, consoleCmd{cmd, st.tab, line, done})
+	st.setFlash("typing " + line + " at the console of " + clean(st.tab) + "…")
+}
+
+// consoleCmd is a line to type at a console, and what it means once typed.
+type consoleCmd struct {
+	cmd            ConsoleCommander
+	instance, line string
+	done           string
+}
+
+// onCommanded is a console command's outcome.
+func (st *state) onCommanded(c consoleCmd, err error) {
+	st.dirty = true
+	if err != nil {
+		st.setFlash("cannot type " + c.line + " at " + clean(c.instance) + ": " + shortNote(err.Error()))
 		return
 	}
-	st.setFlash(done)
+	st.setFlash(c.done)
 }
 
 // lockLines is a lock's tab: its session and policy state on top, then

@@ -170,15 +170,16 @@ var (
 	refusedLine = regexp.MustCompile(`^refused \[([A-Za-z0-9_.-]+)\]: (.*)$`)
 	statusEnds  = regexp.MustCompile(`ends in (\d+) min \(max_session ([^)]+)\) · idle_timeout (\S+)`)
 	startLimits = regexp.MustCompile(`^session: idle_timeout (\S+) · max_session (\S+)`)
-	quoted      = regexp.MustCompile(`'(?:[^']|'')*'|"(?:[^"]|"")*"`)
+	dollarTag   = regexp.MustCompile(`^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$`)
 	number      = regexp.MustCompile(`(?i)(\b(?:limit|offset|top)\s+)?\b\d+(?:\.\d+)?\b`)
 )
 
-// maskLiterals masks the string literals of s (a statement, an agent's
-// words): the values a lock masks on a ticket. With numbers, its numbers
-// too, but for a LIMIT, OFFSET or TOP bound.
+// maskLiterals masks the string literals and comments of s (a
+// statement, an agent's words): the values a lock masks on a ticket.
+// With numbers, its numbers too, but for a LIMIT, OFFSET or TOP bound.
+// A quote or comment left open masks everything after it.
 func maskLiterals(s string, numbers bool) string {
-	s = quoted.ReplaceAllString(s, "‹?›")
+	s = maskQuoted(s)
 	if !numbers {
 		return s
 	}
@@ -188,6 +189,66 @@ func maskLiterals(s string, numbers bool) string {
 		}
 		return "‹?›"
 	})
+}
+
+// maskQuoted replaces each quoted string ('…', "…", $tag$…$tag$) and
+// comment (-- …, # …, /* … */) of s with ‹?›. A quote may span lines and
+// escape a character with \ or by doubling itself; a line comment ends at
+// its newline, which stays.
+func maskQuoted(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		end := literalEnd(s, i)
+		if end < 0 {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		b.WriteString("‹?›")
+		i = end
+	}
+	return b.String()
+}
+
+// literalEnd is where the literal or comment opening at s[i] ends (len(s)
+// when it is left open), or -1 when none opens there.
+func literalEnd(s string, i int) int {
+	switch c := s[i]; {
+	case c == '\'' || c == '"':
+		for j := i + 1; j < len(s); j++ {
+			switch s[j] {
+			case '\\':
+				j++
+			case c:
+				if j+1 < len(s) && s[j+1] == c {
+					j++
+					continue
+				}
+				return j + 1
+			}
+		}
+		return len(s)
+	case c == '-' && strings.HasPrefix(s[i:], "--"), c == '#':
+		if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+			return i + j
+		}
+		return len(s)
+	case c == '/' && strings.HasPrefix(s[i:], "/*"):
+		if j := strings.Index(s[i+2:], "*/"); j >= 0 {
+			return i + 2 + j + 2
+		}
+		return len(s)
+	case c == '$':
+		m := dollarTag.FindString(s[i:])
+		if m == "" {
+			return -1
+		}
+		if j := strings.Index(s[i+len(m):], m); j >= 0 {
+			return i + len(m) + j + len(m)
+		}
+		return len(s)
+	}
+	return -1
 }
 
 // unmark drops the marks a console paints before a line (✓, ✗, ▸…).
@@ -322,8 +383,9 @@ func (f *LockFeed) boxLine(c string) {
 		b.Intent = maskLiterals(strings.TrimPrefix(c, "agent: "), true)
 	case f.stage == 1:
 		c = strings.TrimSpace(c)
+		// Masked as a whole: a literal or comment may span lines.
 		b.clear = append(b.clear, c)
-		b.Statement = append(b.Statement, maskLiterals(c, true))
+		b.Statement = strings.Split(maskLiterals(strings.Join(b.clear, "\n"), true), "\n")
 	case strings.HasPrefix(c, "class "):
 		f.stage = 2
 		b.Class = c
@@ -382,6 +444,7 @@ func (f *LockFeed) refusal(now time.Time, code, reason string, loop int) *LockIt
 		break
 	}
 	it := &LockItem{At: now, Kind: ItemRefusal, Code: code, Reason: reason, Count: 1, Agent: f.lastAgent}
+	delete(f.alerted, f.loopKey(it)) // a new loop of it alerts again
 	f.push(it)
 	if loop <= 1 {
 		return it
