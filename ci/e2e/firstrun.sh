@@ -280,7 +280,7 @@ if [ "$vault" = 0 ]; then
 	# The rel profile is orders' with tls_ca in .locksql/ (only in the copy
 	# this review applies: the volume holds the previous one) and a key
 	# file in an inline ssh table, missing from the lock's home.
-	awk '/^\[/ { on = ($0 == "[profiles.orders]") } on { sub(/^\[profiles\.orders\]$/, "[profiles.rel]\ntls_ca = \".locksql/rel-ca.pem\"\nssh = { host = \"bastion.invalid\", auth = \"key\", key = \"~/.ssh/id_e2e\" }"); print }' \
+	awk '/^\[/ { on = ($0 == "[profiles.orders]") } on { sub(/^\[profiles\.orders\]$/, "[profiles.rel]\ntls_ca = \".locksql/rel-ca.pem\"\nssh = { host = \"bastion.invalid\", user = \"e2e\", auth = \"key\", key = \"~/.ssh/id_e2e\" }"); print }' \
 		.locksql/config.toml >"$out/rel.toml"
 	grep -qF 'tls_ca = ".locksql/rel-ca.pem"' "$out/rel.toml" || die "no rel profile made from orders"
 	printf '\n' >>.locksql/config.toml
@@ -302,6 +302,11 @@ if [ "$vault" = 0 ]; then
 		-- env LOCKSQL_IMAGE="$verb_image" "$lox" add locksql >"$out/rel.out" 2>&1 || rc=$?
 	cat "$out/rel.out"
 	[ "$rc" != 0 ] || die "lox add rel (declined) exited 0"
+	# Declined at the review, not refused before it.
+	grep -qF 'nothing kept' "$out/rel.out" || die "lox add rel (declined): no rollback said"
+	grep -qF 'Apply? [y/N]' "$out/rel.out" || die "lox add rel: no review"
+	grep -qF 'WARNING: ssh.key: /home/locksql/.ssh/id_e2e (~/.ssh/id_e2e) is not in the lock' "$out/rel.out" ||
+		die "lox add rel: the inline ssh table's missing key not flagged"
 	grep -qF 'WARNING: tls_ca' "$out/rel.out" && die "lox add rel: the relative tls_ca in .locksql/ flagged"
 	grep -qF 'WARNING: ssh: ' "$out/rel.out" && die "lox add rel: the inline ssh table not read"
 	rm .locksql/rel-ca.pem
