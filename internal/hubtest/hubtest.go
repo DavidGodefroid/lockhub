@@ -62,6 +62,7 @@ type Decision struct {
 	Facade   string `json:"facade"`
 	At       int64  `json:"at"`
 	Rule     string `json:"rule,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 	Secret   string `json:"secret,omitempty"`
 	Sig      string `json:"sig,omitempty"`
 }
@@ -137,7 +138,7 @@ func (Codec) SignRequest(k ed25519.PrivateKey, q hub.Request) ([]byte, error) {
 
 func (Codec) SignDecision(k ed25519.PrivateKey, t hub.Info, v hub.Verdict, at time.Time) ([]byte, error) {
 	d := Decision{Ticket: t.ID, Instance: t.Instance, KeyID: t.KeyID, PlanHash: t.PlanHash,
-		Approved: v.Approved, Approver: v.ApproverID, Facade: v.Facade, At: at.Unix(), Rule: v.Rule, Secret: string(v.Secret)}
+		Approved: v.Approved, Approver: v.ApproverID, Facade: v.Facade, At: at.Unix(), Rule: v.Rule, Reason: v.Reason, Secret: string(v.Secret)}
 	b, _ := json.Marshal(d)
 	d.Sig = base64.StdEncoding.EncodeToString(ed25519.Sign(k, b))
 	return json.Marshal(d)

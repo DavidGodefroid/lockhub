@@ -41,6 +41,9 @@ type Exchange struct {
 	// Facade and Approver are who signed a human decision: the facade
 	// (tty for lox run, telegram, mobile…) and the human's display name.
 	Facade, Approver string
+	// Reason is the signed decision's reason (a denial's; a human's
+	// withdrawal names the human and where: "withdrawn by …").
+	Reason string
 	// The lock's masked screen.
 	Header                  string
 	Body, Warnings, Touched []string
@@ -356,6 +359,9 @@ func auditDetail(x Exchange, loc *time.Location, w int, st Style) []line {
 		dec = dec.add("  never decided", sgrDim)
 	}
 	rows = append(rows, row(dec))
+	if x.Reason != "" {
+		rows = append(rows, row(append(label("reason"), line{{x.Reason, ""}}...)))
+	}
 	if x.Asked != "" && x.Rule == "" {
 		rows = append(rows, row(append(label("why asked"), line{{x.Asked, sgrDim}}...)))
 	}

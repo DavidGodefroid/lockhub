@@ -81,6 +81,20 @@ is typed in the card. A sound plays only when a card appears (see below).
 lists it, read again every second while open), `s` turns the sound on or off
 for the session, `?` the keys, `q q` or Ctrl-C quits.
 
+**Stuck tickets are withdrawn, not waited out.** `w` lists every ticket
+pending at the hub, oldest first, with its age and where lox run stands on
+it (`asked`, `unverifiable`, `not answerable here`…), and per lock how many
+wait and how many lox run cannot verify. `↑`/`↓` (or `j`/`k`) select, `x`
+withdraws the selected ticket, `X` every pending ticket of its lock, `U` its
+lock's unverifiable ones; each asks `[y/N]` first, Esc closes. A withdrawn
+ticket ends `withdrawn` at the hub, audited with you and the reason
+(`withdrawn by USER in lox run`, shown by `lox audit show`), and its lock
+gets the hub's signed denial with that reason: it ends the plan, its queue
+frees, and its agent is told the human withdrew it. For scripts and
+recovery, without lox run: `lox tickets [--lock NAME] [--error] [--json]`
+lists them, `lox withdraw INSTANCE/ID…` or `lox withdraw --lock NAME
+--all-pending` (or `--error`) withdraws them.
+
 **A question calls you by ear.** When a question card appears (an approval, a
 connection, a policy review, a secret), `lox run` plays a sound file through
 the platform's player (`pw-play`, `paplay`, or `aplay` for WAV files on Linux;

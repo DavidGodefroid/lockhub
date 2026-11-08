@@ -29,6 +29,8 @@ type fakeHub struct {
 	changed  chan struct{}
 	states   map[string]string
 	requests int
+	// withdrawn are the human's withdrawals, by ticket id.
+	withdrawn map[string]api.WithdrawRequest
 }
 
 func newFakeHub() *fakeHub {
@@ -96,6 +98,35 @@ func (h *fakeHub) State(_ context.Context, instance, id string) (api.TicketState
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return api.TicketState{ID: id, Instance: instance, State: h.states[id]}, nil
+}
+
+func (h *fakeHub) Withdraw(_ context.Context, instance, id string, req api.WithdrawRequest) (api.WithdrawResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, it := range h.items {
+		if it.Instance == instance && it.ID == id {
+			h.items = append(h.items[:i], h.items[i+1:]...)
+			if h.withdrawn == nil {
+				h.withdrawn = map[string]api.WithdrawRequest{}
+			}
+			h.withdrawn[id] = req
+			h.states[id] = "withdrawn"
+			h.ver++
+			h.poke()
+			return api.WithdrawResult{Reason: "withdrawn by " + req.Display + " in " + req.Via, Told: true}, nil
+		}
+	}
+	return api.WithdrawResult{}, &approve.HubError{Status: 404, Kind: "not_found", Message: "no such ticket"}
+}
+
+func (h *fakeHub) withdrawals() map[string]api.WithdrawRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]api.WithdrawRequest{}
+	for k, v := range h.withdrawn {
+		out[k] = v
+	}
+	return out
 }
 
 func (h *fakeHub) decision(id string) (api.DecideRequest, bool) {
@@ -414,7 +445,7 @@ type writerFunc func([]byte)
 func (f writerFunc) Write(p []byte) (int, error) { f(p); return len(p), nil }
 
 func TestParseKeys(t *testing.T) {
-	got := ParseKeys([]byte("y\x1b[Z\x1b[A\r\n\x7f\x03é\x1b"))
+	got := ParseKeys([]byte("y\x1b[Z\x1b[D\r\n\x7f\x03é\x1b"))
 	want := []Key{R('y'), {Code: KeyShiftTab}, {Code: KeyUnknown}, {Code: KeyEnter}, {Code: KeyBackspace}, {Code: KeyCtrlC}, R('é'), {Code: KeyEsc}}
 	if len(got) != len(want) {
 		t.Fatalf("%v", got)

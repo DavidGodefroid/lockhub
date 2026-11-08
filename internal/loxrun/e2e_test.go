@@ -94,6 +94,21 @@ func newWorld(t *testing.T) *world { return newWorldArm(t, -1) }
 // newWorldArm is newWorld with lox run's KeyArm (0: the default).
 func newWorldArm(t *testing.T, arm time.Duration) *world {
 	t.Helper()
+	return newWorldCfg(t, worldCfg{arm: arm})
+}
+
+// worldCfg changes a world: lox run's KeyArm, the hub's routes, the lock
+// key lox run pins (nil: the lock's), the lock's ticket rate.
+type worldCfg struct {
+	arm    time.Duration
+	routes route.Rules
+	pinned ed25519.PublicKey
+	rateN  int
+}
+
+func newWorldCfg(t *testing.T, cfg worldCfg) *world {
+	t.Helper()
+	arm := cfg.arm
 	dir, err := os.MkdirTemp("", "loxrun")
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +127,7 @@ func newWorldArm(t *testing.T, arm time.Duration) *world {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { al.Close() })
-	w.h = hub.New(hub.Config{Store: w.st, Audit: al, Codec: ticketcodec.Codec{}, Key: hubPriv, Routes: route.Rules{},
+	w.h = hub.New(hub.Config{Store: w.st, Audit: al, Codec: ticketcodec.Codec{}, Key: hubPriv, Routes: cfg.routes,
 		Locks: map[string]ed25519.PublicKey{inst: lockPub}})
 	lsrv := httptest.NewServer(api.LockHandler(w.h, "e2e"))
 	t.Cleanup(lsrv.Close)
@@ -130,7 +145,7 @@ func newWorldArm(t *testing.T, arm time.Duration) *world {
 	}
 	t.Cleanup(func() { w.plans.Close() })
 	w.lock, err = hubclient.New(hubclient.Config{URL: lsrv.URL, Instance: inst, Key: lockPriv, HubKey: hubPub,
-		StateFile: filepath.Join(dir, "lock-hub.json")})
+		StateFile: filepath.Join(dir, "lock-hub.json"), RateN: cfg.rateN})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,12 +182,16 @@ func newWorldArm(t *testing.T, arm time.Duration) *world {
 	}
 	t.Cleanup(func() { w.pool.Close() })
 
+	pinned := lockPub
+	if cfg.pinned != nil {
+		pinned = cfg.pinned
+	}
 	// lox run, drawing frames on a 100x30 "terminal".
 	ctx, cancel := context.WithCancel(context.Background())
 	w.stopRun, w.runDone = cancel, make(chan error, 1)
 	s := &loxrun.Session{Hub: approve.Dial(sock), Keys: w.keys, Out: w.out, Size: func() (int, int) { return 100, 30 },
 		Style: loxrun.Style{Color: true, Unicode: true}, Workspace: "~/e2e", Locks: 1, Display: "david",
-		LockKeys:  map[string]ed25519.PublicKey{inst: lockPub},
+		LockKeys:  map[string]ed25519.PublicKey{inst: pinned},
 		QueueWait: 2 * time.Second, StatePoll: 50 * time.Millisecond, KeyArm: arm,
 		Observe: func(e loxrun.Event) { w.events <- e },
 		// The a key: the hub's audit, read from its data directory as

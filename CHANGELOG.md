@@ -5,6 +5,24 @@ digest).
 
 ## Unreleased
 
+- Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
+  ticket pending at the hub, oldest first, with its age, per lock with
+  how many lox run cannot verify; `x` withdraws the selected one, `X` all
+  of its lock, `U` all of its lock that lox run cannot verify, each after
+  a `y/N`. Without the TUI: `lox tickets [--lock NAME] [--error] [--json]`
+  and `lox withdraw INSTANCE/ID… | --lock NAME --all-pending|--error`.
+  The hub ends the ticket `withdrawn` (it frees the lock's slot at the
+  hub), audits it with the human, the facade and the reason (`withdrawn
+  by USER in lox run`), and sends the lock a denial it signs with that
+  reason: the lock ends the plan, frees its own queue and its agent
+  hears that the human withdrew it, instead of a request that hangs. A
+  ticket the hub itself can no longer verify is withdrawn without a
+  decision (audited as such). New facade route `POST
+  /v1/tickets/{instance}/{id}/withdraw`; `lox audit show` prints a
+  decision's reason. Locks on a lockkit with DavidGodefroid/lockkit's
+  #148 part end the plan as soon as the denial arrives and give reads a
+  1 h TTL; older ones end it on the agent's next run of the ticket.
+
 - `lox attach NAME` shows the question the console actually waits for,
   read in the lock's container from the question file its console keeps
   next to its socket (DavidGodefroid/lockkit#127,

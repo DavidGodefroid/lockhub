@@ -312,3 +312,40 @@ func TestProductionWithoutFlagApprovedWithY(t *testing.T) {
 		t.Errorf("output:\n%s", out)
 	}
 }
+
+// The human withdraws a pending ticket through the facade socket: the
+// hub ends it withdrawn and its lock gets a denial, signed by the hub
+// with lockkit's codec, whose reason names the human and lox run.
+func TestWithdraw(t *testing.T) {
+	e := setup(t)
+	id := e.push(t, ticket.RiskRead, false, "SELECT * FROM t WHERE a < 2 AND b <> 'x' & c")
+	c := approve.Dial(e.sock)
+	ctx := context.Background()
+	res, err := c.Withdraw(ctx, "crm", id, api.WithdrawRequest{Facade: "tty", Display: "david", Via: "lox run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Told || res.Reason != "withdrawn by david in lox run" {
+		t.Errorf("result = %+v", res)
+	}
+	if e.state(t, id) != state.Withdrawn {
+		t.Errorf("state %s", e.state(t, id))
+	}
+	ds, _ := e.st.Decisions(ctx, "crm", 0, 10)
+	if len(ds) != 1 {
+		t.Fatalf("decisions %d", len(ds))
+	}
+	d, err := ticket.VerifyDecision(e.h.PublicKey(), ds[0].Raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Decision != ticket.Denied || d.Reason != "withdrawn by david in lox run" || d.Ticket != id || d.Facade != "tty" {
+		t.Errorf("decision %+v", d)
+	}
+	if _, err := c.Withdraw(ctx, "crm", id, api.WithdrawRequest{Facade: "tty", Via: "lox run"}); err == nil {
+		t.Error("withdrawn twice")
+	}
+	if _, err := c.Withdraw(ctx, "crm", "nope", api.WithdrawRequest{Facade: "slack", Via: "lox run"}); err == nil {
+		t.Error("a chat facade withdrew on the facade socket")
+	}
+}
