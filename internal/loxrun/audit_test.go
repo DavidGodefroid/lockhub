@@ -141,7 +141,7 @@ func TestAuditListingContent(t *testing.T) {
 		"9 exchanges · 3 auto · 2 human · 2 denied · 1 waiting · 4 writes · 1 connection opened",
 		"── Thursday 5 November 2026 ──", "── Friday 6 November 2026 ──",
 		"── lox run started by david at 14:02:05 in AUTO ─", "── switched to MANUAL at 14:05:40 ──",
-		"✔ human", "✘ rule", "✘ denied", "– none ⌛", "◆ asked", "auto ✓", "‹j***(20)›",
+		"✔ human", "✘ rule", "✘ denied", "– none ⌛", "◆ asked", "auto:read ✓", "auto:action ✓", "‹j***(20)›",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("listing lacks %q:\n%s", want, got)

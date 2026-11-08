@@ -150,8 +150,10 @@ func (st *state) view() View {
 	for _, t := range st.cards {
 		v.Cards = append(v.Cards, *t.card)
 	}
-	for _, p := range st.conns {
-		v.Profiles = append(v.Profiles, *p)
+	for k, p := range st.conns {
+		c := *p
+		c.ReadsAsked = st.readsAsked[k]
+		v.Profiles = append(v.Profiles, c)
 	}
 	slices.SortFunc(v.Profiles, func(a, b ProfileConn) int { return a.Since.Compare(b.Since) })
 	return v
@@ -415,26 +417,31 @@ func (st *state) apply(t *tracked, v Verdict) {
 		var secret []byte
 		if needsSecret(t) {
 			if secret = st.cachedSecret(t); secret == nil {
-				st.ask(t, "the lock asks for the secret: "+v.Why)
+				st.ask(t, "the lock asks for the secret: "+v.Why, "ask:secret")
 				return
 			}
 			t.cached = true
 		}
-		t.entry.Status, t.entry.Rule = AutoApproved, v.Rule
+		t.entry.Status, t.entry.Rule, t.entry.Tag = AutoApproved, v.Rule, v.Tag
 		st.pushEntry(t, true)
 		st.send(t, true, v.Rule, secret)
 		clear(secret)
 	case Refuse:
-		t.entry.Status, t.entry.Rule = Denied, v.Rule
+		t.entry.Status, t.entry.Rule, t.entry.Tag = Denied, v.Rule, v.Tag
 		st.pushEntry(t, false)
 		st.send(t, false, v.Rule, nil)
 	default:
-		st.ask(t, v.Why)
+		// An unmask (read-pii) is the lock's own question, not a read
+		// its profile asks.
+		if t.req.NeverAuto && t.req.Action() == ActRead && t.req.Risk == ticket.RiskRead {
+			st.readsAsked[t.profileKey] = true
+		}
+		st.ask(t, v.Why, v.Tag)
 	}
 }
 
 // ask puts t's question card up and calls the human (a sound, the bell).
-func (st *state) ask(t *tracked, why string) {
+func (st *state) ask(t *tracked, why, tag string) {
 	tk := t.tk
 	c := &Card{ID: t.id, Instance: clean(t.instance), Lock: clean(tk.Source.Lock), Agent: clean(tk.Requester.Agent),
 		Profile: clean(t.req.Profile()), Kind: t.req.Kind, Risk: clean(string(tk.Risk)), Production: tk.Flags.Production,
@@ -454,7 +461,7 @@ func (st *state) ask(t *tracked, why string) {
 	}
 	t.card = c
 	st.detach(t)
-	t.entry.Status, t.entry.Rule, t.entry.Asked = Waiting, "", clean(why)
+	t.entry.Status, t.entry.Rule, t.entry.Asked, t.entry.Tag = Waiting, "", clean(why), tag
 	st.pushEntry(t, false)
 	st.cards = append(st.cards, t)
 	st.call(t)
@@ -590,7 +597,7 @@ func (st *state) onDecided(t *tracked, req api.DecideRequest, err error) {
 	switch {
 	case errors.As(err, &he) && he.Kind == "needs_human" && req.Rule != "":
 		// The hub wants a human for it: asked after all.
-		st.ask(t, "the hub wants a human for this ticket")
+		st.ask(t, "the hub wants a human for this ticket", "ask:hub")
 	case errors.As(err, &he) && he.Kind == "retype" && t.card != nil:
 		t.retyped = ""
 		t.promptKind = promptRetype

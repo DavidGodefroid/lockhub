@@ -63,6 +63,9 @@ type Entry struct {
 	Status Status
 	// Rule is the rule that decided (auto), "" for the human.
 	Rule string
+	// Tag is the engine's verdict in a word (auto:read, ask:lock), for
+	// the decision column of an auto decision or a question.
+	Tag string
 	// Asked is why the human was asked (the auto mode's reason), on a
 	// question and the human's decision on it.
 	Asked  string
@@ -136,6 +139,9 @@ type ProfileConn struct {
 	Name       string // instance/profile
 	Since      time.Time
 	Production bool
+	// ReadsAsked: its lock asks its reads (never-auto: its profile's auto
+	// rule for reads is not auto), shown next to it.
+	ReadsAsked bool
 }
 
 // View is everything one frame shows.
@@ -200,14 +206,14 @@ type columns struct {
 }
 
 func layout(w int) columns {
-	c := columns{time: 8, agent: 8, lock: 10, profile: 8, kind: 6, decision: 10}
+	c := columns{time: 8, agent: 8, lock: 10, profile: 8, kind: 6, decision: 14}
 	switch {
 	case w >= 140:
 		c.agent, c.lock, c.profile = 14, 16, 12
 	case w >= 110:
 		c.agent, c.lock, c.profile = 12, 14, 10
 	case w < 64:
-		c.time, c.agent = 5, 0
+		c.time, c.agent, c.decision = 5, 0, 10
 	}
 	fixed := 1 + c.time + 1 + c.lock + 1 + c.profile + 1 + c.kind + 1 + 1 + c.decision
 	if c.agent > 0 {
@@ -379,7 +385,11 @@ func header(v View, w int, st Style) []line {
 				name += "!"
 			}
 		}
-		conn = conn.add(name, sgr).add(" "+age(v.Now.Sub(p.Since)), sgrDim)
+		conn = conn.add(name, sgr)
+		if p.ReadsAsked {
+			conn = conn.add(" reads asked", st.asked())
+		}
+		conn = conn.add(" "+age(v.Now.Sub(p.Since)), sgrDim)
 	}
 	out := []line{l, conn.trunc(w, st.ellipsis())}
 	if len(v.Consoles) > 0 {
@@ -487,8 +497,11 @@ func statusCell(e Entry, st Style) line {
 	switch e.Status {
 	case Waiting:
 		label, sgr = st.g("◆ asked", "? asked"), st.asked()
+		if e.Tag != "" {
+			label = st.g("◆ ", "? ") + e.Tag
+		}
 	case AutoApproved:
-		label, sgr = "auto", st.auto()
+		label, sgr = autoTag(e), st.auto()
 	case Approved:
 		label, sgr = st.g("✔ you", "+ you"), st.approved()
 		if e.By != "" {
@@ -516,6 +529,22 @@ func statusCell(e Entry, st Style) line {
 		l = l.add(" "+st.g("↩", "wd"), sgrDim)
 	}
 	return l
+}
+
+// autoTag names the rule of an auto decision: the engine's tag, else
+// (an entry of lox audit) its rule's action.
+func autoTag(e Entry) string {
+	switch {
+	case e.Tag != "":
+		return e.Tag
+	case strings.HasPrefix(e.Rule, "session:"):
+		return "auto:session"
+	case e.Rule != "":
+		if _, a, ok := strings.Cut(e.Rule, ":"); ok {
+			return "auto:" + a
+		}
+	}
+	return "auto"
 }
 
 func entryLine(e Entry, v View, c columns, st Style) line {
@@ -570,6 +599,13 @@ func entryLine(e Entry, v View, c columns, st Style) line {
 	}
 	l = append(l, req.pad(c.request, ell)...)
 	l = l.add(" ", "")
+	if c.decision < 14 {
+		// Too narrow for the rule: auto and asked alone.
+		e.Tag = ""
+		if e.Status == AutoApproved {
+			e.Rule = ""
+		}
+	}
 	l = append(l, statusCell(e, st).pad(c.decision, "")...)
 	return l
 }

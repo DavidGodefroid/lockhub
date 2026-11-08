@@ -157,11 +157,13 @@ const (
 // Verdict is the engine's answer for one request: Rule names the rule
 // that decided (the decision carries it, for the lock's audit), or, for a
 // question, the default that sends it to the human; Why is for the
-// screen.
+// screen; Tag is Why in a word, for the feed's decision column
+// (auto:read, ask:write, ask:lock).
 type Verdict struct {
 	Outcome Outcome
 	Rule    string
 	Why     string
+	Tag     string
 }
 
 // Engine is the decision engine of one lox run session: the mode, the
@@ -235,41 +237,46 @@ func (e *Engine) Decide(r Request) Verdict {
 		v = Ask // a loosening of the policy is the human's, always
 	}
 	if v == Deny && r.V >= ticket.VersionKinds && r.Verified {
-		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra)}
+		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra), Tag: "deny:" + string(ra)}
 	}
-	ask := func(why string) Verdict { return Verdict{Outcome: Question, Rule: "ask:" + string(ra), Why: why} }
+	ask := func(tag, why string) Verdict {
+		return Verdict{Outcome: Question, Rule: "ask:" + string(ra), Why: why, Tag: "ask:" + tag}
+	}
 	switch {
 	case e.Mode == Manual:
-		return ask("manual mode: every ticket is asked")
+		return ask("manual", "manual mode: every ticket is asked")
 	case r.V < ticket.VersionKinds:
-		return ask("this lock's ticket does not name its kind (version 1): asked")
+		return ask("v1", "this lock's ticket does not name its kind (version 1): asked")
 	case !r.Verified:
-		return ask("the ticket was not checked under the pinned lock key: asked")
+		return ask("unsigned", "the ticket was not checked under the pinned lock key: asked")
 	case r.Risk == ticket.RiskGrant:
-		return ask("a grant is always the human's")
+		return ask("grant", "a grant is always the human's")
 	case r.NeverAuto:
-		return ask(fmt.Sprintf("the lock wants a human for this %s: its profile's auto rule for it is not auto", ra))
+		return ask("lock", fmt.Sprintf("the lock wants a human for this %s: its profile's auto rule for it is not auto", ra))
 	case r.Retype:
-		return ask("approving it needs the instance name typed")
+		return ask("name", "approving it needs the instance name typed")
 	}
 	switch v {
 	case Allow:
-		return Verdict{Outcome: Approve, Rule: autoRule(e, r, a), Why: "auto: " + string(a)}
+		return Verdict{Outcome: Approve, Rule: autoRule(e, r, a), Why: "auto: " + string(a), Tag: "auto:" + string(ra)}
 	case Ask:
+		session := Verdict{Outcome: Approve, Tag: "auto:session"}
 		switch a {
 		case ActConnect:
 			if e.connected[sessionKey(r)] {
-				return Verdict{Outcome: Approve, Rule: "session:connect", Why: "connection approved earlier in this session"}
+				session.Rule, session.Why = "session:connect", "connection approved earlier in this session"
+				return session
 			}
-			return ask("first connection to this profile in this session")
+			return ask(string(ra), "first connection to this profile in this session")
 		case ActEndpoint:
 			if e.endpoints[endpointKey(r)] {
-				return Verdict{Outcome: Approve, Rule: "session:endpoint", Why: "endpoint approved earlier in this session"}
+				session.Rule, session.Why = "session:endpoint", "endpoint approved earlier in this session"
+				return session
 			}
-			return ask("new endpoint in this session")
+			return ask(string(ra), "new endpoint in this session")
 		}
 	}
-	return ask(string(ra) + " is always asked")
+	return ask(string(ra), string(ra)+" is always asked")
 }
 
 // autoRule names the rule of an auto approval: the profile's own rule

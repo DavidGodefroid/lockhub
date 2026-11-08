@@ -17,12 +17,12 @@
 
 
 
- [2m14:02:12[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;34mconn[0m   shop/prod · connect db.internal:5432/shop             [32m✔ you[0m[32m ✓[0m   
- [2m14:02:14[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       read   [1m× 12 [0m[1;34mSELECT[0m on orders                                 [2;32mauto[0m[32m ✓[0m    
- [2m14:03:01[0m [94mweb-agent[0m    [2m◇ [0mmq           [2mlocal[0m      [1;35maction[0m [1;34mPEEK[0m orders.created (10 messages)                     [2;32mauto[0m[32m ✓[0m    
- [2m14:03:30[0m [94mweb-agent[0m    [2m⇄ [0mapi          [2mstripe[0m     [1;34mroute[0m  [1;34mGET[0m api.stripe.com/v1/charges                         [32m✔ you[0m[32m ✓[0m   
- [2m14:04:30[0m [32mdev-2[0m        [2m◆ [0mshop         [2mdev[0m        [1;31mddl[0m    [1;35mDROP[0m [1;34mTABLE[0m sessions                                   [31m✘ denied[0m  
- [2m14:05:20[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;35mwrite[0m  [1;35mINSERT[0m [1;34mINTO[0m audit_notes (note) [1;34mVALUES[0m ([2;3m‹redacted›[0m)[35m h[0m[35m…[0m [35m! error[0m   
- [2m14:06:59[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;35mwrite[0m  [1;35mUPDATE[0m customers [1;34mSET[0m email = [2;3m‹j***(20)›[0m [1;34mWHERE[0m id = [2;3m‹[0m[2;3m…[0m [1;33;7m◆ asked[0m   
+ [2m14:02:12[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;34mconn[0m   shop/prod · connect db.internal:5432/shop         [32m✔ you[0m[32m ✓[0m       
+ [2m14:02:14[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       read   [1m× 12 [0m[1;34mSELECT[0m on orders                             [2;32mauto:read[0m[32m ✓[0m   
+ [2m14:03:01[0m [94mweb-agent[0m    [2m◇ [0mmq           [2mlocal[0m      [1;35maction[0m [1;34mPEEK[0m orders.created (10 messages)                 [2;32mauto:action[0m[32m ✓[0m 
+ [2m14:03:30[0m [94mweb-agent[0m    [2m⇄ [0mapi          [2mstripe[0m     [1;34mroute[0m  [1;34mGET[0m api.stripe.com/v1/charges                     [32m✔ you[0m[32m ✓[0m       
+ [2m14:04:30[0m [32mdev-2[0m        [2m◆ [0mshop         [2mdev[0m        [1;31mddl[0m    [1;35mDROP[0m [1;34mTABLE[0m sessions                               [31m✘ denied[0m      
+ [2m14:05:20[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;35mwrite[0m  [1;35mINSERT[0m [1;34mINTO[0m audit_notes (note) [1;34mVALUES[0m ([2;3m‹redacted[0m[2;3m…[0m [35m! error[0m       
+ [2m14:06:59[0m [95mdev-1[0m        [2m◆ [0mshop         [1;31mprod[0m       [1;35mwrite[0m  [1;35mUPDATE[0m customers [1;34mSET[0m email = [2;3m‹j***(20)›[0m [1;34mWHERE[0m id… [1;33;7m◆ ask:write[0m   
 [2m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
  [1mShift+Tab[0m[2m mode[0m  [1my/n[0m[2m answer[0m  [1md[0m[2m details[0m  [1ma[0m[2m audit[0m  [1m?[0m[2m help[0m  [1mq[0m[2m quit[0m

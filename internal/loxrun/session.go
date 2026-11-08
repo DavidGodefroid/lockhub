@@ -151,6 +151,9 @@ type state struct {
 	results map[string]*tracked // decided, result not known yet
 	conns   map[string]*ProfileConn
 	active  map[string]time.Time // profile key → last ticket
+	// readsAsked: profiles whose lock asked a read of the human (its
+	// profile's auto rule for reads is not auto), shown in the header.
+	readsAsked map[string]bool
 	// secrets typed for "ask" profiles, kept in this process for the
 	// session only (wiped when Run returns), sealed again to each
 	// connect ticket of that profile.
@@ -229,7 +232,7 @@ func (s *Session) observe(e Event) {
 
 func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
-		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
+		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[string][]byte{},
 		ran: map[string]time.Time{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
 		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
