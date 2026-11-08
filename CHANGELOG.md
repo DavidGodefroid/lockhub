@@ -25,6 +25,13 @@ digest).
   `lox run` (lockssh v0.1.0 or later; `lox run` upgrades an older image to
   v0.1.0).
 
+- `lox run` keeps a session password per profile and endpoint (#165): a
+  profile with two `credentials = "ask"` legs (an SSH bastion, then its
+  database) asks each leg its own password once, the prompt names the
+  endpoint, the database leg right after the bastion's is no longer
+  taken for a failed reconnect, and an idle reconnect reuses each leg's
+  own password without asking.
+
 - `lox add` / `lox run` home-file checks (#167): a path into the
   profile's directory (such as `tls_ca = ".locksql/ca.pem"`) is checked
   in the copy the review applies, so a first run or a profile change no
