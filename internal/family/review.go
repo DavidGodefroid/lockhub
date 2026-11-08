@@ -90,6 +90,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 		for _, r := range f.Unreachable {
 			row("unreachable", "WARNING: "+r)
 		}
+		for _, r := range f.Files {
+			row("file", "WARNING: "+r)
+		}
 		if f.Profile != "" {
 			note := "(lox run --review prints it in full)"
 			if f.Changed {

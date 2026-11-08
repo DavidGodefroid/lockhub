@@ -124,6 +124,44 @@ has no `tls` key and the driver's default (`prefer`) applies; locksql prints a
 the project's files name is written as is. `tls_ca`, `tls_cert`, `tls_key`
 and `tls_server_name` are set in locksql's profile file.
 
+#### The files a locksql profile names
+
+`tls_ca`, `tls_cert`, `tls_key` and, with `ssh.auth = "key"`, `ssh.key` name
+files the console reads **inside its container**, as its account (uid 10001).
+The rule is locksql's own, and the only one: a leading `~/` (or a lone `~`) is
+the console account's home, `/home/locksql`, which is the lock's home volume
+(`<project>_<name>-home`); any other path is taken as is (an absolute path is
+in the lock's image, a relative one from the console's working directory, the
+project). `~/db-ca.pem` is `/home/locksql/db-ca.pem` in the volume.
+
+Before the review of `lox add` (and of every `lox run`), lox checks each of
+these files in the lock's container, as the console account, and the review
+shows a `file` row per problem (`warning: lock NAME: ...` lines under `--review`
+or when nothing else changed):
+
+- a file missing from the home volume, with the command that copies it there
+  from the current directory, private (`umask 077`), as the console account:
+
+  ```
+  file         WARNING: tls_ca: /home/locksql/db-ca.pem (~/db-ca.pem) is not in the lock's home volume; copy it there: docker run --rm -i --network none --user 10001:10000 -v lockfamily-1234abcd_orders-home:/home/locksql --entrypoint /bin/sh ghcr.io/davidgodefroid/locksql@sha256:… -c 'umask 077 && mkdir -p /home/locksql && cat > /home/locksql/db-ca.pem' < db-ca.pem
+  ```
+
+  It is `locksql doctor`'s command, on the volume rather than the console
+  (`docker exec`), since the console may not run yet. `lox add` then asks,
+  once per missing file, before `Apply? [y/N]`: `Copy tls_ca into the lock's
+  home as /home/locksql/db-ca.pem, from the host file (optional: empty = not
+  now, with the command above): `. A host file named there (a regular file of
+  at most 1 MiB, a link is not followed) is copied the same way once you
+  answer `y`; an `n` copies nothing.
+- a missing file outside the home: write it `~/NAME` and copy it there;
+- a path that is not a regular file, or that the console account cannot read;
+- `tls_key` or `ssh.key` readable by others (any of its mode's group or other
+  bits): the command that runs `chmod 600` on it in the volume.
+
+A present file the console can read (a private key at `0600`) says nothing.
+A check that cannot run is a `file` warning too; it never stops the review,
+and the console still checks every file at its start.
+
 ### lockmq
 
 | Prompt | Notes |

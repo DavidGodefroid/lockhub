@@ -27,6 +27,9 @@ type Facts struct {
 	// Unreachable are what the profile names that the lock reaches by
 	// nothing (Egress.None): a row each, so none hides in the egress row.
 	Unreachable []string
+	// Files are the warnings of the files the profile names (tls_ca,
+	// ssh.key, ...) as lox run found them in the console's container.
+	Files []string
 }
 
 // factKeys are the keys read per lock type for the target.
@@ -37,8 +40,8 @@ var factKeys = map[string][]string{
 }
 
 var (
-	profileHeader = regexp.MustCompile(`^\[profiles\.(?:"([^"]+)"|([A-Za-z0-9_-]+))\]\s*(?:#.*)?$`)
-	tomlKey       = regexp.MustCompile(`^([A-Za-z0-9_-]+)\s*=\s*(.*)$`)
+	profileHeader = regexp.MustCompile(`^\[profiles\.(?:"([^"]+)"|([A-Za-z0-9_-]+))(?:\.([A-Za-z0-9_-]+))?\]\s*(?:#.*)?$`)
+	tomlKey       = regexp.MustCompile(`^([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?)\s*=\s*(.*)$`)
 	tomlLine      = regexp.MustCompile(`^config\.toml:([0-9]+) (.*)$`)
 	bareValue     = regexp.MustCompile(`^(?:[0-9]+|true|false)$`)
 )
@@ -52,34 +55,7 @@ func ProfileFacts(p *Profile, typ, profile string) Facts {
 		return f
 	}
 	f.Profile = fmt.Sprintf(".%s/ %s", typ, p.Fingerprint)
-	// The tables of config.toml: name -> key -> value text (last wins).
-	secs := map[string]map[string]string{}
-	var order []string
-	cur := ""
-	for _, l := range p.Lines {
-		m := tomlLine.FindStringSubmatch(l)
-		if m == nil {
-			continue
-		}
-		text := strings.TrimSpace(m[2])
-		if strings.HasPrefix(text, "[") {
-			cur = ""
-			if h := profileHeader.FindStringSubmatch(text); h != nil {
-				cur = h[1] + h[2]
-				if _, ok := secs[cur]; !ok {
-					secs[cur] = map[string]string{}
-					order = append(order, cur)
-				}
-			}
-			continue
-		}
-		if cur == "" {
-			continue
-		}
-		if k := tomlKey.FindStringSubmatch(text); k != nil {
-			secs[cur][k[1]] = k[2]
-		}
-	}
+	secs, order := profileSections(p)
 	name := profile
 	if name == "" && len(order) == 1 {
 		name = order[0]
@@ -153,6 +129,47 @@ func ProfileFacts(p *Profile, typ, profile string) Facts {
 	}
 	f.Target = strings.Join(parts, ", ")
 	return f
+}
+
+// profileSections reads the [profiles.<name>] tables of p's
+// "config.toml:N text" lines: name -> key -> value text (last wins), and
+// the names in order. A sub-table's keys ([profiles.<name>.ssh]) and a
+// dotted key (ssh.key = ...) are its table's, as "ssh.key".
+func profileSections(p *Profile) (map[string]map[string]string, []string) {
+	secs := map[string]map[string]string{}
+	var order []string
+	cur, sub := "", ""
+	for _, l := range p.Lines {
+		m := tomlLine.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		text := strings.TrimSpace(m[2])
+		if strings.HasPrefix(text, "[") {
+			cur, sub = "", ""
+			if h := profileHeader.FindStringSubmatch(text); h != nil {
+				cur = h[1] + h[2]
+				if h[3] != "" {
+					sub = h[3] + "."
+				}
+				if _, ok := secs[cur]; !ok {
+					secs[cur] = map[string]string{}
+					order = append(order, cur)
+				}
+			}
+			continue
+		}
+		if cur == "" {
+			continue
+		}
+		if k := tomlKey.FindStringSubmatch(text); k != nil {
+			if sub != "" && strings.Contains(k[1], ".") {
+				continue // a key two tables deep: no file key is
+			}
+			secs[cur][sub+k[1]] = k[2]
+		}
+	}
+	return secs, order
 }
 
 // strictValue is a TOML value of one line that can be shown exactly: a

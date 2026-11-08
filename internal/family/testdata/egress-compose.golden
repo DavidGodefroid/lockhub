@@ -222,6 +222,36 @@ services:
     mem_limit: 512m
     volumes:
       - "web-gate:/g"
+  "homefiles-db":
+    image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    profiles: [setup]
+    user: "10001:10000"
+    working_dir: "/w"
+    entrypoint: ["/bin/sh", "-c", "while IFS= read -r p; do if [ ! -e \"$$p\" ]; then echo missing; elif [ ! -f \"$$p\" ]; then echo notfile; elif [ ! -r \"$$p\" ]; then echo unreadable; else echo \"ok $$(stat -L -c %a \"$$p\")\"; fi; done", "homefiles"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m"]
+    pids_limit: 256
+    mem_limit: 512m
+    volumes:
+      - "db-home:/home/locksql"
+      - "profile-locksql:/w/.locksql:ro"
+  "homecopy-db":
+    image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    profiles: [setup]
+    user: "10001:10000"
+    entrypoint: ["/bin/sh", "-c", "umask 077 && mkdir -p \"$$(dirname \"$$1\")\" && cat > \"$$1\"", "homecopy"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m"]
+    pids_limit: 256
+    mem_limit: 512m
+    volumes:
+      - "db-home:/home/locksql"
   "profile-lockfile":
     image: "ghcr.io/davidgodefroid/lockfile@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     profiles: [setup]
