@@ -190,6 +190,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		case set:
 			s = append(s, fmt.Sprintf("lock %s routed only to %s", n, strings.Join(c.Hub.Routing[n], ",")))
 		}
+		if l.Type == "lockssh" {
+			s = append(s, fmt.Sprintf("lock %s answers %s on the local facades only, never in a chat (lockssh's default)", n, strings.Join(LocksshLocalRisks, ",")))
+		}
 	}
 	return s
 }
@@ -580,8 +583,31 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 		plans[n] = pl
 	}
+	// The auto rules of the lockssh locks, read the same way from their
+	// reviewed copy: rules lox run cannot read leave every ticket asked.
+	sshRules := map[string]map[string]*LogRules{}
+	for _, n := range c.Instances() {
+		l := c.Locks[n]
+		if k := Kinds[l.Type]; !k.Rules || k.Mounts {
+			continue
+		}
+		ro, err := u.runSetup(ctx, project, composeYAML, profiles[l.Type].Tar, "rules-"+n)
+		if err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			sshRules[n] = map[string]*LogRules{l.Profile: {Lock: l.Type, Profile: l.Profile, Unknown: l.Type + " profile rules failed"}}
+		} else {
+			sshRules[n] = DeriveSSHRules(ro, l.Profile)
+		}
+		for _, r := range sshRules[n] {
+			if r.Unknown != "" {
+				fmt.Fprintf(u.Out, "warning: lock %s: auto rules unknown (%s): lox run asks every ticket of this lock\n", n, r.Unknown)
+			}
+		}
+	}
 
-	// The files the locksql profiles name, checked in each console's
+	// The files the locksql and lockssh profiles name, checked in each console's
 	// container now that its home volume exists (homefiles.go): what the
 	// console would refuse at its start is said in the review.
 	homeWarn := map[string][]string{}
@@ -592,7 +618,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if !Kinds[l.Type].HomeFiles {
 				continue
 			}
-			fk, odd := ProfileFileKeys(profiles[l.Type], LockProfile(l))
+			fk, odd := ProfileFileKeys(profiles[l.Type], l.Type, LockProfile(l))
 			if len(fk) == 0 && len(odd) == 0 {
 				continue
 			}
@@ -628,6 +654,7 @@ func (u *Up) Do(ctx context.Context) error {
 			sum = append(sum, pl.Review(n)...)
 			sum = append(sum, logNetLine(project, n, pl))
 		}
+		sum = append(sum, SSHRulesLines(n, sshRules[n])...)
 	}
 	for _, t := range types(c) {
 		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
@@ -856,6 +883,14 @@ func (u *Up) Do(ctx context.Context) error {
 		paths.Seccomp, paths.SeccompSum = sp, LockfileSeccompSum
 	} else {
 		os.Remove(filepath.Join(u.State, lockfileSeccompFile))
+	}
+	// The applied lockssh rules, for lox run's engine.
+	for _, n := range c.Instances() {
+		if r := sshRules[n]; r != nil {
+			if err := writeSSHRules(u.State, n, r); err != nil {
+				return err
+			}
+		}
 	}
 	// The applied plans, for lox refresh and lox doctor, and the
 	// containers maps of the docker sources (rewritten by lox refresh).
@@ -1201,8 +1236,22 @@ func Routes(c *Config) route.Rules {
 	if len(r.Only) == 0 {
 		r.Only = nil
 	}
+	// A lockssh lock's read-pii (its first connection, its output in
+	// clear) is never answered by a chat facade.
+	for _, n := range c.Instances() {
+		if c.Locks[n].Type == "lockssh" {
+			if r.LocalRisks == nil {
+				r.LocalRisks = map[string][]string{}
+			}
+			r.LocalRisks[n] = slices.Clone(LocksshLocalRisks)
+		}
+	}
 	return r
 }
+
+// LocksshLocalRisks are the risk classes of a lockssh lock that only the
+// local facades answer.
+var LocksshLocalRisks = []string{route.ReadPII}
 
 // anyDevices reports whether a lock pins the paired devices: a console
 // lox up runs (--devices-file), or a lockhttp lock, whose gate (lea's,

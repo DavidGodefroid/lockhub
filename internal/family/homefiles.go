@@ -16,15 +16,16 @@ import (
 	"syscall"
 )
 
-// A locksql profile names files its console reads: tls_ca, tls_cert,
-// tls_key and, with ssh auth = "key", ssh.key. They are read inside the
-// console's container, where a leading "~/" is the console account's
-// home, its home volume (locksql's config.ExpandHome). lox run checks
-// them there before the console starts, so that a missing file shows in
-// the review, not after the console's questions. A path into the
-// profile's own directory (relative paths resolve from the workspace) is
-// checked in the reviewed copy instead: the volume still holds the
-// previous one (none on a first run) until the human's yes.
+// A locksql or lockssh profile names files its console reads: locksql's
+// tls_ca, tls_cert, tls_key and, with ssh auth = "key", ssh.key; lockssh's
+// key (with auth = "key", its default) and known_hosts. They are read
+// inside the console's container, where a leading "~/" is the console
+// account's home, its home volume (the locks' config.ExpandHome). lox
+// run checks them there before the console starts, so that a missing
+// file shows in the review, not after the console's questions. A path
+// into the profile's own directory (relative paths resolve from the
+// workspace) is checked in the reviewed copy instead: the volume still
+// holds the previous one (none on a first run) until the human's yes.
 
 // FileKey is a file key of a profile: Path as the profile writes it.
 type FileKey struct {
@@ -32,15 +33,16 @@ type FileKey struct {
 }
 
 // private tells whether the key names a private key, which no one but
-// the console account may read.
-func (f FileKey) private() bool { return f.Key == "tls_key" || f.Key == "ssh.key" }
+// the console account may read (locksql's tls_key and ssh.key, lockssh's
+// key).
+func (f FileKey) private() bool { return f.Key == "tls_key" || f.Key == "ssh.key" || f.Key == "key" }
 
 // ConsoleHome is the console account's home in a lock's image, where
 // its home volume is mounted.
 func ConsoleHome(typ string) string { return "/home/" + typ }
 
 // ExpandHome resolves a leading "~/" (or a lone "~") of a file key's path
-// to home, as locksql does; any other path is returned as is.
+// to home, as the locks do; any other path is returned as is.
 func ExpandHome(p, home string) string {
 	if p == "~" {
 		return home
@@ -52,9 +54,10 @@ func ExpandHome(p, home string) string {
 }
 
 // ProfileFileKeys are the file keys the profile named profile (empty: the
-// only one) sets in p, in locksql's order. odd are the keys whose value
-// the review cannot read exactly (an escape, not a string): not checked.
-func ProfileFileKeys(p *Profile, profile string) (keys []FileKey, odd []string) {
+// only one) of a lock of type typ sets in p, in the lock's order. odd are
+// the keys whose value the review cannot read exactly (an escape, not a
+// string): not checked.
+func ProfileFileKeys(p *Profile, typ, profile string) (keys []FileKey, odd []string) {
 	secs, order := profileSections(p)
 	name := profile
 	if name == "" && len(order) == 1 {
@@ -64,8 +67,9 @@ func ProfileFileKeys(p *Profile, profile string) (keys []FileKey, odd []string) 
 	if !ok {
 		return nil, nil
 	}
-	if raw, ok := sec["ssh"]; ok {
-		// An inline table: its keys are the table's, as a [.ssh] table's.
+	if raw, ok := sec["ssh"]; ok && typ == "locksql" {
+		// An inline table: its keys are the table's, as a [.ssh] table's
+		// (locksql's bastion; lockssh has no ssh table).
 		t, ok := inlineTable(raw)
 		if !ok {
 			odd = append(odd, "ssh")
@@ -87,16 +91,38 @@ func ProfileFileKeys(p *Profile, profile string) (keys []FileKey, odd []string) 
 		}
 		return v, v != ""
 	}
-	for _, k := range []string{"tls_ca", "tls_cert", "tls_key"} {
-		if v, ok := str(k); ok {
-			keys = append(keys, FileKey{k, v})
+	// keyAuth: the profile's auth key is "key" (or absent, when that is
+	// its default).
+	keyAuth := func(k string, absent bool) bool {
+		raw, ok := sec[k]
+		if !ok {
+			return absent
 		}
+		v, kind, ok := strictValue(raw)
+		return ok && kind == 's' && v == "key"
 	}
-	if raw, ok := sec["ssh.auth"]; ok {
-		if v, kind, ok := strictValue(raw); ok && kind == 's' && v == "key" {
+	switch typ {
+	case "locksql":
+		for _, k := range []string{"tls_ca", "tls_cert", "tls_key"} {
+			if v, ok := str(k); ok {
+				keys = append(keys, FileKey{k, v})
+			}
+		}
+		if keyAuth("ssh.auth", false) {
 			if v, ok := str("ssh.key"); ok {
 				keys = append(keys, FileKey{"ssh.key", v})
 			}
+		}
+	case "lockssh":
+		if keyAuth("auth", true) {
+			if v, ok := str("key"); ok {
+				keys = append(keys, FileKey{"key", v})
+			}
+		}
+		// "" is the console account's own ~/.ssh/known_hosts, which the
+		// console writes on the human's yes: not checked.
+		if v, ok := str("known_hosts"); ok {
+			keys = append(keys, FileKey{"known_hosts", v})
 		}
 	}
 	return keys, odd

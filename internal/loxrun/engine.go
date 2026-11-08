@@ -120,6 +120,14 @@ func (r Request) Profile() string {
 	return r.Subject.Profile
 }
 
+// verb is the request's verb ("" when it names none).
+func (r Request) verb() string {
+	if r.Subject == nil {
+		return ""
+	}
+	return r.Subject.Verb
+}
+
 // Action is the request's profile action.
 func (r Request) Action() Action {
 	switch r.Kind {
@@ -188,6 +196,19 @@ func NewEngine(m Mode) *Engine {
 // ruleAction is the action of r a profile rule decides: read-pii for a
 // read of risk read-pii whose profile has a rule for it, else a.
 func (e *Engine) ruleAction(r Request, a Action) Action {
+	if r.Lock == LockLockssh && a == ActAction {
+		// lockssh's actions by verb: run an allow-listed command (a
+		// read), exec another (a write), unmask a run's output (read-pii).
+		switch r.verb() {
+		case "run":
+			return ActRead
+		case "exec":
+			return ActWrite
+		case "unmask":
+			return ActReadPII
+		}
+		return a
+	}
 	if a == ActRead && r.Risk == ticket.RiskReadPII {
 		if _, ok := e.rulesOf(r)[ActReadPII]; ok {
 			return ActReadPII
@@ -235,6 +256,12 @@ func (e *Engine) Decide(r Request) Verdict {
 	v := e.rule(r, a)
 	if a == ActPolicy && v == Allow {
 		v = Ask // a loosening of the policy is the human's, always
+	}
+	if r.Lock == LockLockssh && v == Allow && (ra == ActReadPII && a == ActAction || r.Risk == ticket.RiskProdWrite) {
+		// lockssh: output in clear is never auto, nor a write on
+		// production, whatever a rule says (the console signs both
+		// never-auto anyway).
+		v = Ask
 	}
 	if v == Deny && r.V >= ticket.VersionKinds && r.Verified {
 		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra), Tag: "deny:" + string(ra)}
@@ -289,24 +316,36 @@ func autoRule(e *Engine, r Request, a Action) string {
 	return "default:" + string(a)
 }
 
-// LockLocklog is locklog's product name, as its tickets name their lock
-// (Request.Lock).
-const LockLocklog = "locklog"
+// LockLocklog and LockLockssh are locklog's and lockssh's product names,
+// as their tickets name their lock (Request.Lock).
+const (
+	LockLocklog = "locklog"
+	LockLockssh = "lockssh"
+)
 
 // rulesOf are the rules of r's profile. A locklog ticket fails closed:
 // the engine's defaults auto-approve reads, which for locklog would cover
 // its scans and its read-pii unmasks and lookups, so a locklog profile
 // whose rules are unknown (no Rules, an instance or profile lox run has
-// no applied rules for, a rule left out) asks its read and read-pii.
+// no applied rules for, a rule left out) asks its read and read-pii. A
+// lockssh ticket fails closed the same way, for each of its actions.
 func (e *Engine) rulesOf(r Request) ProfileRules {
 	var p ProfileRules
 	if e.Rules != nil {
 		p = e.Rules(r.Lock, r.Instance, r.Profile())
 	}
-	if r.Lock != LockLocklog {
+	var out ProfileRules
+	switch r.Lock {
+	case LockLocklog:
+		out = ProfileRules{ActRead: Ask, ActReadPII: Ask}
+	case LockLockssh:
+		// Every lockssh action asked when its rules are unknown: the
+		// engine's defaults would approve its runs, unmasks and any verb
+		// it does not know as reads.
+		out = ProfileRules{ActConnect: Ask, ActRead: Ask, ActWrite: Ask, ActReadPII: Ask, ActAction: Ask}
+	default:
 		return p
 	}
-	out := ProfileRules{ActRead: Ask, ActReadPII: Ask}
 	for k, v := range p {
 		out[k] = v
 	}
@@ -332,6 +371,26 @@ func LocklogRules(get func(action string) string) ProfileRules {
 		pii = l
 	}
 	return ProfileRules{ActRead: val("read"), ActReadPII: pii}
+}
+
+// SSHRules are the engine's rules for a lockssh profile whose auto rules
+// (`lockssh profile rules`) give get(action) for its actions connect,
+// run (an allow-listed command, risk read), exec (another command, risk
+// write) and unmask (a run's output in clear, risk read-pii: never auto).
+// A value that is not auto, ask or deny is ask.
+func SSHRules(get func(action string) string) ProfileRules {
+	val := func(a string) Value {
+		switch v := Value(get(a)); v {
+		case Allow, Ask, Deny:
+			return v
+		}
+		return Ask
+	}
+	unmask := val("unmask")
+	if unmask == Allow {
+		unmask = Ask
+	}
+	return ProfileRules{ActConnect: val("connect"), ActRead: val("run"), ActWrite: val("exec"), ActReadPII: unmask}
 }
 
 // Answered records the human's answer on r: an approved connection or

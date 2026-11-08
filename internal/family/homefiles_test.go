@@ -41,18 +41,18 @@ func TestProfileFileKeys(t *testing.T) {
 		`auth = "key"`,
 		`key = "~/.ssh/id_ed25519"`,
 	)
-	got, odd := ProfileFileKeys(p, "orders")
+	got, odd := ProfileFileKeys(p, "locksql", "orders")
 	want := []FileKey{{"tls_ca", "~/db-ca.pem"}, {"tls_cert", "/etc/locksql/client.pem"}, {"tls_key", "~/client.key"}, {"ssh.key", "~/.ssh/id_ed25519"}}
 	if !reflect.DeepEqual(got, want) || odd != nil {
 		t.Errorf("got %v %v, want %v", got, odd, want)
 	}
 	// ssh.key counts with auth = "key" only; dotted keys are the table's.
 	p = tomlProfile(`[profiles.p]`, `ssh.auth = "agent"`, `ssh.key = "~/k"`, `tls_ca = "a\"b"`)
-	if got, odd := ProfileFileKeys(p, ""); got != nil || !reflect.DeepEqual(odd, []string{"tls_ca"}) {
+	if got, odd := ProfileFileKeys(p, "locksql", ""); got != nil || !reflect.DeepEqual(odd, []string{"tls_ca"}) {
 		t.Errorf("agent auth: %v %v", got, odd)
 	}
 	p = tomlProfile(`[profiles.p]`, `ssh.auth = "key"`, `ssh.key = "~/k"`)
-	if got, _ := ProfileFileKeys(p, ""); !reflect.DeepEqual(got, []FileKey{{"ssh.key", "~/k"}}) {
+	if got, _ := ProfileFileKeys(p, "locksql", ""); !reflect.DeepEqual(got, []FileKey{{"ssh.key", "~/k"}}) {
 		t.Errorf("dotted keys: %v", got)
 	}
 }
@@ -257,12 +257,12 @@ func TestOfferCopyCopiesAfterYes(t *testing.T) {
 // read is listed, not skipped.
 func TestProfileFileKeysInlineTable(t *testing.T) {
 	p := tomlProfile(`[profiles.p]`, `tls_ca = ".locksql/ca.pem"`, `ssh = { host = "bastion", auth = "key", key = "~/.ssh/id" }  # the bastion`)
-	got, odd := ProfileFileKeys(p, "")
+	got, odd := ProfileFileKeys(p, "locksql", "")
 	if want := []FileKey{{"tls_ca", ".locksql/ca.pem"}, {"ssh.key", "~/.ssh/id"}}; !reflect.DeepEqual(got, want) || odd != nil {
 		t.Errorf("inline: %v %v", got, odd)
 	}
 	p = tomlProfile(`[profiles.p]`, `ssh = {auth='agent', key="~/k"}`)
-	if got, odd := ProfileFileKeys(p, ""); got != nil || odd != nil {
+	if got, odd := ProfileFileKeys(p, "locksql", ""); got != nil || odd != nil {
 		t.Errorf("inline agent: %v %v", got, odd)
 	}
 	for _, v := range []string{
@@ -273,7 +273,7 @@ func TestProfileFileKeysInlineTable(t *testing.T) {
 		`"bastion"`,
 	} {
 		p = tomlProfile(`[profiles.p]`, `ssh = `+v)
-		if got, odd := ProfileFileKeys(p, ""); got != nil || !reflect.DeepEqual(odd, []string{"ssh"}) {
+		if got, odd := ProfileFileKeys(p, "locksql", ""); got != nil || !reflect.DeepEqual(odd, []string{"ssh"}) {
 			t.Errorf("%s: %v %v", v, got, odd)
 		}
 	}

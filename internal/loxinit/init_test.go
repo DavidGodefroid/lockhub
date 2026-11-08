@@ -41,7 +41,7 @@ func golden(t *testing.T, name, root, got string) {
 }
 
 // endLine is lox init's last line, verbatim.
-const endLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`."
+const endLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`."
 
 // hubRef is a pinned hub image, as lox init writes it.
 const hubRef = "ghcr.io/davidgodefroid/lockhub@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -59,7 +59,7 @@ type harness struct {
 
 func newHarness(root string) *harness {
 	h := &harness{created: true}
-	found := map[string]bool{"docker": true, "cosign": true, "lea": true, "locksql": true, "lockmq": true, "lockfile": true, "lockhttp": true, "locklog": true}
+	found := map[string]bool{"docker": true, "cosign": true, "lea": true, "locksql": true, "lockmq": true, "lockfile": true, "lockhttp": true, "locklog": true, "lockssh": true}
 	h.in = &Init{
 		Root: root, Out: &h.out,
 		Env: Env{GOOS: "linux", Types: []string{"locksql", "lockmq", "lockfile", "lockhttp"}, UID: 1000,

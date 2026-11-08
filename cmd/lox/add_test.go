@@ -89,6 +89,7 @@ func fakeReleases(t *testing.T) (digests map[string]string, cos *okRunner) {
 		"lockhub:1.2.3":       strings.Repeat("b", 64),
 		"lockfile:1.2.3":      strings.Repeat("d", 64),
 		"locklog:1.2.3":       strings.Repeat("e", 64),
+		"lockssh:1.2.3":       strings.Repeat("f", 64),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(r.URL.Path, "/")
@@ -248,6 +249,45 @@ func TestAddLocklogNonInteractive(t *testing.T) {
 	code = run([]string{"add", "locklog", "--non-interactive", "--file", file, "--only", "var/log", "--name", "x"}, devNull(t), &out, &errb)
 	if code != 2 || !strings.Contains(errb.String(), "only: absolute directories") {
 		t.Fatalf("relative --only: code %d\n%s", code, errb.String())
+	}
+}
+
+// lox add lockssh (the guided form, from flags): its profile add with
+// the host, the login, the key in the lock's home, one --allow per rule
+// and --exec; init claude; its doctor with --fix (its own files only);
+// the lock declared with lea's uid allowed.
+func TestAddLocksshNonInteractive(t *testing.T) {
+	digests, _ := fakeReleases(t)
+	ws, file, verbs := addWorld(t)
+	var out, errb bytes.Buffer
+	code := run([]string{"add", "lockssh", "--non-interactive", "--file", file, "--host", "web1.example.com", "--user", "deploy",
+		"--key", "~/.ssh/id_ed25519", "--allow", "uptime; df -h", "--exec", "--name", "web"}, devNull(t), &out, &errb)
+	if code != 0 {
+		t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	var got []string
+	for _, c := range verbs.calls {
+		got = append(got, strings.Join(c, " "))
+	}
+	if len(got) < 3 || got[0] != "lockssh profile add --non-interactive --json --project "+ws+" --profile web --credentials none --host web1.example.com --port 22 --user deploy --auth key --key ~/.ssh/id_ed25519 --allow uptime --allow df -h --exec" ||
+		got[1] != "lockssh init claude" || !strings.HasPrefix(got[len(got)-1], "lockssh doctor") {
+		t.Fatalf("verbs %q", got)
+	}
+	c, err := family.Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := c.Locks["web"]
+	if l.Type != "lockssh" || l.Profile != "web" || l.Image != "ghcr.io/davidgodefroid/lockssh@sha256:"+digests["lockssh:1.2.3"] || l.Vault {
+		t.Fatalf("lock = %+v", l)
+	}
+	if len(l.AllowedUIDs) != 1 || l.AllowedUIDs[0] != os.Getuid() {
+		t.Fatalf("allowed_uids = %v, want lea's uid", l.AllowedUIDs)
+	}
+	// The host is never guessed for a script, nor the login.
+	code = run([]string{"add", "lockssh", "--non-interactive", "--file", file, "--user", "deploy", "--name", "x"}, devNull(t), &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "--host is required") {
+		t.Fatalf("no --host: code %d\n%s", code, errb.String())
 	}
 }
 

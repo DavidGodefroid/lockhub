@@ -82,6 +82,10 @@ type Rules struct {
 	// Only, per instance, lists the facades that may answer it. Facades
 	// outside the defaults are ignored: Only narrows, never widens.
 	Only map[string][]string `json:"only,omitempty"`
+	// LocalRisks, per instance, lists risk classes no chat facade may
+	// answer for it, whatever Only says (a lockssh lock's read-pii: its
+	// first connection and its output in clear). Like Only, it narrows.
+	LocalRisks map[string][]string `json:"local_risks,omitempty"`
 }
 
 // Allowed reports whether facade f may decide a ticket of risk r from
@@ -102,6 +106,9 @@ func (r Rules) Allowed(inst, f, risk string) error {
 	}
 	if only, ok := r.Only[inst]; ok && !slices.Contains(only, f) {
 		return fmt.Errorf("instance %s is not routed to %s", inst, f)
+	}
+	if !slices.Contains(local, f) && slices.Contains(r.LocalRisks[inst], risk) {
+		return fmt.Errorf("%s tickets of instance %s cannot be answered on %s; use the terminal, the deck or the mobile facade", risk, inst, f)
 	}
 	return nil
 }

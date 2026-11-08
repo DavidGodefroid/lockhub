@@ -28,6 +28,7 @@ var ShippedLocks = map[string]string{
 	"lockfile": "v0.8.1",
 	"lockhttp": "v0.8.1",
 	"locklog":  "v0.2.1",
+	"lockssh":  "v0.1.0",
 }
 
 // ShippedPins are the releases a lox of version (X.Y.Z, without the v)

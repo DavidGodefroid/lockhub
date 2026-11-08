@@ -127,10 +127,16 @@ type Kind struct {
 	// plan its image derives from the profile (locklog mounts), which
 	// lox run checks, reviews and mounts (locklog.go).
 	Mounts bool
-	// HomeFiles is locksql: its profile names files (tls_ca, tls_cert,
-	// tls_key, ssh.key) the console reads, "~/" being its home volume;
+	// HomeFiles is locksql and lockssh: their profiles name files (tls_ca,
+	// ssh.key; key, known_hosts) the console reads, "~/" being its home volume;
 	// lox run checks them there (homefiles.go).
 	HomeFiles bool
+	// Rules is locklog and lockssh: lox run reads the profiles' auto
+	// rules with `<type> profile rules --json`, run in the image as Agent
+	// (the image's agent account, uid:gid) on the reviewed copy, and
+	// applies them in its engine (locklog_rules.go, lockssh.go).
+	Rules bool
+	Agent string
 }
 
 // Kinds are the lock types' images (their Dockerfiles).
@@ -141,7 +147,11 @@ var Kinds = map[string]Kind{
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 	// locklog's console scans and masks the logs itself: at most two of
 	// the host's CPUs, as its launcher.
-	"locklog": {UID: "10051", GID: "10050", Project: true, Mem: "1g", Pids: 256, CPUs: 2, Mounts: true},
+	"locklog": {UID: "10051", GID: "10050", Project: true, Mem: "1g", Pids: 256, CPUs: 2, Mounts: true, Rules: true, Agent: agentAccount},
+	// lockssh's console holds the SSH key in its home volume (its key and
+	// known_hosts files, checked there) and runs one command per session:
+	// its launcher's limits.
+	"lockssh": {UID: "10041", GID: "10040", Project: true, Mem: "1g", Pids: 256, HomeFiles: true, Rules: true, Agent: "10042:10040"},
 }
 
 // cpus is the console's CPU cap on a host of ncpu processors (0:
@@ -495,31 +505,42 @@ func Compose(c *Config, p Paths) string {
 	}
 	for _, name := range c.Instances() {
 		l := c.Locks[name]
-		if !Kinds[l.Type].Mounts {
+		k := Kinds[l.Type]
+		if !k.Mounts && !k.Rules {
 			continue
 		}
-		// mounts-<instance> derives the mount plan from the reviewed copy
-		// (on its stdin, unpacked in a tmpfs at the workspace's path), as
-		// the image's agent with no network, as the launcher's read_plan.
-		args := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s mounts "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
-		if l.Profile != "" {
-			args = append(args, "--profile", l.Profile)
-		}
-		// rules-<instance> reads the profiles' auto rules from the same
-		// copy, the same way (locklog profile rules --json): no network,
-		// no volume, so the rules are the reviewed file's.
-		rules := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s profile rules --json "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
-		if l.Profile != "" {
-			rules = append(rules, "--profile", l.Profile)
-		}
-		for _, s := range []struct {
+		type setup struct {
 			svc  string
 			args []string
-		}{{"mounts-" + name, args}, {"rules-" + name, rules}} {
+		}
+		var svcs []setup
+		if k.Mounts {
+			// mounts-<instance> derives the mount plan from the reviewed
+			// copy (on its stdin, unpacked in a tmpfs at the workspace's
+			// path), as the image's agent with no network, as the
+			// launcher's read_plan.
+			args := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s mounts "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
+			if l.Profile != "" {
+				args = append(args, "--profile", l.Profile)
+			}
+			svcs = append(svcs, setup{"mounts-" + name, args})
+		}
+		if k.Rules {
+			// rules-<instance> reads the profiles' auto rules from the same
+			// copy, the same way (<type> profile rules --json): no network,
+			// no volume, so the rules are the reviewed file's.
+			rules := []string{"/bin/sh", "-c", fmt.Sprintf(`mkdir -p "$0/.%s" && head -c %d | tar -x -C "$0/.%s" && cd "$0" && exec %s profile rules --json "$@"`, l.Type, maxTar, l.Type, l.Type), p.Workspace}
+			if l.Profile != "" {
+				rules = append(rules, "--profile", l.Profile)
+			}
+			svcs = append(svcs, setup{"rules-" + name, rules})
+		}
+		uid, gid, _ := strings.Cut(k.Agent, ":")
+		for _, s := range svcs {
 			w("  %s:", q(s.svc))
 			w("    image: %s", q(l.Image))
 			w("    profiles: [setup]")
-			w("    user: %s", q(agentAccount))
+			w("    user: %s", q(k.Agent))
 			w("    environment:")
 			w("      HOME: \"/tmp\"")
 			w("    entrypoint: [%s]", quoteAll(s.args))
@@ -527,7 +548,7 @@ func Compose(c *Config, p Paths) string {
 			w("    read_only: true")
 			w("    cap_drop: [ALL]")
 			w("    security_opt: [\"no-new-privileges:true\"]")
-			w("    tmpfs: [\"/tmp:size=16m\", %s]", q(p.Workspace+":size=2m,uid=10052,gid=10050,mode=0700"))
+			w("    tmpfs: [\"/tmp:size=16m\", %s]", q(p.Workspace+":size=2m,uid="+uid+",gid="+gid+",mode=0700"))
 			w("    pids_limit: 64")
 			w("    mem_limit: 256m")
 		}

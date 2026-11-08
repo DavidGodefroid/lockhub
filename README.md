@@ -47,8 +47,8 @@ sees values in clear.
 - **Approvals live outside the agent's harness.** `lox run` is the one
   terminal you keep open, outside lea and any agent: an agent's own tool is
   never where its approvals are shown or answered.
-- **One place for every Lock.** locksql, lockmq, lockfile, lockhttp and
-  locklog all send their tickets to the same hub.
+- **One place for every Lock.** locksql, lockmq, lockfile, lockhttp,
+  locklog and lockssh all send their tickets to the same hub.
 - **Reads flow, risky actions wait.** Auto mode approves reads by rule and
   asks you for writes, connections, dangerous actions and policy loosening.
 - **Every decision is signed and audited,** without a value in clear.
@@ -89,7 +89,7 @@ Details: [docs/getting-started.md](docs/getting-started.md#what-a-release-ships)
 2. Add one data source, guided and applied at once:
 
    ```sh
-   lox add locksql      # or lockmq, lockfile, lockhttp, locklog
+   lox add locksql      # or lockmq, lockfile, lockhttp, locklog, lockssh
    ```
 
 3. Keep `lox run` open in a terminal of its own: it serves the decisions.
@@ -168,11 +168,14 @@ reveals: [docs/approvals.md](docs/approvals.md).
 | [lockfile](https://github.com/DavidGodefroid/lockfile) | S3, SFTP, a local directory | `lox add lockfile` | v0.4.0 |
 | [lockhttp](https://github.com/DavidGodefroid/lockhttp) | HTTP, through lea's gate | `lox add lockhttp` | v0.3.0 |
 | [locklog](https://github.com/DavidGodefroid/locklog) | this host's log files, journal and containers; Loki, Elasticsearch, OpenSearch | `lox add locklog` | v0.2.0 |
+| [lockssh](https://github.com/DavidGodefroid/lockssh) | a server over SSH: allow-listed commands, others on a ticket | `lox add lockssh` | v0.1.0 |
 
 "Since" is each lock's first release that runs under `lox run` (hub mode);
 `lox run` upgrades a pinned image older than the release this lox ships
 with. locklog's mount plan:
-[docs/lox-run.md](docs/lox-run.md#locklog-the-mount-plan-and-the-containers-map).
+[docs/lox-run.md](docs/lox-run.md#locklog-the-mount-plan-and-the-containers-map);
+lockssh's egress, home files and auto rules:
+[docs/lox-run.md](docs/lox-run.md#lockssh-one-ssh-host-per-profile).
 
 ## Safety model
 

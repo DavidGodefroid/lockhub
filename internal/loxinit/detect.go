@@ -48,6 +48,8 @@ const DockerHost = "host.docker.internal"
 // a secret: a password is dropped where it is parsed.
 type Source struct {
 	Kind string
+	// Name is an SSH host's alias in ~/.ssh/config (KindSSH).
+	Name string
 	// Service is the compose service, if the source is one.
 	Service string
 	Host    string
@@ -87,6 +89,8 @@ func (s Source) Lock() string {
 		return "lockmq"
 	case logKind(s.Kind):
 		return "locklog"
+	case s.Kind == KindSSH:
+		return "lockssh"
 	}
 	return "locksql"
 }
@@ -108,6 +112,8 @@ func (s Source) Label() string {
 		return "Elasticsearch"
 	case KindOpenSearch:
 		return "OpenSearch"
+	case KindSSH:
+		return "SSH"
 	}
 	return s.Kind
 }
@@ -119,6 +125,12 @@ func (s Source) Target() string {
 		return s.MgmtURL()
 	case s.Kind == KindHostLogs:
 		return "this host"
+	case s.Kind == KindSSH:
+		h := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
+		if s.User != "" {
+			h = s.User + "@" + h
+		}
+		return h
 	case remoteLogKind(s.Kind):
 		scheme := "http"
 		if s.HTTPS {

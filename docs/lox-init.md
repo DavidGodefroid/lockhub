@@ -20,7 +20,7 @@ start, when its projects directory has no `.lockfamily/up.json`, lea runs
 It ends with:
 
 ```
-Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog`.
+Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.
 ```
 
 ## Flags
@@ -38,7 +38,7 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
    (`lox add` and `lox run` verify every image's signature); otherwise
    `lox init` prints the install command for your system and stops with
    nothing done. lea and each lock's launcher (`locksql`, `lockmq`,
-   `lockfile`, `lockhttp`, `locklog`) are looked up on `PATH`: the locks run without
+   `lockfile`, `lockhttp`, `locklog`, `lockssh`) are looked up on `PATH`: the locks run without
    lea, lockhttp needs it, and a missing launcher is listed with where to
    install it.
 2. **Hints**, read only, project files only: `.env` and `.env.*`,
@@ -51,7 +51,10 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
    in `.env*`), and on Linux this host's own logs (`/var/log/journal`,
    `/run/log/journal`, `/var/log`), and prints one line for each with the
    files that name it (never a key's value) and the `lox add` that serves it
-   (`lox add locklog` for the logs). Detection skips every key named like a secret
+   (`lox add locklog` for the logs), and the SSH hosts of your
+   `~/.ssh/config` lockssh can serve (a plain `Host` block, its `HostName`,
+   `User` and `Port` only: no pattern, no host behind a bastion, no IP
+   address; `lox add lockssh`). Detection skips every key named like a secret
    (`*PASSWORD*`, `*_PASS`, `*SECRET*`, `*TOKEN*`, `*_KEY`, ...) and keeps
    only the user name of a URL, never its password. A source on this machine
    is shown as `host.docker.internal` at its published port: the console

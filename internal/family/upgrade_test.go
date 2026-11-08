@@ -467,3 +467,37 @@ func TestUpgradeLocklog(t *testing.T) {
 		t.Errorf("upgraded the shipped release: %+v %v", ups, asked)
 	}
 }
+
+// A lockssh lock older than the release this lox ships with is upgraded
+// at start like the other locks.
+func TestUpgradeLockssh(t *testing.T) {
+	if ShippedLocks["lockssh"] == "" {
+		t.Fatal("ShippedLocks has no lockssh release")
+	}
+	newSSH := "ghcr.io/davidgodefroid/lockssh@sha256:" + strings.Repeat("8", 64)
+	conf := sshConf("")
+	path := filepath.Join(t.TempDir(), FileName)
+	c, err := decode([]byte(conf), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []string
+	u := &Upgrade{Pins: ShippedPins("dev"), Image: func(_ context.Context, repo, tag, variant string) (string, error) {
+		asked = append(asked, repo+" "+tag+" "+variant)
+		return newSSH, nil
+	}}
+	var out strings.Builder
+	raw, ups, err := u.upgrade(context.Background(), &out, []byte(conf), c, map[string]string{sshImg: "v0.0.9", sqlImg: ShippedLocks["locksql"], mqImg: ShippedLocks["lockmq"]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ups) != 1 || len(asked) != 1 || asked[0] != "lockssh "+ShippedLocks["lockssh"]+" " {
+		t.Fatalf("upgrades %+v, resolutions %v\n%s", ups, asked, out.String())
+	}
+	if want := "lock web: image upgraded: lockssh v0.0.9 → " + ShippedLocks["lockssh"] + " (signature verified)"; !strings.Contains(out.String(), want) {
+		t.Errorf("no %q in:\n%s", want, out.String())
+	}
+	if c2, err := decode(raw, path); err != nil || c2.Locks["web"].Image != newSSH {
+		t.Errorf("images %v %+v", err, c2)
+	}
+}

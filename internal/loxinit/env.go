@@ -8,7 +8,7 @@ import (
 
 // Locks are the lock types lox init knows, in the order its prerequisites
 // screen lists their launchers.
-var Locks = []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog"}
+var Locks = []string{"locksql", "lockmq", "lockfile", "lockhttp", "locklog", "lockssh"}
 
 // Env is what lox init finds on the machine. Tests give their own.
 type Env struct {
@@ -25,6 +25,9 @@ type Env struct {
 	// HostLogs are this host's log directories locklog reads
 	// (HostLogDirs); nil: none.
 	HostLogs func() []string
+	// SSHHosts are the SSH hosts lockssh could serve (SSHHosts of the
+	// user's ~/.ssh/config); nil: none.
+	SSHHosts func() []Source
 }
 
 // RealDockerVersion asks the Docker engine its version.

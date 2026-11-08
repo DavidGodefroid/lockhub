@@ -45,9 +45,9 @@ func failed(ctx context.Context, stderr io.Writer, cmd string, err error) int {
 // flag: the console asks for it at start.
 var answerFlags = []struct{ name, usage string }{
 	{"engine", "locksql: postgres, mysql, mariadb or sqlite"},
-	{"host", "locksql, lockfile sftp: the server's host (no port, no scheme)"},
-	{"port", "locksql, lockfile sftp: the server's port"},
-	{"user", "the user (locksql, lockmq: empty = the console asks for it at start with the password; lockfile sftp: required)"},
+	{"host", "locksql, lockfile sftp, lockssh: the server's host (no port, no scheme)"},
+	{"port", "locksql, lockfile sftp, lockssh: the server's port"},
+	{"user", "the user (locksql, lockmq: empty = the console asks for it at start with the password; lockfile sftp, lockssh: required)"},
 	{"database", "locksql: the database (empty: the server's default)"},
 	{"tls", "locksql: disable, prefer, require, verify-ca or verify-full (never asked; empty: the driver's default, prefer)"},
 	{"path", "locksql: the sqlite file, an absolute path"},
@@ -59,12 +59,13 @@ var answerFlags = []struct{ name, usage string }{
 	{"endpoint", "lockfile: the S3 endpoint, a URL with its scheme (empty: AWS)"},
 	{"region", "lockfile: the S3 region"},
 	{"dir", "lockfile: the local directory, an absolute path"},
-	{"auth", "lockfile sftp: key or password (password: the console asks for it at start)"},
+	{"auth", "lockfile sftp, lockssh: key or password (password: the console asks for it at start)"},
 	{"only", "locklog: only the log files under these directories, comma-separated absolute paths (empty: every log this host shows)"},
-	{"key", "lockfile sftp: the private key file, an absolute path"},
-	{"known-hosts", "lockfile sftp: the known hosts file"},
+	{"key", "lockfile sftp: the private key file, an absolute path; lockssh: the key file in the lock's home, such as ~/.ssh/id_ed25519 (lox run offers to copy yours there)"},
+	{"known-hosts", "lockfile sftp: the known hosts file; lockssh: one in the lock's home (empty: the console's own, a new host key confirmed at the console)"},
+	{"allow", "lockssh: the commands the agent runs freely, separated by ; (such as \"uptime; df -h\")"},
 	{"base-dir", "lockfile sftp: the base directory (empty: the login directory)"},
-	{"credentials", "ask (typed, masked, at the console's start) or vault"},
+	{"credentials", "ask (typed, masked, at the console's start) or vault (lockssh with a key: none too, an unencrypted key)"},
 	{"vault-path", "the Vault path of the lock's credentials"},
 	{"vault-address", "the Vault address, for the first lock with vault (the vault block)"},
 	{"vault-namespace", "the Vault namespace (empty: the root namespace)"},
@@ -94,6 +95,7 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		values[f.name] = fs.String(f.name, "", f.usage)
 	}
 	production := fs.Bool("production", false, "tickets flagged production; the profile name is typed at the console's start")
+	execOther := fs.Bool("exec", false, "lockssh: the agent may ask for commands outside the allow list, each on a ticket")
 	nonInteractive := fs.Bool("non-interactive", false, "ask nothing: the flags and the defaults answer; without a terminal, stop once the lock is declared")
 	review := fs.Bool("review", false, "lox run shows this lock's whole profile and asks (needs a terminal)")
 	verbose := fs.Bool("v", false, "show cosign's and docker's own output (default: only when a step fails)")
@@ -148,6 +150,8 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		switch {
 		case name == "production":
 			given["production"] = map[bool]string{true: "y", false: "n"}[*production]
+		case name == "exec":
+			given["exec"] = map[bool]string{true: "y", false: "n"}[*execOther]
 		case values[name] != nil:
 			key := name
 			if k, ok := flagKeys[name]; ok && (name != "dir" || typ == "lockfile") {
@@ -236,6 +240,9 @@ func addDefaults(abs, ws, typ, draftPath string, nonInteractive bool, stderr io.
 		if s := loxinit.HostLogs(loxinit.HostLogDirs(runtime.GOOS, loxinit.RealIsDir)); s != nil {
 			sources = append(sources, *s)
 		}
+	}
+	if typ == "lockssh" {
+		sources = append(sources, loxinit.SSHHosts(loxinit.UserSSHConfig())...)
 	}
 	for _, s := range sources {
 		if s.Lock() == typ {

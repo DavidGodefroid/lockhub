@@ -10,6 +10,7 @@ lox add lockmq       # a RabbitMQ broker
 lox add lockfile     # a file store: S3, SFTP or a local directory
 lox add lockhttp     # the HTTP policy of lea's LockHTTP gate
 lox add locklog      # this host's logs: files under /var/log, the journal, containers
+lox add lockssh      # a server over SSH: allow-listed commands, others on a ticket
 ```
 
 `lox add TYPE INSTANCE` (two arguments) is the older form: it only declares
@@ -26,7 +27,7 @@ At a terminal, `lox add TYPE` runs these steps in order:
    name. A profile already in the lock's config is kept as it is. The
    doctor's repairs and what still fails are shown; a failure of the doctor
    never stops `lox add` (the console is not running yet). The doctor runs
-   with `--fix --yes` for locksql, lockmq and lockhttp, without `--fix` for
+   with `--fix --yes` for locksql, lockmq, lockhttp and lockssh, without `--fix` for
    lockfile and locklog (their only repair wires your agents, which `init
    claude` did). locksql's `--fix` also
    wires your installed agents for your account: before it runs, `lox add`
@@ -35,7 +36,7 @@ At a terminal, `lox add TYPE` runs these steps in order:
 3. **The declaration** in `.lockfamily/lockfamily.yaml`: the lock's image,
    pinned by digest and cosign-verified (the `-vault` image variant for a
    lock that takes its credentials from Vault), and, for locksql, lockmq,
-   lockfile and locklog when lea is on `PATH`, your uid in `allowed_uids`
+   lockfile, locklog and lockssh when lea is on `PATH`, your uid in `allowed_uids`
    (lea's agents run as it). A `lockfamily.yaml` that does not exist yet is created with the
    hub alone.
 4. **The start (what `lox run` does before it serves decisions), with the short review of this lock**: one block with its
@@ -214,6 +215,32 @@ OpenSearch) is written in `.locklog/config.toml` by hand (locklog's README).
 `lox run` then derives the lock's mount plan and auto rules from the reviewed
 copy and shows both ([lox-run.md](lox-run.md#locklog-the-mount-plan-and-the-containers-map)).
 Local sources need Linux with a rootful Docker engine 19.03 or later.
+
+### lockssh
+
+| Prompt | Flag, notes |
+|---|---|
+| `SSH host, a name (host.docker.internal for this machine) (required): ` | `--host`: a name, no user, port or scheme; an IP address is refused (the lock's egress reaches names only) |
+| `Port (required) [22]: ` | `--port` |
+| `Login (required): ` | `--user`: the SSH login |
+| `Auth: key or password (required) [key]: ` | `--auth` |
+| `Private key file in the lock's home (~/ is its home; lox run offers to copy yours there) (required) [~/.ssh/id_ed25519]: ` | `--key`, with `auth` key: a path in the console's account, never your file's content |
+| `Known hosts file in the lock's home (optional: empty = the console's own: a new host key is confirmed at the console): ` | `--known-hosts`: with one, a host key it does not hold is refused |
+| `Allowed commands, separated by ;, such as uptime; df -h; systemctl status * (optional: empty = none yet (edit .lockssh/config.toml)): ` | `--allow "uptime; df -h"`: one `lockssh profile add --allow` per rule |
+| `May the agent ask for other commands (each one approved on a ticket)? [y/N] ` | `--exec` |
+| `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
+| `Credentials: none (an unencrypted key), ask (typed at the console's start) or vault (required) [none]: ` | `--credentials`: the key's passphrase; with `auth` password, `ask` or `vault` (the password) |
+| `Vault path (required) [secret/data/lockssh/<name>]: ` | `--vault-path`, with `credentials` vault |
+| `Name (required) [ssh]: ` | `--name` |
+
+At a terminal, the hosts of your `~/.ssh/config` (a plain `Host` with its
+`HostName`, `User` and `Port`; never one behind `ProxyJump` or
+`ProxyCommand`, nor an IP address) are proposed. The key lives in the lock's
+home volume, which only the console account reads: the review checks it
+there and, before `Apply?`, offers to copy your key file into it (empty: not
+now; the review's command does it later). `lox run` reads the profile's auto
+rules and gives the lock an egress to its `host`:`port` only
+([lox-run.md](lox-run.md#lockssh-one-ssh-host-per-profile)).
 
 ## Non-interactive
 

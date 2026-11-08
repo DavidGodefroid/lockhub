@@ -4,8 +4,9 @@
 reach the locks' sockets, never the hub: lea's agents in their containers,
 and a host agent (Claude Code, Codex... run in a terminal) through the
 locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, `locklog
-mcp`, as `<lock> init` writes them in `.mcp.json`). The locks `lox run` runs:
-locksql, lockmq, lockfile, lockhttp and locklog. This page is the contract
+mcp`, `lockssh mcp`, as `<lock> init` writes them in `.mcp.json`). The locks
+`lox run` runs: locksql, lockmq, lockfile, lockhttp, locklog and lockssh. This
+page is the contract
 between `lox run` and both.
 
 ## Serving decisions
@@ -40,7 +41,8 @@ record), refuses a rule's approval of a never-auto ticket or of one whose
 approval needs a typed name (`needs_human`), and accepts a rule from the
 terminal facade only. Per-profile auto rules (`auto`/`ask`/`deny` per action,
 `Engine.Rules`) are applied when a lock provides them: locklog's (below,
-[locklog: auto rules](#locklog-auto-rules)); for the other locks (locksql#185,
+[locklog: auto rules](#locklog-auto-rules)) and lockssh's
+([lockssh: auto rules](#lockssh-auto-rules)); for the other locks (locksql#185,
 lockmq) the defaults above hold until they do. A `deny` rule holds in both
 modes.
 
@@ -234,7 +236,7 @@ per-profile rules through `Session.Rules`.
 |---|---|---|
 | `<workspace>/.lockfamily/lockfamily.yaml` | the human (`lox add`, `lox import`) | `lox` |
 | `<workspace>/.lockfamily/up.json` | `lox run`, after a confirmed apply | lea; the locks' launchers (host agents) |
-| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`, `.locklog`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
+| `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`, `.locklog`, `.lockssh`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox run` | `lox` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox run` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
@@ -417,7 +419,12 @@ gets its message. `ci/e2e/locklog-agent.sh` does the same for locklog:
 `locklog init claude` writes `.mcp.json`, and the `locklog mcp` it names
 counts the records of a log file (masked, no ticket), then asks to unmask
 one e-mail address of a record: pending on the hub, approved at `lox
-approve`, then run with the ticket. It also checks the launcher's refusals of a tampered
+approve`, then run with the ticket. `ci/e2e/lockssh-agent.sh` does it for
+lockssh against an SSH server in a container: the review's own command
+copies the key and known_hosts into the lock's home, `lockssh mcp` runs an
+allow-listed command once the first connection is approved (its output
+masked), then a command outside the allow list, pending, approved at `lox
+approve` and run with the ticket. It also checks the launcher's refusals of a tampered
 up.json and of a squatted socket volume (with locksql's launcher; lockmq's
 makes the same checks).
 
@@ -642,6 +649,7 @@ those:
 | lockmq | `url`, `amqp_url`, `stream_url` (default ports of their schemes); with `ssh`, the bastion only |
 | lockfile | s3: the `endpoint`, else `<bucket>.s3.<region>.amazonaws.com:443`; sftp: `host`:`port` (22); local none |
 | locklog | the `url` of each `loki`, `elastic` and `opensearch` source (80 for http, 443 for https); file, journald and docker none. A lock whose mount plan reads no remote source gets none at all (see below) |
+| lockssh | `host`:`port` (22) of the profile, one SSH host each; no bastion |
 | any, with `vault: true` | the `vault.address` |
 
 The lock's profile names the profile it serves (`locks.<name>.profile`); when
@@ -804,6 +812,61 @@ signed never-auto, which lox run always asks and the lock refuses an auto
 approval of. A `read-pii` decision is taken on `tty`, `deck` or `mobile`
 only: the routing above, and the console refuses one from any other
 facade.
+
+## lockssh: one SSH host per profile
+
+A lockssh console runs one command per SSH session on its profile's host:
+lox run gives it the project kind (console `10041`, clients group `10040`,
+the profile copy at `<workspace>/.lockssh`, read-only; 1 GB, 256 processes,
+as its launcher) and an egress to that `host`:`port` only, plus the Vault
+address with `credentials = "vault"` (above). An IP address is refused: name
+the host (`host.docker.internal` for this machine).
+
+**Home files.** The profile's `key` (with `auth = "key"`, the default) and a
+`known_hosts` it names are files of the console account, `~/` being its home
+volume. As for locksql, lox run checks them there, as that account, before
+the review: a missing file gets a `file` row with the command that copies it
+there (`lox add lockssh` offers to copy a host file at once), a key readable
+by others the `chmod` that makes it private. With no `known_hosts`, the
+console's own `~/.ssh/known_hosts` holds the host keys, and a key it has
+never seen is trusted only by the human on the console (`lox attach`), never
+by a ticket.
+
+**The review** shows `ssh user@host:port`, the login (`auth key ~/.ssh/…` or
+`auth password`), which host keys are trusted, and `exec on` when the agent
+may ask for commands outside the allow list.
+
+### lockssh: auto rules
+
+A lockssh profile's `[profiles.<p>.auto]` says what `lox run`'s auto mode
+does with each action that becomes a ticket: `connect` (the first use of an
+SSH session, `read-pii`), `run` (an allow-listed command, `read`), `exec` (a
+command outside the allow list, `write`, `prod-write` on production) and
+`unmask` (a run's output in clear, `read-pii`). lox run reads them as
+locklog's, with `lockssh profile rules --json [--profile P]` on the reviewed
+copy (setup service `rules-<instance>`, the image's agent `10042`, no network,
+no volume), for the served profile or, when the lock names none, for each
+profile:
+
+```
+lock web auto rules of profile prod: connect ask · run auto · exec ask · unmask ask (lockssh profile rules, on the reviewed copy)
+```
+
+They are kept in `$XDG_STATE_HOME/lockfamily/<project>/lockssh/<instance>/rules.json`
+after a confirmed apply (`lox run --no-start` reads them). The engine applies
+them by the ticket's verb: `connect`, `run`, `exec`, `unmask`. Whatever a rule
+says, an `unmask` and an `exec` on production are never approved by a rule;
+a verb it does not know, rules it cannot read, an instance or a profile it
+has none for: every action of the lock is asked (fail closed). The console
+enforces its own side: a `deny` is refused before any ticket, an `ask` is
+signed never-auto, the first connection of each console run is never-auto.
+
+**Routing.** A lockssh lock's `read-pii` (its connections and its output in
+clear) is answered on `tty`, `deck` or `mobile` only, never in a chat:
+`routing.json` names it in `local_risks`, which the hub applies whatever
+`hub.routing` says for the lock (it can only narrow). The review says
+`lock NAME answers read-pii on the local facades only, never in a chat
+(lockssh's default)`, and `lox doctor` checks it.
 
 ## Upgrading the images
 

@@ -154,7 +154,14 @@ func TestLoadRoutes(t *testing.T) {
 	if err != nil || r.Allowed("crm", "deck", "read") == nil || r.Allowed("crm", "tty", "read") != nil {
 		t.Errorf("rules %+v %v", r, err)
 	}
-	for _, bad := range []string{`{"facades":["fax"]}`, `{"only":{"nope":["tty"]}}`, `{"x":1}`} {
+	// local_risks: a chat facade never answers those risks of the instance.
+	os.WriteFile(p, []byte(`{"facades":["tty","slack"],"local_risks":{"crm":["read-pii"]}}`), 0o600)
+	r, err = loadRoutes(p, locks)
+	if err != nil || r.Allowed("crm", "slack", "read-pii") == nil || r.Allowed("crm", "slack", "read") != nil || r.Allowed("crm", "tty", "read-pii") != nil {
+		t.Errorf("local risks %+v %v", r, err)
+	}
+	for _, bad := range []string{`{"facades":["fax"]}`, `{"only":{"nope":["tty"]}}`, `{"x":1}`,
+		`{"local_risks":{"nope":["read-pii"]}}`, `{"local_risks":{"crm":["secret"]}}`} {
 		os.WriteFile(p, []byte(bad), 0o600)
 		if _, err := loadRoutes(p, locks); err == nil {
 			t.Errorf("%s accepted", bad)
