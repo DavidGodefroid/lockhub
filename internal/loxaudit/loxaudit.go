@@ -173,6 +173,7 @@ func Exchange(r store.Exchange, hubKeys []ed25519.PublicKey, lockKeys map[string
 				d = &ticket.Decision{Decision: ticket.Denied, At: r.Decision.At}
 			}
 		}
+		x.Reason = clean(d.Reason)
 		x.Decided = d.At
 		if x.Decided.IsZero() {
 			x.Decided = r.Decision.At

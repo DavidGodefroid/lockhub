@@ -106,6 +106,12 @@ Usage:
   lox audit show INSTANCE/ID [--json]     one exchange: masked plan, deciding rule or human, timings, signatures
   lox audit verify --data DIR --hub-key-file FILE
                                           check the hub's audit chain and decision signatures
+  lox tickets [--lock NAME] [--pending|--error] [--json] [--socket PATH]
+                                          the tickets pending at the hub, oldest first, with their age;
+                                          --error: only those lox run cannot verify
+  lox withdraw INSTANCE/ID… | --lock NAME --all-pending|--error [--socket PATH]
+                                          take pending tickets back (as w in lox run): each ends withdrawn,
+                                          audited with you, and its lock ends the plan and frees its queue
   lox version                            print the version
   lox help                               show this help
 
@@ -163,6 +169,10 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return refreshCmd(args[1:], stdout, stderr)
 	case "audit":
 		return auditCmd(args[1:], stdout, stderr)
+	case "tickets":
+		return ticketsCmd(args[1:], stdout, stderr)
+	case "withdraw":
+		return withdrawCmd(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lox: unknown command %q\n\n%s", args[0], usage)
 		return 2

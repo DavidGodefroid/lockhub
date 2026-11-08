@@ -129,6 +129,14 @@ func (c *Client) Decide(ctx context.Context, instance, id string, req api.Decide
 	return c.do(ctx, "POST", ticketPath(instance, id, "decide"), req, &r)
 }
 
+// Withdraw takes back a pending ticket for the human (lox run, lox
+// withdraw): the hub ends it withdrawn and tells its lock.
+func (c *Client) Withdraw(ctx context.Context, instance, id string, req api.WithdrawRequest) (api.WithdrawResult, error) {
+	var r api.WithdrawResult
+	err := c.do(ctx, "POST", ticketPath(instance, id, "withdraw"), req, &r)
+	return r, err
+}
+
 // Screen renders a queue item for the terminal. Everything that comes
 // from the lock or the agent goes through sanitize.Terminal.
 func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {

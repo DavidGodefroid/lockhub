@@ -34,6 +34,7 @@ func FacadeHandler(h *hub.Hub, extra ...func(*http.ServeMux)) http.Handler {
 	mux.HandleFunc("GET /v1/tickets/{instance}/{id}", f.ticket)
 	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/reveal", f.reveal)
 	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/renew", f.renew)
+	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/withdraw", f.withdraw)
 	return mux
 }
 
@@ -280,6 +281,38 @@ func (f *facades) renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, RenewResult{Ticket: res.Ticket, AutoApproved: res.AutoApproved})
+}
+
+// WithdrawRequest is POST /v1/tickets/{instance}/{id}/withdraw: the human
+// takes back a pending ticket (lox run, lox withdraw). Via is where:
+// "lox run" or "lox withdraw".
+type WithdrawRequest struct {
+	Facade  string `json:"facade"`
+	Display string `json:"display,omitempty"`
+	Via     string `json:"via"`
+}
+
+// WithdrawResult answers it: the audited reason, and whether the lock
+// was told (a signed denial naming the withdrawal; false for a ticket the
+// hub cannot verify).
+type WithdrawResult struct {
+	Reason string `json:"reason"`
+	Told   bool   `json:"told"`
+}
+
+func (f *facades) withdraw(w http.ResponseWriter, r *http.Request) {
+	var req WithdrawRequest
+	a, ok := asker(w, r, &req, func() string { return req.Facade }, func() string { return req.Display })
+	if !ok {
+		return
+	}
+	ref := store.Ref{Instance: r.PathValue("instance"), ID: r.PathValue("id")}
+	res, err := f.h.WithdrawByHuman(r.Context(), ref, a, req.Via)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, WithdrawResult{Reason: res.Reason, Told: res.Told})
 }
 
 // TicketState answers GET /v1/tickets/{instance}/{id}: the ticket's state

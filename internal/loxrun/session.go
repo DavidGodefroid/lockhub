@@ -19,6 +19,7 @@ type Hub interface {
 	QueueAll(ctx context.Context, since uint64, wait time.Duration) (api.QueueResult, error)
 	Decide(ctx context.Context, instance, id string, req api.DecideRequest) error
 	State(ctx context.Context, instance, id string) (api.TicketState, error)
+	Withdraw(ctx context.Context, instance, id string, req api.WithdrawRequest) (api.WithdrawResult, error)
 }
 
 var _ Hub = (*approve.Client)(nil)
@@ -28,16 +29,17 @@ type EventKind string
 
 // Events.
 const (
-	EvTicket   EventKind = "ticket"   // a new ticket in the feed
-	EvQuestion EventKind = "question" // a question card waits (the human was called)
-	EvDecided  EventKind = "decided"  // the hub signed lox run's decision
-	EvFailed   EventKind = "failed"   // a decision could not be sent
-	EvResult   EventKind = "result"   // a decided ticket's result (consumed, expired…)
-	EvMode     EventKind = "mode"     // the mode changed
-	EvHub      EventKind = "hub"      // the hub became reachable or not
-	EvShown    EventKind = "shown"    // another question is on top now (ID; "" none): keys typed before were dropped
-	EvAlert    EventKind = "alert"    // a lock-side refusal loop (Instance): its line in the global feed
-	EvPolicy   EventKind = "policy"   // a lock's policy state changed (Instance), as its console said
+	EvTicket    EventKind = "ticket"    // a new ticket in the feed
+	EvQuestion  EventKind = "question"  // a question card waits (the human was called)
+	EvDecided   EventKind = "decided"   // the hub signed lox run's decision
+	EvFailed    EventKind = "failed"    // a decision could not be sent
+	EvResult    EventKind = "result"    // a decided ticket's result (consumed, expired…)
+	EvMode      EventKind = "mode"      // the mode changed
+	EvHub       EventKind = "hub"       // the hub became reachable or not
+	EvShown     EventKind = "shown"     // another question is on top now (ID; "" none): keys typed before were dropped
+	EvAlert     EventKind = "alert"     // a lock-side refusal loop (Instance): its line in the global feed
+	EvPolicy    EventKind = "policy"    // a lock's policy state changed (Instance), as its console said
+	EvWithdrawn EventKind = "withdrawn" // the human's withdrawal of a ticket was answered (Err: refused)
 )
 
 // Event is one thing that happened in a session.
@@ -192,6 +194,7 @@ type state struct {
 	muted    bool      // the sound is off (Sound.Off, the s key)
 	calledAt time.Time // when the human was last called for the questions waiting
 	drawn    int       // frames drawn (a terminal's first one clears it)
+	withdraw withdrawState
 	keyGuard
 }
 
@@ -314,6 +317,12 @@ func (s *Session) Run(ctx context.Context) error {
 		err error
 	}
 	stateCh := make(chan stateMsg, 64)
+	type withdrawMsg struct {
+		ef  withdrawEffect
+		res api.WithdrawResult
+		err error
+	}
+	withdrawCh := make(chan withdrawMsg, 16)
 	polling := false
 	type commandMsg struct {
 		c   consoleCmd
@@ -349,6 +358,19 @@ func (s *Session) Run(ctx context.Context) error {
 			}()
 		}
 		st.pending = nil
+		for _, ef := range st.withdraw.pending {
+			ef, req := ef, st.withdrawReq()
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				res, err := s.Hub.Withdraw(ctx, ef.instance, ef.id, req)
+				select {
+				case withdrawCh <- withdrawMsg{ef, res, err}:
+				case <-ctx.Done():
+				}
+			}()
+		}
+		st.withdraw.pending = nil
 		for _, c := range st.commands {
 			wg.Add(1)
 			go func() {
@@ -399,6 +421,8 @@ func (s *Session) Run(ctx context.Context) error {
 			st.onDecided(m.t, m.req, m.err)
 		case m := <-commandCh:
 			st.onCommanded(m.c, m.err)
+		case m := <-withdrawCh:
+			st.onWithdrawn(m.ef, m.res, m.err)
 		case m := <-stateCh:
 			if m.t == nil {
 				polling = false // the batch is done
