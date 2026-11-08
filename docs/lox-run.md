@@ -85,9 +85,64 @@ Equal auto reads fold into one line (`× 12 SELECT on orders`). A question is a
 framed card above the feed: what, who, which profile, the masked screen,
 why it is asked, and `y` / `n` / `d` (details) / `x` (forget the profile); a production name or a secret
 is typed in the card. A sound plays only when a card appears (see below).
-`Tab` brings the next card up, `a` shows the hub's audit (as `lox audit`
+`Tab` brings the next card up (with one card or none, it shows the next
+lock tab), `a` shows the hub's audit (as `lox audit`
 lists it, read again every second while open), `s` turns the sound on or off
 for the session, `?` the keys, `q q` or Ctrl-C quits.
+
+**A tab per lock.** Next to the global feed (`0`, the default), each lock
+whose console `lox run` follows has a tab (`1`…`9`, `Tab`): what the lock
+decides on its own side, which never reaches the hub, read at its console's
+terminal over the docker attach `lox run` holds (an agent has no Docker: it
+can neither read nor write this channel, and nothing of it goes to the hub).
+
+- **The console feed**: each plan as the console frames it (the requester,
+  the agent's words, the statement, its class, EXPLAIN summary and verdict,
+  the verdict's reasons, the row bound and PII masking), how it was sent on
+  (`pending: ticket …`) and what it gave (`done: 93 rows in 3946 ms`, an
+  error). The statement (and the agent's words, a k-anonymity count's
+  statement) shows in clear only up to its first byte that may open a
+  literal, a quoted identifier or a comment in some dialect (`'` `"` `` ` ``
+  `[` `$` `#` `--` `/*`, or a non-ASCII byte): from there on each line is
+  one `‹?›`, so no dialect's reading can show a value; numbers before it
+  are masked too, but for a `LIMIT`, `OFFSET` or `TOP` bound. `o` shows
+  the statements in clear on this screen only (they never leave
+  `lox run`'s memory). The tab reads only the console's own lines: an
+  unindented line in a format it knows, and the indented lines of the
+  block such a line opens (a `:status`, a policy change). A result the
+  console prints in clear (results on, or `PII: UNMASKED`) is printed
+  indented under its title: from that title on, every indented line is
+  left out until the console's next known line, so no cell is ever read
+  as a console line; any line the tab does not know is left out. A
+  failure's text, a verdict's reasons and the row bound show with their
+  numbers masked.
+- **Lock-side refusals** (`refused [E_COST]: …`, a refused construct, a
+  ticket not submitted because the lock's rate limits are reached,
+  `THROTTLED`, lockkit#150): their code and reason, the same refusal from
+  the same requester folded into one line with a counter (`×11`). Three in
+  a row (`Session.RefusalLoop`) raise an alert line in the global feed
+  (`lock-side refusal loop: E_COST ×3 …`) and ring the bell: an agent is
+  looping on a refusal the hub never sees.
+- **The policy state**: approved, **pending** (a loosening in the files
+  waits for its review) or **refused** (the human refused it, at the
+  console's start or at `:review`: the last approved policy applies, not the
+  files'), with the change as the console worded it. `r` types `:review` at
+  the console; its question comes up as a card (the change, `y`, the
+  production name typed) and is answered at the console's terminal, without
+  `lox attach`. A loosening refused once is offered again by the console
+  only once the files change (lockkit keeps its refusal until then).
+- **The session state**: serving or ended (and why), the idle time since
+  the last request seen and the time left before `idle_timeout`, the time
+  left before `max_session`, from the limits the console says are in force
+  (its `:status`, the approved policy's values, never the files'). `lox run`
+  types `:status` once each time it attaches to a serving console (a line
+  typed counts as activity for its idle timeout); `i` types it again.
+- **A badge** on a tab that wants you: `policy pending`, `policy refused`,
+  `refusal loop`, `question`.
+
+`lox run` reads what a console printed before it attached (its start, a
+policy change refused there) from its container's logs (`docker logs`, the
+last 200 lines, then what it printed since the last attach).
 
 **Stuck tickets are withdrawn, not waited out.** `w` lists every ticket
 pending at the hub, oldest first, with its age and where lox run stands on

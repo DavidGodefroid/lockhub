@@ -18,6 +18,22 @@ digest).
   (`ssh = { auth = "key", key = "…" }`) is checked, and an `ssh` value
   the review cannot read is listed as not checked instead of skipped.
 
+- `lox run` has a tab per lock (`1`…`9`, `Tab`; `0` the global feed, the
+  default) with what the lock decides on its own side, read at its
+  console's terminal (the docker attach `lox run` holds, which no agent
+  reaches; nothing goes to the hub): its plans (class, EXPLAIN summary,
+  verdict, row bound, PII masking, the decision and `done: N rows in T
+  ms`), each statement masked from its first quote, comment or non-ASCII
+  byte on, whatever the dialect, and every number before it (`o` shows
+  it in clear, on screen only); its lock-side refusals with code and
+  reason, identical ones folded with a counter, a loop of three raising an alert in the global feed;
+  tickets not submitted under the lock's rate limits (`THROTTLED`,
+  DavidGodefroid/lockkit#150); its policy state (approved, pending,
+  refused: the last approved policy applies) with the change, reviewed
+  from the tab (`r` types `:review`, the question is a card); its session
+  (idle time, time left before `idle_timeout` and `max_session`, the limits
+  in force from the console's `:status`, typed once per attach and on `i`).
+  A badge marks a tab that wants you (#146).
 - Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
   ticket pending at the hub, oldest first, with its age, per lock with
   how many lox run cannot verify; `x` withdraws the selected one, `X` all

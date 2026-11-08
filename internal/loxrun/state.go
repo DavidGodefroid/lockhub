@@ -132,7 +132,8 @@ func (st *state) wipe() {
 
 func (st *state) view() View {
 	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
-		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles()}
+		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles(),
+		Tabs: st.tabs(), Lock: st.lockView()}
 	if st.s.Sound != nil {
 		v.Sound = SoundOn
 		if st.muted {
@@ -875,6 +876,9 @@ func (st *state) onKey(k Key) bool {
 	st.flash = ""
 	if st.overlay == overlayWithdraw {
 		st.withdrawKey(k)
+		return false
+	}
+	if !(k.Code == KeyTab && len(st.cards) > 1) && (st.tabKeyPress(k) || st.lockKeyPress(k)) {
 		return false
 	}
 	switch k.Code {

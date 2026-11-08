@@ -1,0 +1,34 @@
+ lox run [AUTO]  ~/Documents/shop                                                ● hub up · 3 locks
+ connected shop/prod! 4m · shop/dev 50s
+ locks ◆ shop serving · ◇ mq serving
+ tabs  0 feed   1 mq   2 shop ◆ policy refused 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ◆ shop · locksql · console serving
+   session serving for 5m · idle 1m of idle_timeout 10m (8m left) · session ends in 53m (max_sessio…
+   policy  REFUSED: the last approved policy applies, not the files' · r reviews it again
+     ~ limits.idle_timeout: 10m0s → 1h0m0s  (loosens)
+ lock-side feed (statements IN CLEAR: o hides them)
+ 14:02:00 policy: the loosening was refused: the last approved policy applies
+ 14:02:00 console serving
+ 14:02:30 plan uid 1000: Q3: editions of supplier ‹?›
+          SELECT title FROM book WHERE supplier = 'ACME' LIMIT 100
+          class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
+            - a policy change in the config files was refused by the human; the last approved polic…
+          reads: appdb.book · returns at most ‹?› rows · k-anonymity count (k=5): SELECT COUNT(*) F…
+          → pending: ticket 01M · done: 93 rows in 3946 ms
+ 14:03:50 ✘ refused [E_COST] ×11 weight check: estimated rows examined 1 943 473 > 200 000 (uid 100…
+ 14:05:20 plan uid 1000: Q3: editions of supplier ‹?›
+          SELECT 1 -- SECRETD
+          WHERE a = 'line one SECRETA
+          SECRETB end' /* SECRETC */
+          class READ · EXPLAIN: book full ~1 943 473 · est. 1 943 473 rows examined · verdict OK
+          reads: appdb.book · returns at most ‹?› rows · k-anonymity count (k=5): SELECT COUNT(*) F…
+          → pending: ticket 01M · not submitted
+ 14:05:21 ✘ refused [THROTTLED] too many tickets: 20 tickets already pending (limit 20, raised by l…
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ 0-9 tabs  r review policy  i status  o clear  Shift+Tab mode  a audit  ? help  q quit

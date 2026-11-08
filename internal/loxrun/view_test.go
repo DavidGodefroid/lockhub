@@ -90,6 +90,9 @@ var variants = []variant{
 	}},
 	{"help-80", Style{Unicode: true}, 80, 24, func(v *View) { v.Overlay = "help" }},
 	{"audit-80", Style{Unicode: true}, 80, 24, func(v *View) { v.Overlay, v.Cards = "audit", nil }},
+	{"lock-tab-120", Style{Color: true, Unicode: true}, 120, 34, withLockTab(false)},
+	{"lock-tab-ascii-80", Style{}, 80, 30, withLockTab(false)},
+	{"lock-tab-clear-100", Style{Unicode: true}, 100, 34, withLockTab(true)},
 }
 
 // The frame, golden: the layout, the colour code, the question card, on

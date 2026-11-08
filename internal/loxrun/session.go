@@ -37,6 +37,8 @@ const (
 	EvMode      EventKind = "mode"      // the mode changed
 	EvHub       EventKind = "hub"       // the hub became reachable or not
 	EvShown     EventKind = "shown"     // another question is on top now (ID; "" none): keys typed before were dropped
+	EvAlert     EventKind = "alert"     // a lock-side refusal loop (Instance): its line in the global feed
+	EvPolicy    EventKind = "policy"    // a lock's policy state changed (Instance), as its console said
 	EvWithdrawn EventKind = "withdrawn" // the human's withdrawal of a ticket was answered (Err: refused)
 )
 
@@ -112,6 +114,9 @@ type Session struct {
 	// their questions (policy review, production name, passwords) are
 	// asked in a card here and answered there.
 	Consoles Consoles
+	// RefusalLoop is how many identical lock-side refusals in a row, read
+	// at a console, raise an alert in the global feed (0: RefusalLoop).
+	RefusalLoop int
 	// Sound calls the human when a question waits (nil: the terminal
 	// bell only, and the header shows no sound state).
 	Sound *Sound
@@ -170,20 +175,28 @@ type state struct {
 	consoles       map[string]*LockConsole
 	consoleCards   map[string]*tracked
 	consoleAnswers map[string]*consoleAnswer
-	hubOK          bool
-	hubErr         string
-	overlay        string
-	audit          auditView
-	flash          string
-	flashTo        time.Time
-	quitting       bool
-	pending        []effect
-	bell           bool
-	dirty          bool
-	muted          bool      // the sound is off (Sound.Off, the s key)
-	calledAt       time.Time // when the human was last called for the questions waiting
-	drawn          int       // frames drawn (a terminal's first one clears it)
-	withdraw       withdrawState
+	// locks are the locks' feeds read at their consoles, by instance;
+	// tab the lock tab shown ("" the global feed), reveal whether its
+	// statements show in clear (o); loops the refusal loops' lines.
+	locks    map[string]*LockFeed
+	tab      string
+	reveal   bool
+	loops    []loopAlert
+	hubOK    bool
+	hubErr   string
+	overlay  string
+	audit    auditView
+	flash    string
+	flashTo  time.Time
+	quitting bool
+	pending  []effect
+	commands []consoleCmd // to type at a console, off the key loop
+	bell     bool
+	dirty    bool
+	muted    bool      // the sound is off (Sound.Off, the s key)
+	calledAt time.Time // when the human was last called for the questions waiting
+	drawn    int       // frames drawn (a terminal's first one clears it)
+	withdraw withdrawState
 	keyGuard
 }
 
@@ -226,7 +239,7 @@ func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[secretKey][]byte{},
 		ran: map[string]ranAt{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
-		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, dirty: true}
+		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.muted = s.Sound != nil && s.Sound.Off
 	return st
@@ -313,6 +326,11 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	withdrawCh := make(chan withdrawMsg, 16)
 	polling := false
+	type commandMsg struct {
+		c   consoleCmd
+		err error
+	}
+	commandCh := make(chan commandMsg, 8)
 
 	var consoleCh <-chan ConsoleEvent
 	if s.Consoles != nil {
@@ -355,6 +373,18 @@ func (s *Session) Run(ctx context.Context) error {
 			}()
 		}
 		st.withdraw.pending = nil
+		for _, c := range st.commands {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := c.cmd.Command(c.instance, c.line)
+				select {
+				case commandCh <- commandMsg{c, err}:
+				case <-ctx.Done():
+				}
+			}()
+		}
+		st.commands = nil
 		st.syncTop()
 		if st.flushKeys {
 			st.flushKeys = false
@@ -391,6 +421,8 @@ func (s *Session) Run(ctx context.Context) error {
 			st.dirty = true
 		case m := <-decideCh:
 			st.onDecided(m.t, m.req, m.err)
+		case m := <-commandCh:
+			st.onCommanded(m.c, m.err)
 		case m := <-withdrawCh:
 			st.onWithdrawn(m.ef, m.res, m.err)
 		case m := <-stateCh:

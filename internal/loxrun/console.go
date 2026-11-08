@@ -45,6 +45,9 @@ type ConsoleEvent struct {
 	// Question is set when State is ConsoleWaiting.
 	Question *ConsoleQuestion
 	Err      string
+	// Feed, when set, is what the console printed: the event changes
+	// nothing else (State is not set).
+	Feed *ConsoleFeed
 }
 
 // Consoles is lox run's reach to the locks' terminals (consoles.Bridge):
@@ -133,6 +136,10 @@ func answerKey(instance, prompt string) string { return instance + "\x00" + prom
 
 // onConsole takes a change of a lock's console.
 func (st *state) onConsole(e ConsoleEvent) {
+	if e.Feed != nil {
+		st.onConsoleFeed(e)
+		return
+	}
 	st.dirty = true
 	lc, ok := st.consoles[e.Instance]
 	if !ok {
