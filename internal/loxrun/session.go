@@ -153,11 +153,13 @@ type state struct {
 	readsAsked map[string]bool
 	// secrets typed for "ask" profiles, kept in this process for the
 	// session only (wiped when Run returns), sealed again to each
-	// connect ticket of that profile.
-	secrets map[string][]byte
-	// ran: when the lock last connected on a profile, while no other
-	// ticket of the profile came since (ReconnectAsk).
-	ran map[string]time.Time
+	// connect ticket of that profile and endpoint: a profile's legs (an
+	// SSH bastion, its database) each keep their own (#165).
+	secrets map[secretKey][]byte
+	// ran: when and to which endpoint the lock last connected on a
+	// profile, while no other ticket of the profile came since
+	// (ReconnectAsk).
+	ran map[string]ranAt
 	// gen counts, per profile, the times the human dropped the session's
 	// connection (x): a connect that comes back from before does not
 	// put back what was dropped.
@@ -222,8 +224,8 @@ func (s *Session) observe(e Event) {
 
 func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
-		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[string][]byte{},
-		ran: map[string]time.Time{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
+		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[secretKey][]byte{},
+		ran: map[string]ranAt{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
 		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.muted = s.Sound != nil && s.Sound.Off
