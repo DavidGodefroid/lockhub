@@ -36,6 +36,8 @@ const (
 	EvMode     EventKind = "mode"     // the mode changed
 	EvHub      EventKind = "hub"      // the hub became reachable or not
 	EvShown    EventKind = "shown"    // another question is on top now (ID; "" none): keys typed before were dropped
+	EvAlert    EventKind = "alert"    // a lock-side refusal loop (Instance): its line in the global feed
+	EvPolicy   EventKind = "policy"   // a lock's policy state changed (Instance), as its console said
 )
 
 // Event is one thing that happened in a session.
@@ -110,6 +112,9 @@ type Session struct {
 	// their questions (policy review, production name, passwords) are
 	// asked in a card here and answered there.
 	Consoles Consoles
+	// RefusalLoop is how many identical lock-side refusals in a row, read
+	// at a console, raise an alert in the global feed (0: RefusalLoop).
+	RefusalLoop int
 	// Sound calls the human when a question waits (nil: the terminal
 	// bell only, and the header shows no sound state).
 	Sound *Sound
@@ -163,6 +168,13 @@ type state struct {
 	consoles       map[string]*LockConsole
 	consoleCards   map[string]*tracked
 	consoleAnswers map[string]*consoleAnswer
+	// locks are the locks' feeds read at their consoles, by instance;
+	// tab the lock tab shown ("" the global feed), reveal whether its
+	// statements show in clear (o); loops the refusal loops' lines.
+	locks  map[string]*LockFeed
+	tab    string
+	reveal bool
+	loops  []loopAlert
 	hubOK          bool
 	hubErr         string
 	overlay        string
@@ -218,7 +230,7 @@ func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, secrets: map[string][]byte{},
 		ran: map[string]time.Time{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
-		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, dirty: true}
+		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.muted = s.Sound != nil && s.Sound.Off
 	return st

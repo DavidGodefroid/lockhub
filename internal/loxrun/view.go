@@ -164,6 +164,10 @@ type View struct {
 	Consoles []LockConsole
 	// Sound is the session's sound state in the header (SoundNone: not shown).
 	Sound SoundState
+	// Tabs are the locks' tabs (none: no console followed); Lock the lock
+	// tab shown, nil for the global feed.
+	Tabs []LockTab
+	Lock *LockView
 }
 
 // SoundState is whether a question plays a sound.
@@ -223,13 +227,23 @@ func frameLines(v View, w, h int, st Style) []line {
 		cards = card(v, v.Cards[0], len(v.Cards), w, st)
 	}
 	room := h - len(head) - len(foot) - len(cards)
+	if over := len(head) + len(foot) - h; over > 0 {
+		// A very short terminal: the header's last lines (the tabs, the
+		// locks) go first; its rule stays.
+		head = append(head[:max(len(head)-over-1, 1)], head[len(head)-1])
+		room = h - len(head) - len(foot) - len(cards)
+	}
 	if room < 1 && len(cards) > 0 {
 		// A short terminal: the question first, cut from the bottom.
 		cards = cards[:max(len(cards)+room-1, 1)]
 		room = 1
 	}
 	var body []line
-	switch v.Overlay {
+	overlay := v.Overlay
+	if overlay == "" && v.Lock != nil {
+		overlay = "lock"
+	}
+	switch overlay {
 	case "help", "audit":
 		// An overlay reads from its top; the feed from its newest line.
 		switch {
@@ -240,6 +254,18 @@ func frameLines(v View, w, h int, st Style) []line {
 		default:
 			body = auditLines(v, w, st)
 		}
+		if len(body) > room {
+			body = body[:room]
+		}
+		for len(body) < room {
+			body = append(body, nil)
+		}
+	case "lock":
+		top, feed := lockLines(v, w, st)
+		if n := max(room-len(top), 0); len(feed) > n {
+			feed = feed[len(feed)-n:]
+		}
+		body = append(top, feed...)
 		if len(body) > room {
 			body = body[:room]
 		}
@@ -359,6 +385,9 @@ func header(v View, w int, st Style) []line {
 	if len(v.Consoles) > 0 {
 		out = append(out, consolesLine(v, st).trunc(w, st.ellipsis()))
 	}
+	if len(v.Tabs) > 0 {
+		out = append(out, tabsLine(v, st).trunc(w, st.ellipsis()))
+	}
 	return append(out, rule(w, st, sgrDim))
 }
 
@@ -437,6 +466,11 @@ func footer(v View, w int, st Style) []line {
 	keys := [][2]string{{"Shift+Tab", "mode"}, {"y/n", "answer"}, {"d", "details"}, {"a", "audit"}, {"?", "help"}, {"q", "quit"}}
 	if len(v.Cards) == 0 {
 		keys = append(keys[:1], keys[3:]...)
+	}
+	if v.Lock != nil {
+		keys = append([][2]string{{"0-9", "tabs"}, {"r", "review policy"}, {"i", "status"}, {"o", "clear"}}, keys...)
+	} else if len(v.Tabs) > 0 {
+		keys = append([][2]string{{"1-9", "lock tabs"}}, keys...)
 	}
 	for i, k := range keys {
 		if i > 0 {
@@ -684,6 +718,8 @@ func helpLines(w int, st Style) []line {
 		{"x", "forget the profile on top (none up: all): asked again, password too"},
 		{"s", "sound on / off for this session (a question plays a sound)"},
 		{"a", "the hub's audit (lox audit): each exchange and the rule or human that decided it"},
+		{"0 1-9 Tab", "the global feed, a lock's tab: plans, refusals, policy, session"},
+		{"r i o", "in a lock's tab: review its policy, its :status, statements in clear"},
 		{"?", "this help; Esc or ? again to close"},
 		{"q q, Ctrl-C", "quit: decisions stop, tickets wait (fail closed)"},
 	}
