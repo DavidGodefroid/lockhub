@@ -430,7 +430,9 @@ func (st *state) apply(t *tracked, v Verdict) {
 		st.pushEntry(t, false)
 		st.send(t, false, v.Rule, nil)
 	default:
-		if t.req.NeverAuto && t.req.Action() == ActRead {
+		// An unmask (read-pii) is the lock's own question, not a read
+		// its profile asks.
+		if t.req.NeverAuto && t.req.Action() == ActRead && t.req.Risk == ticket.RiskRead {
 			st.readsAsked[t.profileKey] = true
 		}
 		st.ask(t, v.Why, v.Tag)

@@ -75,6 +75,11 @@ func TestRunE2EProductionAuto(t *testing.T) {
 			t.Fatalf("%s: %+v, want the human's approval", c.sql, d)
 		}
 		asked[id] = c.why
+		// An unmask is not a read its profile asks: the header must not
+		// say so before the read = ask ticket comes.
+		if c.risk == ticket.RiskReadPII && strings.Contains(ansiRE.ReplaceAllString(w.out.String(), ""), prodProfile+" reads asked") {
+			t.Errorf("an unmask marked %s reads asked", prodProfile)
+		}
 	}
 
 	// After an idle close, the connection comes back on the session's
