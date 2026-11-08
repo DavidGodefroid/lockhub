@@ -11,6 +11,12 @@ digest).
   endpoint, the database leg right after the bastion's is no longer
   taken for a failed reconnect, and an idle reconnect reuses each leg's
   own password without asking.
+- `lox add` / `lox run` home-file checks (#167): a path into the
+  profile's directory (such as `tls_ca = ".locksql/ca.pem"`) is checked
+  in the copy the review applies, so a first run or a profile change no
+  longer reports it "not found"; a key in an inline table
+  (`ssh = { auth = "key", key = "…" }`) is checked, and an `ssh` value
+  the review cannot read is listed as not checked instead of skipped.
 
 - Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
   ticket pending at the hub, oldest first, with its age, per lock with

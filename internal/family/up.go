@@ -596,7 +596,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if len(fk) == 0 && len(odd) == 0 {
 				continue
 			}
-			files, err := u.checkHomeFiles(ctx, project, composeYAML, n, l.Type, fk)
+			files, err := u.checkHomeFiles(ctx, project, composeYAML, n, l.Type, ws, profiles[l.Type], fk)
 			if cerr := ctx.Err(); cerr != nil {
 				return cerr
 			}
