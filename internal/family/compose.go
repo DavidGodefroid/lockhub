@@ -317,6 +317,11 @@ func Compose(c *Config, p Paths) string {
 					w("      LOCKLOG_DOCKER_ROOT: %s", q(lp.DockerRoot))
 				}
 			}
+			if len(l.LogRoots) > 0 {
+				// The reviewed log_roots, as the launcher passes the ones it
+				// took: part of the console's policy.
+				w("      LOCKLOG_EXTRA_ROOTS: %s", q(strings.Join(l.LogRoots, " ")))
+			}
 			if lockNet(l, lp) && p.Project != "" {
 				// A remote source is reached on the lock's own network,
 				// through its gateway; no agent joins it.

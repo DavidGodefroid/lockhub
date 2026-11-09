@@ -21,6 +21,11 @@
 # the routing lox run wrote. A lock whose plan.json is gone (a workspace
 # from before the mount plans) is a warning that says to run lox run.
 #
+# A bad lock (lockhub#177): lox add locklog refuses a directory outside the
+# log roots; a profile that reads one anyway leaves its lock not started,
+# with its reason in lox run and lox doctor, while the other locks start
+# and are served; the lock's reviewed log_roots then let lox run bind it.
+#
 #   ci/e2e/locklog.sh LOX_BIN
 . "$(dirname "$0")/lib.sh"
 lox=$1
@@ -29,6 +34,8 @@ ws=$(realpath "$(mktemp -d)")/projects
 mkdir -p "$ws"
 cd "$ws"
 logs=/var/log/lockhub-$E2E_ID
+# A log directory outside the default roots (lockhub#177).
+srv=/srv/lockhub-$E2E_ID
 web=$E2E_ID-web
 cleanup() {
 	if [ -f "$ws/.lockfamily/up.json" ]; then
@@ -36,7 +43,7 @@ cleanup() {
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
 	docker rm -f "$web-1" "$web-2" >/dev/null 2>&1 || true
-	sudo rm -rf "$logs"
+	sudo rm -rf "$logs" "$srv"
 }
 trap cleanup EXIT INT TERM
 
@@ -216,4 +223,51 @@ grep -F "warn lock logs mount plan: none applied yet" doctor4.out | grep -qF "ru
 grep -E "^FAIL .*lock logs" doctor4.out && die "lox doctor fails a lock with no applied plan"
 mv "$state/locklog/logs/plan.json.bak" "$state/locklog/logs/plan.json"
 
-say "PASS: lox run mounts locklog's plan, the containers map and lox refresh; networks and routing"
+say "lox add locklog refuses a directory outside the log roots (lockhub#177): nothing declared"
+cp .lockfamily/lockfamily.yaml lockfamily.before
+rc=0
+"$lox" add locklog --non-interactive --name bad --only "$srv" >add-bad.out 2>&1 || rc=$?
+[ "$rc" = 2 ] && grep -qF "$srv is not under an allowed log root (/var/log /run/log/journal)" add-bad.out ||
+	{ cat add-bad.out; die "lox add locklog took $srv: exit $rc"; }
+cmp -s lockfamily.before .lockfamily/lockfamily.yaml || die "a refused lox add changed lockfamily.yaml"
+
+say "one lock with a mount plan lox run refuses: not started, with its reason; the other locks are served"
+sudo mkdir -p "$srv"
+printf 'srv line\n' | sudo tee "$srv/app.log" >/dev/null
+sudo chmod 0755 "$srv" && sudo chmod 0644 "$srv/app.log"
+sed -i "s|paths = \[\"$logs/app/\*.log\"\]|paths = [\"$srv/*.log\"]|" .locklog/config.toml
+grep -qF "$srv/*.log" .locklog/config.toml || die "the profile still reads $logs"
+python3 "$here/expect.py" 600 'Apply? [y/N]' 'y\n' "up: project " "<pause>qq" -- "$lox" run >run2.raw 2>&1 || { tr -d '\r' <run2.raw; die "lox run stopped on one bad lock"; }
+tr -d '\r' <run2.raw >run2.out
+why="mount plan: $srv is not under an allowed log root (/var/log /run/log/journal)"
+grep -qF "lock logs: not started: $why" run2.out || { cat run2.out; die "lox run does not say lock logs is not started"; }
+grep -qF "lock logs: started" run2.out && die "lox run says lock logs started"
+docker inspect "$p-lock-logs-1" >/dev/null 2>&1 && die "lock-logs still runs"
+for c in ctrs rem; do
+	grep -qF "lock $c: started" run2.out || die "lock $c not started beside the bad one"
+	[ "$(docker inspect -f '{{.State.Running}}' "$p-lock-$c-1")" = true ] || die "lock-$c does not run beside the bad one"
+done
+jq -e '.logs | startswith("mount plan: ")' "$state/not-started.json" >/dev/null || { cat "$state/not-started.json"; die "not-started.json lacks logs"; }
+jq -e '.locks.logs == null and .locks.ctrs != null' "$state/hub/locks.json" >/dev/null || die "the hub still pins lock logs"
+"$lox" doctor >doctor5.out 2>&1 || true
+grep -qF "FAIL lock logs: not started: $why" doctor5.out || { cat doctor5.out; die "lox doctor does not say lock logs is not started"; }
+grep -F "changed since the last lox run" doctor5.out && die "lox doctor takes the lock not started for a change"
+grep -qF "lock ctrs containers map: map.v" doctor5.out || { cat doctor5.out; die "lox doctor no longer checks lock ctrs"; }
+
+say "log_roots (reviewed) lets lox run bind it: lock logs starts, LOCKLOG_EXTRA_ROOTS passed to its console"
+sed -i "/^  logs:\$/a\\    log_roots: [\"$srv\"]" .lockfamily/lockfamily.yaml
+grep -qF "log_roots: [\"$srv\"]" .lockfamily/lockfamily.yaml || { cat .lockfamily/lockfamily.yaml; die "no log_roots"; }
+python3 "$here/expect.py" 600 'Apply? [y/N]' 'y\n' "up: project " "<pause>qq" -- "$lox" run >run3.raw 2>&1 || { tr -d '\r' <run3.raw; die "lox run with log_roots failed"; }
+tr -d '\r' <run3.raw >run3.out
+grep -qF "lock logs log roots $srv besides /var/log /run/log/journal (log_roots)" run3.out || { cat run3.out; die "the review lacks log_roots"; }
+grep -qF "lock logs: started" run3.out || { cat run3.out; die "lock logs not started with log_roots"; }
+[ ! -e "$state/not-started.json" ] || die "not-started.json kept once every lock started"
+insp "$p-lock-logs-1" >logs3.json
+jq -e --arg d "$srv" '[.host[] | select(.Type == "bind" and .Source == $d and .Target == $d and .ReadOnly and .BindOptions.NonRecursive)] | length == 1' logs3.json >/dev/null ||
+	{ cat logs3.json; die "lock-logs: $srv is not bound read-only and non-recursive"; }
+jq -e --arg d "$srv" '.env | index("LOCKLOG_EXTRA_ROOTS=" + $d) != null' logs3.json >/dev/null || { cat logs3.json; die "lock-logs: no LOCKLOG_EXTRA_ROOTS"; }
+sleep 5
+[ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' "$p-lock-logs-1")" = "true 0" ] ||
+	{ docker logs "$p-lock-logs-1" 2>&1 | tail -20; die "lock-logs does not stay up with log_roots (its mount check refused?)"; }
+
+say "PASS: lox run mounts locklog's plan, the containers map and lox refresh; networks and routing; a bad lock is not started, log_roots"

@@ -547,6 +547,18 @@ func normDirs(v string) string {
 	return strings.Join(ds, ",")
 }
 
+// checkLogDirs is checkDirs for locklog's only, with lox run's root rule
+// (family.AddLogRoots): a directory lox run would refuse is refused here.
+func checkLogDirs(v string, a Answers) string {
+	if r := checkDirs("only")(v, a); r != "" || v == "" {
+		return r
+	}
+	if _, err := family.AddLogRoots(strings.Split(normDirs(v), ","), strings.Fields(getenv("LOCKLOG_EXTRA_ROOTS"))); err != nil {
+		return "only: " + err.Error()
+	}
+	return ""
+}
+
 // logFields are locklog's: its profile add detects this host's logs (the
 // files under /var/log, the journal, the containers) by itself; --only
 // narrows it to some directories. A remote source (Loki, Elasticsearch,
@@ -554,7 +566,7 @@ func normDirs(v string) string {
 func logFields(d Defaults) []Field {
 	return []Field{
 		{Key: "only", Label: "Log directories, comma-separated absolute paths", Empty: "every log this host shows: files under /var/log, the journal, the containers",
-			Check: checkDirs("only")},
+			Check: checkLogDirs},
 		productionField(nil),
 		nameField(d, "logs"),
 	}

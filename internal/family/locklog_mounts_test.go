@@ -344,9 +344,11 @@ func TestUpMountsLocklogPlan(t *testing.T) {
 	if err == nil || !strings.Contains(out, "+ lock logs bind "+d2+" (read-only, non-recursive)") {
 		t.Errorf("a new bind is not reviewed: %v\n%s", err, out)
 	}
-	// A plan the host check refuses stops lox run before the review.
+	// A plan the host check refuses: the lock is not started, nothing of
+	// it mounted; the other locks are (lockhub#177).
 	f.keys["plan/logs"] = "profile app false\nfile /etc /etc/*.conf\n"
-	if out, err := upLog(w, h, "y\n", &fake{keys: f.keys}); err == nil || strings.Contains(out, "Apply?") {
+	g := &fake{keys: f.keys}
+	if out, err := upLog(w, h, "y\n", g); err != nil || !strings.Contains(out, "lock logs: not started: ") || strings.Contains(g.upCompose, "/etc") || block(g.upCompose, "lock-logs") != "" {
 		t.Errorf("/etc mounted: %v\n%s", err, out)
 	}
 }

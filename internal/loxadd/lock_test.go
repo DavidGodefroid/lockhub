@@ -1,6 +1,7 @@
 package loxadd
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -110,5 +111,38 @@ func TestBuildRefusals(t *testing.T) {
 	}
 	if _, err := Build("locksql", Answers{"name": "x", "credentials": "vault"}); err == nil || !strings.Contains(err.Error(), "vault-path") {
 		t.Fatalf("vault without path: %v", err)
+	}
+}
+
+// lox add locklog takes a directory outside /var/log only when
+// LOCKLOG_EXTRA_ROOTS lets it in, and then records it as the lock's
+// log_roots, which lox run allows: it never declares a lock lox run
+// refuses (lockhub#177).
+func TestBuildLocklogRoots(t *testing.T) {
+	env := ""
+	getenv = func(k string) string {
+		if k == "LOCKLOG_EXTRA_ROOTS" {
+			return env
+		}
+		return ""
+	}
+	t.Cleanup(func() { getenv = os.Getenv })
+	a := Answers{"name": "logs", "only": "/home/u/lf/logs, /var/log/nginx"}
+	if _, err := Build("locklog", a); err == nil || !strings.Contains(err.Error(), "/home/u/lf/logs is not under an allowed log root (/var/log /run/log/journal)") {
+		t.Errorf("outside the roots: %v", err)
+	}
+	if r := checkLogDirs(a["only"], a); !strings.Contains(r, "is not under an allowed log root") {
+		t.Errorf("the form takes it: %q", r)
+	}
+	env = "/home/u/lf"
+	l, err := Build("locklog", a)
+	if err != nil || !slices.Equal(l.LogRoots, []string{"/home/u/lf/logs"}) || !slices.Contains(l.Target, "/home/u/lf/logs,/var/log/nginx") {
+		t.Errorf("with LOCKLOG_EXTRA_ROOTS: %+v %v", l, err)
+	}
+	if r := checkLogDirs(a["only"], a); r != "" {
+		t.Errorf("the form refuses it: %q", r)
+	}
+	if l, err := Build("locklog", Answers{"name": "logs"}); err != nil || l.LogRoots != nil {
+		t.Errorf("every log: %+v %v", l, err)
 	}
 }
