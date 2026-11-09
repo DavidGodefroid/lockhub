@@ -45,7 +45,7 @@ docker run -d --name "$sftpd" -p "$port:22" -v "$keys:/keys:ro" alpine:3.22 sh -
 	echo "order 1001" >/home/deploy/inbox/orders.txt
 	chown -R deploy:deploy /home/deploy/inbox
 	exec /usr/sbin/sshd -D -e -o PasswordAuthentication=yes -o PermitRootLogin=no -o "Subsystem sftp internal-sftp" \
-		-o ForceCommand=internal-sftp -o HostKey=/etc/ssh/ssh_host_ed25519_key -o AllowTcpForwarding=no -o X11Forwarding=no
+		-o ForceCommand=internal-sftp -o HostKey=/etc/ssh/ssh_host_ed25519_key -o AllowTcpForwarding=no -o X11Forwarding=no -o LogLevel=VERBOSE
 ' >/dev/null
 ok=""
 for i in $(seq 1 60); do
@@ -100,6 +100,13 @@ python3 "$here/attach.py" 120 'y\n' 'Listening on ' 'Password for ' 'sftp-e2e-on
 }
 tr -d '\r' <attach.out | tail -5
 tr -d '\r' <attach.out | grep -q "known_hosts" && die "the console said something of known_hosts"
-docker logs "$sftpd" 2>&1 | grep -q "Accepted password for deploy" || { docker logs "$sftpd" 2>&1 | tail -20; die "the SFTP server saw no login"; }
+# The console connects before it listens (lockkit's start): the server's
+# log shows that login, once sshd wrote it.
+ok=""
+for i in $(seq 1 15); do
+	if docker logs "$sftpd" 2>&1 | grep -Eq "Accepted (password|keyboard-interactive[^ ]*) for deploy"; then ok=1; break; fi
+	sleep 1
+done
+[ -n "$ok" ] || { docker logs "$sftpd" 2>&1 | tail -20; die "the SFTP server saw no login"; }
 
 say "PASS: lox add lockfile --known-hosts <host file>: the console connects at its first start"
