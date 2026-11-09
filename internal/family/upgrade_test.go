@@ -34,12 +34,25 @@ func cosignOut(repo, tag string) []byte {
 	return b
 }
 
+// bundleOut is cosign verify's stdout for an image signed in the
+// sigstore bundle format: no certificate subject (lockhub#176).
+func bundleOut(ref string) []byte {
+	b, _ := json.Marshal([]map[string]any{{
+		"critical": map[string]any{"identity": map[string]any{"docker-reference": ref},
+			"image": map[string]any{"docker-manifest-digest": digestOf(ref)}, "type": "https://sigstore.dev/cosign/sign/v1"},
+		"optional": map[string]any{},
+	}})
+	return b
+}
+
 // signed is the docker and cosign fake whose cosign verify answers like
-// the real one: the image's signature by its release (signedFor), unless
-// the image is unsigned (bad).
+// the real one: the image's signature by its release (signedFor), in the
+// bundle format for the refs in bundle, unless the image is unsigned
+// (bad).
 type signed struct {
 	*fake
 	signedFor map[string][2]string // ref → repo, tag
+	bundle    map[string]bool
 	bad       map[string]bool
 }
 
@@ -62,6 +75,9 @@ func (s *signed) Run(ctx context.Context, stdin []byte, name string, args ...str
 	if ok, _ := regexp.MatchString(id, subject); !ok {
 		return nil, errors.New("none of the expected identities matched: " + id)
 	}
+	if s.bundle[ref] {
+		return bundleOut(ref), nil
+	}
 	return cosignOut(sf[0], sf[1]), nil
 }
 
@@ -73,7 +89,7 @@ func newSigned(f *fake) *signed {
 		sqlImgNew: {"locksql", "v0.16.2"},
 		sqlVault:  {"locksql", "v0.16.2"},
 		mqImg:     {"lockmq", "v0.7.0"},
-	}, bad: map[string]bool{}}
+	}, bundle: map[string]bool{}, bad: map[string]bool{}}
 }
 
 // registry serves the registry token and the manifests' digests
@@ -343,6 +359,142 @@ func TestSignedTag(t *testing.T) {
 		if got := signedTag([]byte(c.out), c.repo); got != c.want {
 			t.Errorf("%s %s: %q, want %q", c.out, c.repo, got, c.want)
 		}
+	}
+}
+
+func TestSignedTagBundleFormat(t *testing.T) {
+	// cosign verify's output for the lockfile v0.8.1 image, signed in the
+	// sigstore bundle format: its "optional" is empty, so the release is
+	// found by digest (Upgrade.release), not read from the signature.
+	b, err := os.ReadFile(filepath.Join("testdata", "cosign-verify-bundle-lockfile-v0.8.1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := signedTag(b, "lockfile"); got != "" {
+		t.Errorf("bundle format: %q", got)
+	}
+	if got := signedTag(cosignOut("lockfile", "v0.8.1"), "lockfile"); got != "v0.8.1" {
+		t.Errorf("old format: %q", got)
+	}
+}
+
+// The release of an image whose signature names none is the newest
+// release the registry serves its digest for, once verified for that
+// very tag.
+func TestUpgradeRelease(t *testing.T) {
+	const (
+		v080    = "ghcr.io/davidgodefroid/lockfile@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+		v081    = "ghcr.io/davidgodefroid/lockfile@sha256:7c7efa5a10ddce1ebccca08ad3af9404337554bfb510e12f08957bef4aee3a13"
+		v090    = "ghcr.io/davidgodefroid/lockfile@sha256:9999999999999999999999999999999999999999999999999999999999999999"
+		unknown = "ghcr.io/davidgodefroid/lockfile@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+	)
+	digests := map[string]string{"v0.9.0": v090, "v0.8.1": v081, "v0.8.0": v080, "v0.3.0": fileImg}
+	const none = "lock docs: image: not upgraded: its signature names no lockfile release, so it cannot be compared with v0.8.1"
+	for _, c := range []struct {
+		name, img  string
+		unverified map[string]bool
+		want       string
+		verified   int
+	}{
+		{"older", v080, nil, "lock docs: image upgraded: lockfile v0.8.0 → v0.8.1", 2},
+		{"current", v081, nil, "", 1},
+		{"newer", v090, nil, "", 1},
+		// The digest is v0.8.0's but its signature is not that release's.
+		{"unverified", v080, map[string]bool{"v0.8.0": true}, none, 1},
+		// No release has that digest.
+		{"unknown", unknown, nil, none, 0},
+		// Older than lockfile's first release under lox run: not looked at.
+		{"too old", fileImg, nil, none, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var verified []string
+			u := &Upgrade{Pins: map[string]string{"lockfile": "v0.8.1"},
+				Image: func(_ context.Context, repo, tag, variant string) (string, error) {
+					verified = append(verified, tag)
+					if c.unverified[tag] {
+						return "", errors.New("no matching signatures")
+					}
+					return digests[tag], nil
+				},
+				Tags: func(context.Context, string) ([]string, error) {
+					return []string{"v0.9.0", "v0.8.1", "v0.8.0", "v0.3.0"}, nil
+				},
+				Digest: func(_ context.Context, repo, tag, variant string) (string, error) {
+					if repo != "lockfile" || variant != "" {
+						t.Errorf("digest of %s %q", repo, variant)
+					}
+					return digests[tag], nil
+				}}
+			raw := []byte("version: 1\nhub:\n  image: " + hubImg + "\nlocks:\n  docs:\n    type: lockfile\n    image: " + c.img + "\n")
+			cfg, err := decode(raw, filepath.Join(t.TempDir(), FileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out strings.Builder
+			_, ups, err := u.upgrade(context.Background(), &out, raw, cfg, map[string]string{}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.want == "" && (len(ups) != 0 || out.Len() != 0) || c.want != "" && !strings.Contains(out.String(), c.want) {
+				t.Errorf("%v\n%s", ups, out.String())
+			}
+			if len(verified) != c.verified {
+				t.Errorf("verified %v", verified)
+			}
+		})
+	}
+}
+
+// A lockfile lock whose image is signed in the sigstore bundle format,
+// pinned to a release older than the one this lox ships with, is
+// upgraded by lox run (lockhub#176).
+func TestUpgradeBundleSigned(t *testing.T) {
+	const fileImgNew = "ghcr.io/davidgodefroid/lockfile@sha256:7c7efa5a10ddce1ebccca08ad3af9404337554bfb510e12f08957bef4aee3a13"
+	w := newWS(t, "version: 1\nhub:\n  image: "+hubImg+"\nlocks:\n  docs:\n    type: lockfile\n    image: "+fileImg+"\n")
+	f := seccompFake()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reg := registry(t, map[string]string{
+		"davidgodefroid/lockfile/manifests/0.8.1": digestOf(fileImgNew),
+		"davidgodefroid/lockfile/manifests/0.8.0": digestOf(fileImg),
+	})
+	api := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/repos/DavidGodefroid/lockfile/releases" {
+			rw.Write([]byte(`[{"tag_name":"v0.8.1"},{"tag_name":"v0.9.0","draft":true},{"tag_name":"v0.8.0"},{"tag_name":"v0.7.0"}]`))
+			return
+		}
+		http.NotFound(rw, r)
+	}))
+	t.Cleanup(api.Close)
+	s := newSigned(&fake{keys: f.keys})
+	s.signedFor[fileImg] = [2]string{"lockfile", "v0.8.0"}
+	s.signedFor[fileImgNew] = [2]string{"lockfile", "v0.8.1"}
+	s.bundle[fileImg], s.bundle[fileImgNew] = true, true
+	rel := &Releases{API: api.URL, Registry: reg.URL, HTTP: reg.Client(), Run: s}
+	var out strings.Builder
+	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: s,
+		In: bufio.NewReader(strings.NewReader("")), Out: &out,
+		Upgrade: &Upgrade{Pins: map[string]string{"lockfile": "v0.8.1"}, Image: rel.ImageVariant, Tags: rel.Tags, Digest: rel.Digest}}
+	if err := u.Do(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "lock docs: image upgraded: lockfile v0.8.0 → v0.8.1 (signature verified)\n") {
+		t.Errorf("not upgraded:\n%s", out.String())
+	}
+	// The old image was verified for its very release before it was
+	// compared, and the new one for its own before compose used it.
+	up := s.index(" up -d")
+	for _, c := range []struct{ ref, tag string }{{fileImg, `v0\.8\.0`}, {fileImgNew, `v0\.8\.1`}} {
+		if i := s.index("refs/tags/" + c.tag + "$ " + c.ref); i < 0 || i > up {
+			t.Errorf("%s not verified for its tag: %v", c.ref, s.calls)
+		}
+	}
+	if !strings.Contains(service(s.upCompose, "lock-docs"), `image: "`+fileImgNew+`"`) {
+		t.Errorf("compose up without the new image:\n%s", s.upCompose)
+	}
+	if b, _ := os.ReadFile(w.file); !strings.Contains(string(b), "image: "+fileImgNew) {
+		t.Errorf("lockfamily.yaml:\n%s", b)
 	}
 }
 
