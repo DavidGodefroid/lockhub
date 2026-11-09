@@ -17,7 +17,11 @@ digest).
   run's networks, or when the engine's default address pools (lea's and other
   projects') have fewer than 4 subnets free, with the `default-address-pools`
   fix for `/etc/docker/daemon.json`. See `docs/networks.md`.
-
+- `lox run`'s short review lists a changed profile line's new value (#173):
+  under `Other changes since the last lox run:` it showed only the old (`-`)
+  lines of a profile, never the new (`+`) ones, so a loosening
+  (`tier = "write"`, a new host) was approved unseen. A changed line now
+  shows `-` and `+`, an added one `+`, a removed one `-`.
 - `lox add lockfile --source sftp --known-hosts FILE` no longer writes a host
   path the console cannot open (#174): it copies FILE to
   `.lockfile/known_hosts` and the profile names
