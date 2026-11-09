@@ -805,13 +805,7 @@ func (u *Up) Do(ctx context.Context) error {
 				heading = "Also applied:"
 			} else {
 				fmt.Fprintln(u.Out, "The configuration changed since the last lox run:")
-				// Only an added line can be rendered by a block: a removed
-				// line is always shown.
-				for _, l := range d {
-					if rest, ok := strings.CutPrefix(l, "+ "); !ok || !cov[rest] {
-						changed = append(changed, l)
-					}
-				}
+				changed = shortChanged(c, u.Focus, d, cov)
 				if caChanged(d) {
 					changed = append(changed, vaultCANote)
 				}

@@ -3,6 +3,7 @@ package family
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -141,6 +142,26 @@ func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 		}
 	}
 	return cov
+}
+
+// shortChanged keeps the lines of the diff d that the short review lists.
+// A removed line is always listed. An added line a block renders is not,
+// but for a profile's: the block's profile row shows its sha256, not its
+// values, so the new value of a profile line is listed under its old one
+// (lockhub#173).
+func shortChanged(c *Config, focus string, d []string, cov map[string]bool) []string {
+	var prof []string
+	for _, n := range shortLocks(c, focus) {
+		prof = append(prof, "profile "+c.Locks[n].Type+" ")
+	}
+	var out []string
+	for _, l := range d {
+		rest, added := strings.CutPrefix(l, "+ ")
+		if !added || !cov[rest] || slices.ContainsFunc(prof, func(p string) bool { return strings.HasPrefix(rest, p) }) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // LockProfile is the profile a lock's console serves: the one named in
