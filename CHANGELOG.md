@@ -5,12 +5,22 @@ digest).
 
 ## Unreleased
 
+- `lox add lockfile --source sftp --known-hosts FILE` no longer writes a host
+  path the console cannot open (#174): it copies FILE to
+  `.lockfile/known_hosts` and the profile names
+  `~/.config/lockfile/known_hosts`, where the console sees its profile's
+  reviewed copy. `lox run` checks a lockfile sftp profile's `known_hosts` and
+  `key` before the start: in the reviewed copy, or in the console's
+  container; a path into the workspace's `.lockfile` is said with the path to
+  write instead. e2e: `ci/e2e/lockfile-sftp.sh`.
+
 - `lox run` upgrades an image signed in the sigstore bundle format (#176):
   cosign's output names no release for it (no certificate subject), so a
   lockfile v0.8.x lock stayed on its first pin (`its signature names no
   lockfile release`). Its release is now the newest whose image in ghcr.io
   has the pinned digest (GitHub's release list, then one registry lookup per
   release), once cosign verified the pinned image for that very tag.
+
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to

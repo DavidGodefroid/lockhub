@@ -16,16 +16,21 @@ import (
 	"syscall"
 )
 
-// A locksql or lockssh profile names files its console reads: locksql's
-// tls_ca, tls_cert, tls_key and, with ssh auth = "key", ssh.key; lockssh's
-// key (with auth = "key", its default) and known_hosts. They are read
-// inside the console's container, where a leading "~/" is the console
-// account's home, its home volume (the locks' config.ExpandHome). lox
-// run checks them there before the console starts, so that a missing
+// A locksql, lockssh or lockfile profile names files its console reads:
+// locksql's tls_ca, tls_cert, tls_key and, with ssh auth = "key", ssh.key;
+// lockssh's key (with auth = "key", its default) and known_hosts;
+// lockfile's, for an sftp source, known_hosts and, with auth = "key", key.
+// They are read inside the console's container, where a leading "~/" is
+// the console account's home, its home volume (the locks' ExpandHome).
+// lox run checks them there before the console starts, so that a missing
 // file shows in the review, not after the console's questions. A path
-// into the profile's own directory (relative paths resolve from the
-// workspace) is checked in the reviewed copy instead: the volume still
-// holds the previous one (none on a first run) until the human's yes.
+// into the directory where the console sees its profile is checked in
+// the reviewed copy instead: the volume still holds the previous one
+// (none on a first run) until the human's yes. That directory is the
+// workspace's .<type> for locksql and lockssh (relative paths resolve
+// from the workspace, their working directory), and ~/.config/lockfile
+// for lockfile, whose console never sees the workspace: a path into the
+// workspace's .lockfile is said to be written ~/.config/lockfile/...
 
 // FileKey is a file key of a profile: Path as the profile writes it.
 type FileKey struct {
@@ -40,6 +45,16 @@ func (f FileKey) private() bool { return f.Key == "tls_key" || f.Key == "ssh.key
 // ConsoleHome is the console account's home in a lock's image, where
 // its home volume is mounted.
 func ConsoleHome(typ string) string { return "/home/" + typ }
+
+// ConsoleProfileDir is where the console of a lock of type typ sees its
+// profile's reviewed copy: the workspace ws's .<type> for a project kind,
+// else ~/.config/<type> (lox up mounts it there).
+func ConsoleProfileDir(ws, typ string) string {
+	if Kinds[typ].Project {
+		return profileDir(ws, typ)
+	}
+	return ConsoleHome(typ) + "/.config/" + typ
+}
 
 // ExpandHome resolves a leading "~/" (or a lone "~") of a file key's path
 // to home, as the locks do; any other path is returned as is.
@@ -123,6 +138,20 @@ func ProfileFileKeys(p *Profile, typ, profile string) (keys []FileKey, odd []str
 		// console writes on the human's yes: not checked.
 		if v, ok := str("known_hosts"); ok {
 			keys = append(keys, FileKey{"known_hosts", v})
+		}
+	case "lockfile":
+		// Only an sftp source reads files; its auth has no default.
+		raw, ok := sec["source"]
+		if v, kind, sok := strictValue(raw); !ok || !sok || kind != 's' || v != "sftp" {
+			break
+		}
+		if v, ok := str("known_hosts"); ok {
+			keys = append(keys, FileKey{"known_hosts", v})
+		}
+		if keyAuth("auth", false) {
+			if v, ok := str("key"); ok {
+				keys = append(keys, FileKey{"key", v})
+			}
 		}
 	}
 	return keys, odd
@@ -222,12 +251,16 @@ type HomeFile struct {
 	// Profile is the host file in the profile's directory when the path
 	// leads there: checked in the reviewed copy, not in the container.
 	Profile string
+	// Workspace is, for a lock whose console never sees the workspace
+	// (lockfile), the path the profile names instead of a path into the
+	// workspace's .<type> (~/.config/lockfile/...): the file is "missing".
+	Workspace string
 }
 
 // InHome tells whether the file lives in the console's home volume
-// (where it can be copied to).
+// (where it can be copied to), not in its profile's copy mounted there.
 func (h HomeFile) InHome(typ string) bool {
-	return strings.HasPrefix(h.Resolved, ConsoleHome(typ)+"/")
+	return h.Profile == "" && h.Workspace == "" && strings.HasPrefix(h.Resolved, ConsoleHome(typ)+"/")
 }
 
 // checkHomeFiles checks in prof, the reviewed copy of the profile, the
@@ -238,19 +271,27 @@ func (u *Up) checkHomeFiles(ctx context.Context, project string, composeYAML []b
 	files := make([]HomeFile, len(keys))
 	var in strings.Builder
 	var sent []int
-	dir := profileDir(ws, typ)
+	host, seen := profileDir(ws, typ), ConsoleProfileDir(ws, typ)
+	inWorkspace := Kinds[typ].Project
 	for i, k := range keys {
 		files[i] = HomeFile{FileKey: k, Resolved: ExpandHome(k.Path, ConsoleHome(typ))}
 		if strings.ContainsAny(files[i].Resolved, "\n\r") {
 			continue
 		}
 		abs := files[i].Resolved
-		if !filepath.IsAbs(abs) {
+		if !filepath.IsAbs(abs) && inWorkspace {
+			// A project kind's console works in the workspace.
 			abs = filepath.Join(ws, abs)
 		}
-		if rel, err := filepath.Rel(dir, filepath.Clean(abs)); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-			files[i].Profile = filepath.Join(dir, rel)
+		if rel, ok := under(seen, abs); ok {
+			files[i].Profile = filepath.Join(host, rel)
 			files[i].State, files[i].Mode = profileEntry(prof, filepath.ToSlash(rel))
+			continue
+		}
+		if rel, ok := under(host, abs); ok && !inWorkspace {
+			// The workspace's copy, which this console never sees.
+			files[i].State = "missing"
+			files[i].Workspace = "~/" + strings.TrimPrefix(path.Join(seen, filepath.ToSlash(rel)), ConsoleHome(typ)+"/")
 			continue
 		}
 		in.WriteString(files[i].Resolved + "\n")
@@ -283,6 +324,16 @@ func (u *Up) checkHomeFiles(ctx context.Context, project string, composeYAML []b
 		}
 	}
 	return files, nil
+}
+
+// under tells whether the absolute path p is dir or below it, and its
+// path from dir; a relative p never is.
+func under(dir, p string) (string, bool) {
+	if !filepath.IsAbs(p) {
+		return "", false
+	}
+	rel, err := filepath.Rel(dir, filepath.Clean(p))
+	return rel, err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // homeVolume is the docker volume of a lock's home (compose's name of
@@ -345,10 +396,17 @@ func HomeFileWarnings(project, n string, l Lock, files []HomeFile, odd []string,
 			out = append(out, fmt.Sprintf("%s: %q not checked (a line break in the path)", h.Key, h.Path))
 		case "missing":
 			switch {
+			case h.Workspace != "":
+				out = append(out, fmt.Sprintf("%s: %s is the workspace's path, which the console does not see: write it %s (its copy of the profile)", h.Key, where, h.Workspace))
 			case h.Profile != "":
 				out = append(out, fmt.Sprintf("%s: %s is not in the profile's directory: write it %s (the review copies it)", h.Key, where, h.Profile))
 			case h.InHome(l.Type):
 				out = append(out, fmt.Sprintf("%s: %s is not in the lock's home volume; copy it there: %s", h.Key, where, CopyCommand(project, n, l, h, "")))
+			case !Kinds[l.Type].Project && !h.private():
+				// lockfile's known_hosts: a host path the console never
+				// sees; its profile's copy is reviewed with it.
+				base := path.Base(h.Resolved)
+				out = append(out, fmt.Sprintf("%s: %s not found in the lock's container; copy it to .%s/%s and write it ~/.config/%s/%s (the console's copy of the profile)", h.Key, where, l.Type, base, l.Type, base))
 			case !path.IsAbs(h.Resolved):
 				out = append(out, fmt.Sprintf("%s: %s not found from the console's working directory; write it ~/%s and copy it into the lock's home", h.Key, where, path.Base(h.Resolved)))
 			default:
