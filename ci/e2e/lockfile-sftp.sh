@@ -2,7 +2,9 @@
 # lox add lockfile with an sftp source, its known hosts file a host file
 # (lockhub#174): lox add copies it into .lockfile/ and the profile names
 # ~/.config/lockfile/known_hosts, where the console sees its profile's
-# reviewed copy, so the console connects at its first start. The SFTP
+# reviewed copy, so the console opens it at its first start and that
+# copy pins the server's key (a strict login from the console's network
+# shows it). The SFTP
 # server runs in a container of this machine (host.docker.internal), login
 # by password (typed at the console's start). Before that, a profile that
 # names the host path is said in lox run's review, before any start.
@@ -21,13 +23,15 @@ cd "$ws"
 bin=$(dirname "$ws")/bin
 keys=$(dirname "$ws")/keys
 sftpd=lockfile-sftpd-$E2E_ID
+probe=lockfile-sftp-probe-$E2E_ID
 port=${SFTP_PORT:-22023}
 cleanup() {
 	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws")
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
-	docker rm -f "$sftpd" >/dev/null 2>&1 || true
+	docker rm -f "$sftpd" "$probe" >/dev/null 2>&1 || true
+	docker image rm "$probe:e2e" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -92,21 +96,39 @@ hub_is_local "$p"
 grep -q "known_hosts:" run.out && { cat run.out; die "the review flags the known_hosts lox add wrote"; }
 grep -qF "only host.docker.internal:$port" run.out || die "the review lacks the egress to host.docker.internal:$port"
 
-say "the console's first start: its policy, then the SFTP password; it connects and listens"
+# The console opens the profile's known_hosts at its start, once the
+# password is typed, and stops there when it cannot (the issue's
+# "sftp known_hosts: open ...: no such file or directory"): it listens
+# only once that file is read. Its SFTP session itself opens on an agent's
+# first request (lockfile's source dials per request).
+say "the console's first start: its policy, then the SFTP password; it opens known_hosts and listens"
 python3 "$here/attach.py" 120 'y\n' 'Listening on ' 'Password for ' 'sftp-e2e-only\n' -- "$lox" attach drop >attach.out 2>&1 || {
 	tr -d '\r' <attach.out
-	docker logs "$sftpd" 2>&1 | tail -20
-	die "the lockfile console did not connect to the SFTP server"
+	die "the lockfile console did not start (its known_hosts not opened?)"
 }
 tr -d '\r' <attach.out | tail -5
 tr -d '\r' <attach.out | grep -q "known_hosts" && die "the console said something of known_hosts"
-# The console connects before it listens (lockkit's start): the server's
-# log shows that login, once sshd wrote it.
-ok=""
-for i in $(seq 1 15); do
-	if docker logs "$sftpd" 2>&1 | grep -Eq "Accepted (password|keyboard-interactive[^ ]*) for deploy"; then ok=1; break; fi
-	sleep 1
-done
-[ -n "$ok" ] || { docker logs "$sftpd" 2>&1 | tail -20; die "the SFTP server saw no login"; }
 
-say "PASS: lox add lockfile --known-hosts <host file>: the console connects at its first start"
+c="$p-lock-drop-1"
+[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" = true ] || { docker logs "$c" 2>&1 | tail -20 || true; die "$c is not running"; }
+say "the console's account reads the known_hosts its profile names, where the console sees it"
+docker exec "$c" cat /home/lockfile/.config/lockfile/known_hosts >seen_known_hosts || die "the console's account cannot read ~/.config/lockfile/known_hosts"
+cmp seen_known_hosts "$keys/known_hosts_sftp" || die "the console sees another known_hosts"
+
+# A strict SSH client in the console's own network namespace, with the
+# profile's reviewed copy (its volume, read-only): the server's key is
+# the one pinned, and the console's egress reaches it.
+say "an SFTP login from the console's network, strict on the copy's known_hosts"
+docker rm -f "$probe" >/dev/null 2>&1 || true
+docker run --name "$probe" alpine:3.22 apk add --no-cache openssh-client sshpass >/dev/null || die "the probe's tools did not install"
+docker commit "$probe" "$probe:e2e" >/dev/null
+docker rm -f "$probe" >/dev/null
+printf 'ls inbox\n' | docker run --rm -i --network "container:$c" -v "${p}_profile-lockfile:/p:ro" -e SSHPASS=sftp-e2e-only "$probe:e2e" \
+	sshpass -e sftp -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/p/known_hosts -o GlobalKnownHostsFile=/dev/null \
+	-o PubkeyAuthentication=no -o PreferredAuthentications=password -P "$port" deploy@host.docker.internal >probe.out 2>&1 ||
+	{ cat probe.out; docker logs "$sftpd" 2>&1 | tail -20; die "a strict SFTP login with the profile's known_hosts failed"; }
+cat probe.out
+grep -q orders.txt probe.out || die "the SFTP listing lacks inbox/orders.txt"
+docker logs "$sftpd" 2>&1 | grep -Eq "Accepted password for deploy" || { docker logs "$sftpd" 2>&1 | tail -20; die "the SFTP server saw no login"; }
+
+say "PASS: lox add lockfile --known-hosts <host file>: the console opens it at its first start, and it pins the server's key"
