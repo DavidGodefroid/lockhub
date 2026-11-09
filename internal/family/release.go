@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -72,13 +73,9 @@ func semverLess(a, b string) bool {
 // pre-release, else (a repository that only has pre-releases yet) the
 // newest pre-release, and whether it is one.
 func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error) {
-	var rs []release
-	auth := ""
-	if r.Token != "" {
-		auth = "Bearer " + r.Token
-	}
-	if err := r.getJSON(ctx, r.API+"/repos/"+Owner+"/"+url.PathEscape(repo)+"/releases?per_page=100", auth, &rs); err != nil {
-		return "", false, fmt.Errorf("releases of %s: %w", repo, err)
+	rs, err := r.releases(ctx, repo)
+	if err != nil {
+		return "", false, err
 	}
 	best, pre := "", ""
 	for _, x := range rs {
@@ -102,6 +99,41 @@ func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error
 	return "", false, fmt.Errorf("%s has no published release", repo)
 }
 
+// releases are repo's releases on GitHub (the newest 100).
+func (r *Releases) releases(ctx context.Context, repo string) ([]release, error) {
+	var rs []release
+	auth := ""
+	if r.Token != "" {
+		auth = "Bearer " + r.Token
+	}
+	if err := r.getJSON(ctx, r.API+"/repos/"+Owner+"/"+url.PathEscape(repo)+"/releases?per_page=100", auth, &rs); err != nil {
+		return nil, fmt.Errorf("releases of %s: %w", repo, err)
+	}
+	return rs, nil
+}
+
+// Tags are the tags of repo's published releases (pre-releases
+// included), newest first.
+func (r *Releases) Tags(ctx context.Context, repo string) ([]string, error) {
+	rs, err := r.releases(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	for _, x := range rs {
+		if !x.Draft && semverTag.MatchString(x.Tag) && !slices.Contains(tags, x.Tag) {
+			tags = append(tags, x.Tag)
+		}
+	}
+	slices.SortFunc(tags, func(a, b string) int {
+		if semverLess(b, a) {
+			return -1
+		}
+		return 1
+	})
+	return tags, nil
+}
+
 // MinRelease is each repository's first release that runs under lox up
 // (hub mode, lockkit v0.3.1: --hub-plain-http, hub-key; for locklog,
 // its first release with hub mode, v0.2.0).
@@ -120,6 +152,24 @@ var variantName = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // <version>-<variant>, e.g. "vault"); the cosign identity is the plain
 // image's. Variant "" is the plain image.
 func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) (string, error) {
+	ref, err := r.Digest(ctx, repo, tag, variant)
+	if err != nil {
+		return "", err
+	}
+	// The digest is only trusted once its signature is: by this
+	// repository's release workflow, run for this very tag.
+	id := "^" + regexp.QuoteMeta("https://github.com/"+Owner+"/"+repo+"/.github/workflows/release.yml@refs/tags/"+tag) + "$"
+	if _, err := r.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+		"--certificate-identity-regexp", id, ref); err != nil {
+		return "", fmt.Errorf("image %s (%s %s) is not signed by its release: %w", ref, repo, tag, err)
+	}
+	return ref, nil
+}
+
+// Digest is the image of repo's release tag (variant as for
+// ImageVariant), pinned by the digest the registry serves for it, NOT
+// verified: ImageVariant verifies it.
+func (r *Releases) Digest(ctx context.Context, repo, tag, variant string) (string, error) {
 	if variant != "" && !variantName.MatchString(variant) {
 		return "", errors.New("image variant: lower case letters, digits and -")
 	}
@@ -167,15 +217,7 @@ func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) 
 	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(d) {
 		return "", fmt.Errorf("image %s:%s: no sha256 digest from the registry", name, ver)
 	}
-	ref := "ghcr.io/" + name + "@" + d
-	// The digest is only trusted once its signature is: by this
-	// repository's release workflow, run for this very tag.
-	id := "^" + regexp.QuoteMeta("https://github.com/"+Owner+"/"+repo+"/.github/workflows/release.yml@refs/tags/"+tag) + "$"
-	if _, err := r.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-		"--certificate-identity-regexp", id, ref); err != nil {
-		return "", fmt.Errorf("image %s (%s %s) is not signed by its release: %w", ref, repo, tag, err)
-	}
-	return ref, nil
+	return "ghcr.io/" + name + "@" + d, nil
 }
 
 func (r *Releases) getJSON(ctx context.Context, u, auth string, v any) error {
