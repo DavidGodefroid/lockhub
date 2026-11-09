@@ -135,13 +135,21 @@ func (s *Steps) rel(path string) string {
 // undone. Once lox up started the console, nothing is rolled back.
 func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 	cfg := filepath.Join(s.Root, "."+l.Type, "config.toml")
+	files := []string{cfg, s.File}
+	for _, c := range l.Copies {
+		files = append(files, filepath.Join(s.Root, "."+l.Type, c.Name))
+	}
 	var snaps []Snapshot
-	for _, p := range []string{cfg, s.File} {
+	for _, p := range files {
 		sn, err := TakeSnapshot(p)
 		if err != nil {
 			return err
 		}
 		snaps = append(snaps, sn)
+	}
+	if err := s.copyIn(l); err != nil {
+		s.say("copy failed: %v", err)
+		return s.rollback(ctx, l, a, snaps, cfg, err)
 	}
 	if err := s.declare(ctx, l); err != nil {
 		return s.rollback(ctx, l, a, snaps, cfg, err)
@@ -177,6 +185,48 @@ func (s *Steps) Apply(ctx context.Context, l Lock, a Answers) error {
 			return fmt.Errorf("lock %s is declared and its console stopped (above): for Vault, check the address and token (lox vault set --address URL, then lox run); else lox run, then lox attach %s", l.Name, l.Name)
 		}
 		return fmt.Errorf("lock %s is declared and its console stopped (above): lox run, then lox attach %s", l.Name, l.Name)
+	}
+	return nil
+}
+
+// maxProfileCopy bounds a host file copied into a profile directory (lox
+// run reads at most 256 KiB of one): a known_hosts file is small.
+const maxProfileCopy = 128 << 10
+
+// copyIn copies l's host files into its profile directory (made 0700 when
+// it is not there), each private to you: lox run reviews them with the
+// profile. A file that is already the one named is left as it is.
+func (s *Steps) copyIn(l Lock) error {
+	for _, c := range l.Copies {
+		dir := filepath.Join(s.Root, "."+l.Type)
+		dst := filepath.Join(dir, c.Name)
+		src, err := os.Stat(c.Src)
+		if err != nil {
+			return err
+		}
+		if !src.Mode().IsRegular() {
+			return fmt.Errorf("%s: not a regular file", c.Src)
+		}
+		if cur, err := os.Stat(dst); err == nil && os.SameFile(src, cur) {
+			continue
+		}
+		if src.Size() > maxProfileCopy {
+			return fmt.Errorf("%s: larger than %d KiB", c.Src, maxProfileCopy>>10)
+		}
+		b, err := os.ReadFile(c.Src)
+		if err != nil {
+			return err
+		}
+		if len(b) > maxProfileCopy {
+			return fmt.Errorf("%s: larger than %d KiB", c.Src, maxProfileCopy>>10)
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := family.WriteFileMode(dst, b, 0o600); err != nil {
+			return err
+		}
+		s.say("%s copied to %s (the console reads its copy)", c.Src, s.rel(dst))
 	}
 	return nil
 }

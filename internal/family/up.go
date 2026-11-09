@@ -639,7 +639,7 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 
-	// The files the locksql and lockssh profiles name, checked in each console's
+	// The files the locksql, lockssh and lockfile profiles name, checked in each console's
 	// container now that its home volume exists (homefiles.go): what the
 	// console would refuse at its start is said in the review.
 	homeWarn := map[string][]string{}

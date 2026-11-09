@@ -23,7 +23,27 @@ type Lock struct {
 	// LogRoots is a locklog lock's log_roots: its directories outside
 	// family.DefaultLogRoots, which LOCKLOG_EXTRA_ROOTS let in.
 	LogRoots []string
+	// Copies are host files Apply copies into the lock's profile
+	// directory before its profile add: a lockfile sftp known_hosts.
+	Copies []ProfileCopy
 }
+
+// ProfileCopy is a host file copied into the lock's profile directory
+// (<workspace>/.<type>) as Name: lox run reviews it with the profile and
+// the console reads its copy.
+type ProfileCopy struct {
+	Src, Name string
+}
+
+// LockfileKnownHosts is the name lox add gives a lockfile sftp
+// known_hosts in .lockfile/, and LockfileKnownHostsPath the path its
+// profile names: the lockfile console reads its profile's reviewed copy
+// at ~/.config/lockfile (never <workspace>/.lockfile), "~/" being the
+// lockfile account's home, which the console expands.
+const (
+	LockfileKnownHosts     = "known_hosts"
+	LockfileKnownHostsPath = "~/.config/lockfile/" + LockfileKnownHosts
+)
 
 // getenv reads LOCKLOG_EXTRA_ROOTS (tests replace it).
 var getenv = os.Getenv
@@ -88,6 +108,11 @@ func Build(lock string, a Answers) (Lock, error) {
 					l.Target = append(l.Target, "--exec")
 				}
 				continue
+			case lock == "lockfile" && k == "known-hosts" && a["source"] == "sftp":
+				// The host file is not in the console's container: its copy
+				// in .lockfile/ is, where the console sees its profile.
+				l.Copies = append(l.Copies, ProfileCopy{Src: v, Name: LockfileKnownHosts})
+				v = LockfileKnownHostsPath
 			}
 			l.Target = append(l.Target, "--"+k, v)
 		}

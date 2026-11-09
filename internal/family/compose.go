@@ -127,9 +127,9 @@ type Kind struct {
 	// plan its image derives from the profile (locklog mounts), which
 	// lox run checks, reviews and mounts (locklog.go).
 	Mounts bool
-	// HomeFiles is locksql and lockssh: their profiles name files (tls_ca,
-	// ssh.key; key, known_hosts) the console reads, "~/" being its home volume;
-	// lox run checks them there (homefiles.go).
+	// HomeFiles is locksql, lockssh and lockfile: their profiles name
+	// files (tls_ca, ssh.key; key, known_hosts) the console reads, "~/"
+	// being its home volume; lox run checks them there (homefiles.go).
 	HomeFiles bool
 	// Rules is locklog and lockssh: lox run reads the profiles' auto
 	// rules with `<type> profile rules --json`, run in the image as Agent
@@ -143,7 +143,7 @@ type Kind struct {
 var Kinds = map[string]Kind{
 	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256, HomeFiles: true},
 	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256},
-	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512},
+	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512, HomeFiles: true},
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 	// locklog's console scans and masks the logs itself: at most two of
 	// the host's CPUs, as its launcher.
@@ -595,7 +595,7 @@ func Compose(c *Config, p Paths) string {
 			w("    image: %s", q(l.Image))
 			w("    profiles: [setup]")
 			w("    user: %s", q(k.UID+":"+k.GID))
-			if s.svc == "homefiles-" {
+			if s.svc == "homefiles-" && k.Project {
 				w("    working_dir: %s", q(p.Workspace))
 			}
 			// $$: compose would otherwise read the script's own $ as its variables.
@@ -605,11 +605,12 @@ func Compose(c *Config, p Paths) string {
 			w("    volumes:")
 			w("      - %s", q(name+"-home:"+ConsoleHome(l.Type)))
 			if s.svc == "homefiles-" {
-				// The console's working directory holds its profile's
-				// copy, as in the console (a relative path resolves there).
-				// Paths into it are checked in the reviewed copy, not
-				// here: this one is the last applied (homefiles.go).
-				w("      - %s", q("profile-"+l.Type+":"+profileDir(p.Workspace, l.Type)+":ro"))
+				// The profile's copy where the console sees it (a project
+				// kind's working directory, where a relative path resolves;
+				// lockfile's ~/.config/lockfile), as in the console. Paths
+				// into it are checked in the reviewed copy, not here: this
+				// one is the last applied (homefiles.go).
+				w("      - %s", q("profile-"+l.Type+":"+ConsoleProfileDir(p.Workspace, l.Type)+":ro"))
 			}
 		}
 	}
