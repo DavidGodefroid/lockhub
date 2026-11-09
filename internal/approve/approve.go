@@ -82,6 +82,14 @@ type HubError struct {
 
 func (e *HubError) Error() string { return e.Message }
 
+// HubKey asks which hub serves the socket: its public key (base64). A
+// hub before GET /v1/hub answers a HubError of status 404.
+func (c *Client) HubKey(ctx context.Context) (string, error) {
+	var r api.HubInfo
+	err := c.do(ctx, "GET", "/v1/hub", nil, &r)
+	return r.Key, err
+}
+
 // Queue fetches the pending tickets and the queue version, waiting up to
 // wait for a change after version since.
 func (c *Client) Queue(ctx context.Context, since uint64, wait time.Duration) ([]api.QueueItem, uint64, error) {

@@ -257,6 +257,28 @@ honours it); a compose implementation that ignores it makes the missing
 directory as before (as root under a rootful engine), the hub refuses it
 and its error names the fix, and the next `lox run` repairs it.
 
+### Two workspaces on one host
+
+Every workspace's hub serves the same `$XDG_RUNTIME_DIR/lockhub/facade.sock`:
+while one workspace's hub serves it, another's cannot (its hub exits with
+`another hub is serving it`). So before it starts anything, and again
+whenever the hub comes back after a loss, `lox run` asks the hub on the
+socket for its key (`GET /v1/hub`) and compares it with its own
+workspace's (`hub.pub` in its state directory, the `hub_key` of up.json).
+Another workspace's hub is refused: `lox run` (and `lox up`) stop before
+showing any of its tickets, naming it from that workspace's state directory:
+
+```
+lox run: the facade socket /run/user/1000/lockhub/facade.sock is served by the hub of workspace /home/you/Documents (lockfamily-177a1535); stop it, or run this workspace with its own XDG_RUNTIME_DIR
+```
+
+`lox doctor` fails with the same line. A hub too old to answer `GET /v1/hub`
+cannot say whose it is: `lox run` upgrades it (unless `--no-upgrade` or
+`--pin` keep it), and refuses to serve it otherwise. To run two workspaces at
+once, give the second its own runtime directory, for every `lox` command of
+that workspace: `XDG_RUNTIME_DIR=~/.run-b lox run` (lea's deck and
+`lox approve` then need the same `XDG_RUNTIME_DIR`, or `--socket`).
+
 When `XDG_RUNTIME_DIR` is unset, the runtime directory is
 `$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.

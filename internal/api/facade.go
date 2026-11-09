@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lockhub/internal/hub"
+	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
 	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/store"
@@ -28,6 +29,7 @@ func FacadeHandler(h *hub.Hub, extra ...func(*http.ServeMux)) http.Handler {
 		x(mux)
 	}
 	f := &facades{h: h}
+	mux.HandleFunc("GET /v1/hub", f.hubInfo)
 	mux.HandleFunc("GET /v1/queue", f.queue)
 	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/decide", f.decide)
 	mux.HandleFunc("GET /v1/decided", f.decided)
@@ -39,6 +41,19 @@ func FacadeHandler(h *hub.Hub, extra ...func(*http.ServeMux)) http.Handler {
 }
 
 type facades struct{ h *hub.Hub }
+
+// HubInfo answers GET /v1/hub: which hub serves this facade socket. Two
+// workspaces on one host share $XDG_RUNTIME_DIR/lockhub/facade.sock; lox
+// run compares Key with its own workspace's hub key before serving
+// decisions, so it never shows another workspace's tickets (#172).
+type HubInfo struct {
+	// Key is the hub's public signing key (base64, as hub.pub holds it).
+	Key string `json:"key"`
+}
+
+func (f *facades) hubInfo(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, HubInfo{Key: keys.Public(f.h.PublicKey())})
+}
 
 // QueueItem is a pending ticket. Ticket is the lock's signed ticket,
 // verbatim (its screen is masked by the lock).
