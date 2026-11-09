@@ -365,15 +365,59 @@ func TestShortReviewFoldsTheProfile(t *testing.T) {
 	if !strings.Contains(out, "profile      .lockhttp/ sha256:") {
 		t.Errorf("no lockhttp profile line:\n%s", out)
 	}
-	// A changed profile says so; --review prints every line.
+	// A changed profile says so and lists its changed lines, old and new
+	// (lockhub#173); --review prints every line.
 	os.WriteFile(filepath.Join(proj, ".locksql", "config.toml"), []byte("[profiles.orders]\nengine = \"mysql\"\n"), 0o644)
 	out, err = w.up("n\n", &fake{keys: f.keys})
-	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "(changed since the last lox run; lox run --review shows the lines)") || strings.Contains(out, "+ profile locksql config.toml") {
+	if !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "(changed since the last lox run; lox run --review shows the lines)") {
 		t.Errorf("changed profile: %v\n%s", err, out)
+	}
+	other, _, _ := strings.Cut(out, "Apply? [y/N]")
+	_, other, _ = strings.Cut(other, "Other changes since the last lox run:")
+	for _, want := range []string{
+		"  - profile locksql config.toml:2 engine = \"postgres\"\n",
+		"  + profile locksql config.toml:2 engine = \"mysql\"\n",
+		"  - profile locksql config.toml:3 readonly = false\n",
+	} {
+		if !strings.Contains(other, want) {
+			t.Errorf("Other changes lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(other, "policy.toml:") {
+		t.Errorf("an unchanged profile is listed:\n%s", out)
 	}
 	out, _ = upReview(w, context.Background(), strings.NewReader("n\n"), true, &fake{keys: f.keys})
 	if !strings.Contains(out, "config.toml:2 engine = \"mysql\"") {
 		t.Errorf("--review lacks the lines:\n%s", out)
+	}
+}
+
+// The short review lists a changed profile line old and new, an added one
+// with +, a removed one with -; a line a block renders with its new value
+// is not repeated (lockhub#173).
+func TestShortChangedListsBothSides(t *testing.T) {
+	c := &Config{Locks: map[string]Lock{"o": {Type: "locksql", Image: sqlImg}}}
+	d := []string{
+		"- lock o image " + hubImg,
+		"+ lock o image " + sqlImg,
+		`- profile locksql config.toml:9 user = "ro"`,
+		`+ profile locksql config.toml:9 user = "rw"`,
+		`+ profile locksql config.toml:10 tier = "write"`,
+		`- profile locksql config.toml:21 credentials = "ask"`,
+		"+ lock o routed only to tty",
+	}
+	sum := []string{"lock o type locksql", "lock o image " + sqlImg, `profile locksql config.toml:9 user = "rw"`, `profile locksql config.toml:10 tier = "write"`}
+	var out strings.Builder
+	renderShort(&out, c, "", map[string]Facts{"o": {}}, true, shortChanged(c, "", d, shortCovered(c, "", sum)))
+	_, got, _ := strings.Cut(out.String(), "Other changes since the last lox run:\n")
+	want := "  - lock o image " + hubImg + "\n" +
+		"  - profile locksql config.toml:9 user = \"ro\"\n" +
+		"  + profile locksql config.toml:9 user = \"rw\"\n" +
+		"  + profile locksql config.toml:10 tier = \"write\"\n" +
+		"  - profile locksql config.toml:21 credentials = \"ask\"\n" +
+		"  + lock o routed only to tty\n"
+	if got != want {
+		t.Errorf("Other changes:\n%s\nwant:\n%s", got, want)
 	}
 }
 

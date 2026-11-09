@@ -471,9 +471,11 @@ lock shop-db (locksql)
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
 `credentials` then reads `vault, <path>`. A profile that changed since the last
-`lox run` says so. Every summary line that no block renders is listed under
-`Other changes since the last lox run:` (`Also applied:` on the first run), so
-the fingerprint that `lox run` compares still covers everything the review
+`lox run` says so, and its changed lines are listed under `Other changes since
+the last lox run:`, each with its old value (`-`) and its new one (`+`); an
+added line shows `+`, a removed one `-`. Every summary line that no block
+renders is listed there too (`Also applied:` on the first run, where the
+profile row stands for the profile's lines), so the fingerprint that `lox run` compares still covers everything the review
 shows or lists. The question is `Apply? [y/N]`.
 
 `lox run --review` shows everything: on the first run the whole configuration,

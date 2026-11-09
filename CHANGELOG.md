@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+- `lox run`'s short review lists a changed profile line's new value (#173):
+  under `Other changes since the last lox run:` it showed only the old (`-`)
+  lines of a profile, never the new (`+`) ones, so a loosening
+  (`tier = "write"`, a new host) was approved unseen. A changed line now
+  shows `-` and `+`, an added one `+`, a removed one `-`.
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to
