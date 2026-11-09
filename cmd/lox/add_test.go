@@ -325,7 +325,8 @@ func TestAddInterruptedExits130(t *testing.T) {
 
 // lox add lockfile --non-interactive takes an sftp source from flags:
 // with a key file, or with auth password (the console asks for it at
-// start) and no --key.
+// start) and no --key. The known hosts file is copied into .lockfile/ and
+// the profile names the path the console sees (lockhub#174).
 func TestAddNonInteractiveSFTP(t *testing.T) {
 	for _, c := range []struct {
 		name  string
@@ -358,9 +359,17 @@ func TestAddNonInteractiveSFTP(t *testing.T) {
 			for _, a := range c.want {
 				want = append(want, strings.ReplaceAll(a, "KEY", key))
 			}
-			want = append(want, "--known-hosts", known, "--base-dir", "inbox")
+			want = append(want, "--known-hosts", "~/.config/lockfile/known_hosts", "--base-dir", "inbox")
 			if len(verbs.calls) == 0 || !slices.Equal(verbs.calls[0], want) {
 				t.Fatalf("profile add\n got %q\nwant %q", verbs.calls, want)
+			}
+			cp := filepath.Join(ws, ".lockfile", "known_hosts")
+			b, err := os.ReadFile(cp)
+			if err != nil || string(b) != "sftp.example.com ssh-ed25519 AAAA\n" {
+				t.Fatalf("copy %s: %q %v", cp, b, err)
+			}
+			if fi, _ := os.Stat(cp); fi.Mode().Perm() != 0o600 {
+				t.Fatalf("copy mode %v", fi.Mode().Perm())
 			}
 		})
 	}

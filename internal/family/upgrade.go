@@ -55,6 +55,20 @@ type Upgrade struct {
 	// by digest, once cosign verified its signature by that release's
 	// workflow run for that tag (Releases.ImageVariant).
 	Image func(ctx context.Context, repo, tag, variant string) (string, error)
+	// Tags (Releases.Tags) and Digest (Releases.Digest, unverified) find
+	// the release of a pinned image whose signature does not name it
+	// (the sigstore bundle format has no certificate subject in cosign
+	// verify's output, lockhub#176): the release whose image has its
+	// digest, once Image verified it for that release. Unset, such an
+	// image is not upgraded.
+	Tags   func(ctx context.Context, repo string) ([]string, error)
+	Digest func(ctx context.Context, repo, tag, variant string) (string, error)
+}
+
+// resolved is Upgrade.Image's answer: the image by digest, or why not.
+type resolved struct {
+	ref string
+	err error
 }
 
 // upgraded is one image lox run replaced.
@@ -79,7 +93,9 @@ func (g upgraded) line(old bool) string {
 // array of the verified signatures) says repo's release workflow signed
 // the image for: the certificate's subject,
 // https://github.com/<Owner>/<repo>/.github/workflows/release.yml@refs/tags/<tag>.
-// "" when no signature names one, or when they name different tags.
+// "" when no signature names one (a signature in the sigstore bundle
+// format has an empty "optional": Upgrade.release finds its tag), or
+// when they name different tags.
 func signedTag(out []byte, repo string) string {
 	var sigs []struct {
 		Optional struct {
@@ -125,11 +141,21 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 	}
 	// One resolution per image: locks of the same type share it.
 	type key struct{ repo, tag, variant string }
-	type res struct {
-		ref string
-		err error
+	cache := map[key]resolved{}
+	// image is u.Image, once per release and variant.
+	image := func(repo, tag, variant string) resolved {
+		k := key{repo, tag, variant}
+		r, ok := cache[k]
+		if !ok {
+			r.ref, r.err = u.Image(ctx, repo, tag, variant)
+			if r.err == nil && digestRef.FindStringSubmatch(r.ref) == nil {
+				r.err = fmt.Errorf("not an image by digest: %q", r.ref)
+			}
+			cache[k] = r
+		}
+		return r
 	}
-	cache := map[key]res{}
+	repoTags := map[string][]string{}
 	var done []upgraded
 	for _, w := range ws {
 		pin, ok := u.Pins[w.repo]
@@ -141,6 +167,12 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 			what = "lock " + w.lock + ": image"
 		}
 		cur := tags[w.ref]
+		if cur == "" && u.Tags != nil && u.Digest != nil {
+			cur = u.release(ctx, w.repo, w.variant, w.ref, repoTags, image)
+			if err := ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+		}
 		if cur == "" {
 			fmt.Fprintf(out, "%s: not upgraded: its signature names no %s release, so it cannot be compared with %s\n", what, w.repo, pin)
 			continue
@@ -148,15 +180,7 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 		if !semverLess(cur, pin) {
 			continue
 		}
-		k := key{w.repo, pin, w.variant}
-		r, ok := cache[k]
-		if !ok {
-			r.ref, r.err = u.Image(ctx, w.repo, pin, w.variant)
-			if r.err == nil && digestRef.FindStringSubmatch(r.ref) == nil {
-				r.err = fmt.Errorf("not an image by digest: %q", r.ref)
-			}
-			cache[k] = r
-		}
+		r := image(w.repo, pin, w.variant)
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
@@ -188,6 +212,36 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 		fmt.Fprintf(out, "%s upgraded: %s %s → %s (%s)\n", what, g.repo, g.from, g.to, sig)
 	}
 	return raw, done, nil
+}
+
+// release is the release tag of repo whose image (variant) is ref, for
+// an image whose signature names none: the newest release the registry
+// serves ref's digest for, once image (Upgrade.Image) verified ref's
+// signature by that release's workflow run for that very tag. "" when no
+// release has that digest, or it does not verify. tags caches the
+// releases by repository.
+func (u *Upgrade) release(ctx context.Context, repo, variant, ref string, tags map[string][]string, image func(repo, tag, variant string) resolved) string {
+	ts, ok := tags[repo]
+	if !ok {
+		ts, _ = u.Tags(ctx, repo)
+		tags[repo] = ts
+	}
+	for _, t := range ts {
+		if min, ok := MinRelease[repo]; ok && semverLess(t, min) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return ""
+		}
+		if d, err := u.Digest(ctx, repo, t, variant); err != nil || d != ref {
+			continue
+		}
+		if r := image(repo, t, variant); r.err == nil && r.ref == ref {
+			return t
+		}
+		return ""
+	}
+	return ""
 }
 
 // onlyUpgrades reports whether the change d (diff's lines) is the
