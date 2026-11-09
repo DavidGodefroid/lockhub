@@ -3,6 +3,7 @@ package loxrun
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -123,10 +124,23 @@ type Session struct {
 	// Sound calls the human when a question waits (nil: the terminal
 	// bell only, and the header shows no sound state).
 	Sound *Sound
+	// CheckHub, if set, says whether the hub answering is this
+	// workspace's own, before the first queue and again after each loss
+	// of the hub: a *ForeignHub error stops the session (Run returns it)
+	// before any of that hub's tickets is shown; any other error is the
+	// hub unreachable. Two workspaces on one host share the facade socket
+	// (#172).
+	CheckHub func(ctx context.Context) error
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
 }
+
+// ForeignHub is CheckHub's answer when the facade socket is served by a
+// hub that is not this workspace's: its tickets are never shown.
+type ForeignHub struct{ Msg string }
+
+func (e *ForeignHub) Error() string { return e.Msg }
 
 // tracked is a ticket lox run follows.
 type tracked struct {
@@ -275,8 +289,9 @@ func (s *Session) Run(ctx context.Context) error {
 	defer cancel()
 
 	type queueMsg struct {
-		res api.QueueResult
-		err error
+		res   api.QueueResult
+		err   error
+		fatal error // another workspace's hub: the session stops
 	}
 	queueCh := make(chan queueMsg, 1)
 	wg.Add(1)
@@ -285,17 +300,36 @@ func (s *Session) Run(ctx context.Context) error {
 		var ver uint64
 		wait := time.Duration(0)
 		backoff := 500 * time.Millisecond
+		check := s.CheckHub != nil
 		for ctx.Err() == nil {
-			res, err := s.Hub.QueueAll(ctx, ver, wait)
+			var res api.QueueResult
+			var err error
+			if check {
+				err = s.CheckHub(ctx)
+				var fh *ForeignHub
+				if errors.As(err, &fh) {
+					select {
+					case queueCh <- queueMsg{fatal: err}:
+					case <-ctx.Done():
+					}
+					return
+				}
+			}
+			if err == nil {
+				check = false
+				res, err = s.Hub.QueueAll(ctx, ver, wait)
+			}
 			if ctx.Err() != nil {
 				return
 			}
 			select {
-			case queueCh <- queueMsg{res, err}:
+			case queueCh <- queueMsg{res: res, err: err}:
 			case <-ctx.Done():
 				return
 			}
 			if err != nil {
+				// The hub that comes back may not be the one that left.
+				check = s.CheckHub != nil
 				select {
 				case <-time.After(backoff):
 				case <-ctx.Done():
@@ -405,6 +439,9 @@ func (s *Session) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case m := <-queueCh:
+			if m.fatal != nil {
+				return m.fatal
+			}
 			st.onQueue(m.res, m.err)
 		case k, ok := <-s.Keys:
 			if !ok {
