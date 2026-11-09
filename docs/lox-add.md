@@ -195,7 +195,7 @@ and the console still checks every file at its start.
 | `User (required): ` | sftp; `--user` |
 | `Auth: key or password (required) [key]: ` | sftp; with `password` the console asks for it at start; `--auth` |
 | `Private key file, an absolute path (required): ` | sftp with `key`; a regular file that is yours; `--key` |
-| `Known hosts file (required): ` | sftp; `--known-hosts` |
+| `Known hosts file (required): ` | sftp; a host file, copied to `.lockfile/known_hosts`: the profile names `~/.config/lockfile/known_hosts`, where the console sees its profile's copy ([lox-run.md](lox-run.md#lockfile-its-sftp-files)); `--known-hosts` |
 | `Base directory (optional: empty = the login directory): ` | sftp; `--base-dir` |
 | `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
 | `Credentials: ...`, then the Vault path and the vault block | s3 and sftp only; the Vault path defaults to `secret/data/lockfile/<name>` |
