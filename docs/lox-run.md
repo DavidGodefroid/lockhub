@@ -684,6 +684,12 @@ with `--pin`) cannot run it: the lock then reaches nothing until `lox run`
 upgrades the hub. The bridge a lock had before (`egress-<name>`, with a route
 out) is removed by the first `lox run` that moves the lock off it.
 
+Every network takes a small subnet of its own (a /28; the hub's a /24) from
+the workspace's pool, `10.123.0.0/16` unless `network.pool` in lockfamily.yaml
+names another, set in the compose file: none comes from Docker's default
+address pools, which a few compose projects exhaust. `lox doctor` counts what
+is left of both; see [networks.md](networks.md).
+
 Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
 `-vault` variant of its image (`lox add` pins it) and gets `VAULT_ADDR` (and
 `VAULT_NAMESPACE`, and the reviewed CA copy mounted read-only when the block

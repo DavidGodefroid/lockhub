@@ -47,6 +47,20 @@ type Config struct {
 	// Vault is the one Vault the locks with vault: true read their secrets
 	// from. The token is never here: it is typed at the console's start.
 	Vault *Vault `yaml:"vault,omitempty"`
+	// Network is where lox run takes its networks' subnets from.
+	Network *Network `yaml:"network,omitempty"`
+}
+
+// Network is the top-level network: block.
+//
+//	network:
+//	  pool: 10.123.0.0/16              # default
+//
+// Each compose network of the workspace takes a small subnet of the pool
+// (the hub's a /24, the others a /28), never one of the engine's default
+// address pools (lockhub#175).
+type Network struct {
+	Pool string `yaml:"pool,omitempty"`
 }
 
 // Vault is the top-level vault: block.
@@ -398,6 +412,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Vault != nil {
 		if err := c.Vault.validate(); err != nil {
+			return err
+		}
+	}
+	if c.Network != nil && c.Network.Pool != "" {
+		if err := validPool(c.Network.Pool); err != nil {
 			return err
 		}
 	}

@@ -75,6 +75,10 @@ type Paths struct {
 	// Project is the compose project: it names a locklog lock's network
 	// as the engine knows it (LOCKLOG_NETWORK, <project>_locknet-<n>).
 	Project string
+	// Subnets are the networks' subnets, by compose key (AllocSubnets),
+	// set in the file: none is left to the engine's default address
+	// pools. A network without one takes the engine's choice.
+	Subnets map[string]string
 }
 
 // lockNet reports whether lock l sits on its own network, locknet-<n>
@@ -630,31 +634,49 @@ func Compose(c *Config, p Paths) string {
 		w("    volumes:")
 		w("      - %s", q("profile-"+t+":/p"))
 	}
+	// Each network's own small subnet, when lox run gave it one.
+	ipam := func(key string) {
+		if s := p.Subnets[key]; s != "" {
+			w("    ipam:")
+			w("      config:")
+			w("        - subnet: %s", q(s))
+		}
+	}
+	network := func(key string, internal bool) {
+		if !internal && p.Subnets[key] == "" {
+			w("  %s: {}", q(key))
+			return
+		}
+		w("  %s:", q(key))
+		if internal {
+			w("    internal: true")
+		}
+		ipam(key)
+	}
 	w("networks:")
 	w("  lockhub:")
 	w("    internal: true")
 	labels(RoleHub, "", "")
+	ipam("lockhub")
 	if c.HubEgress() {
-		w("  %s: {}", q("egress-hub"))
+		network("egress-hub", false)
 	}
 	if c.Hub.Mobile != nil {
-		w("  %s: {}", q("mobile-hub"))
+		network("mobile-hub", false)
 	}
 	for _, name := range c.Instances() {
 		if Kinds[c.Locks[name].Type].Gate {
 			// lockhttp's egress is its own policy's.
-			w("  %s: {}", q("egress-"+name))
+			network("egress-"+name, false)
 			continue
 		}
 		if !lockNet(c.Locks[name], p.Logs[name]) {
 			continue
 		}
-		w("  %s:", q("locknet-"+name))
-		w("    internal: true")
+		network("locknet-"+name, true)
 		if len(p.Egress[name].Endpoints) > 0 {
-			w("  %s:", q("gwlink-"+name))
-			w("    internal: true")
-			w("  %s: {}", q("out-"+name))
+			network("gwlink-"+name, true)
+			network("out-"+name, false)
 		}
 	}
 	w("volumes:")

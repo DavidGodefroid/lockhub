@@ -5,6 +5,19 @@ digest).
 
 ## Unreleased
 
+- `lox run` no longer exhausts Docker's default address pools (#175): each
+  network of a workspace gets a small subnet of its own (`lockhub` a /24, the
+  others a /28), set in the compose file, from the workspace's pool
+  (`10.123.0.0/16`, or `network.pool` in lockfamily.yaml, reviewed). lox run
+  reads the engine's networks first: a network keeps its subnet while it is
+  free, new ones take the first free block, and two workspaces never
+  overlap. A network the engine refuses for its addresses stops lox run with
+  a clear message; the networks compose made before it are removed and
+  nothing is applied. `lox doctor` warns when the pool cannot hold the next
+  run's networks, or when the engine's default address pools (lea's and other
+  projects') have fewer than 4 subnets free, with the `default-address-pools`
+  fix for `/etc/docker/daemon.json`. See `docs/networks.md`.
+
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to
