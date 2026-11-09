@@ -19,6 +19,12 @@ the lock in `lockfamily.yaml`, pinned by digest, and runs nothing else (see
 
 ## What it does
 
+`lox add`, both forms and every type, first refuses a workspace that is not
+yours or that group or others can write (the workspace directory, its
+`.lockfamily/` or a lock's `.<type>/`): others could replace a lock's
+reviewed configuration. The message names the directory and the fix,
+`chmod go-w <directory>`.
+
 At a terminal, `lox add TYPE` runs these steps in order:
 
 1. **The questions** (below). Ctrl-C here ends `lox add` with nothing written.

@@ -5,6 +5,14 @@ digest).
 
 ## Unreleased
 
+- `lox add` (every type, both forms) and `lox run` (`--no-start` too)
+  refuse a workspace that is not the user's or that group or others can
+  write: the workspace directory, `.lockfamily/` and each lock's
+  `.<type>/`, with one message for every type and its fix, `chmod go-w
+  <directory>` (#178). Only locklog refused it before; a workspace made
+  under umask 002 (0775) let a member of the group replace a lock's
+  reviewed configuration between two `lox run`s.
+
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to

@@ -227,6 +227,9 @@ var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
 
 // Do runs lox up.
 func (u *Up) Do(ctx context.Context) error {
+	if err := CheckWorkspace(Workspace(u.File)); err != nil {
+		return err
+	}
 	// Read once: what is reviewed is what a legacy file is adopted as.
 	raw, err := readConfig(u.File)
 	if err != nil {
