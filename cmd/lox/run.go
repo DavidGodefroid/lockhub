@@ -195,7 +195,7 @@ func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*f
 // digest in ghcr.io and verified with cosign as lox add does.
 func upgrader(r family.Runner) *family.Upgrade {
 	rel := family.DefaultReleases(r)
-	return &family.Upgrade{Pins: family.ShippedPins(version), Image: rel.ImageVariant}
+	return &family.Upgrade{Pins: family.ShippedPins(version), Image: rel.ImageVariant, Tags: rel.Tags, Digest: rel.Digest}
 }
 
 // tildeHome shows a path under the home directory as ~/….

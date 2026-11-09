@@ -891,7 +891,11 @@ releases the installed `lox` ships with: lockhub at lox's own version (they
 are released together), and one release per lock type
 (`family.ShippedLocks`, bumped when lox is released). The release an image
 is, is read from its signature: cosign's verification of every pinned image
-names the release workflow run, so the tag, that signed it. After `brew
+names the release workflow run, so the tag, that signed it. A signature in
+the sigstore bundle format names none in cosign's output: the release is
+then the newest one whose image in ghcr.io has the pinned digest, once
+cosign verified the pinned image was signed by that release's own workflow
+run for that very tag. After `brew
 upgrade lox`, an image older than the shipped release is upgraded, with no
 command to run:
 
@@ -914,7 +918,9 @@ Fail closed: an image that cannot be resolved or whose signature does not
 verify is not used; the old image (verified above) is kept and a line says
 why (`lock shop-db: image: not upgraded to locksql v0.17.1, keeping v0.16.2:
 …`). An image newer than the shipped release (`lox add --version`) is kept,
-and so is one whose signature names no release (it cannot be compared).
+and so is one whose release cannot be found (it cannot be compared: `lock
+docs: image: not upgraded: its signature names no lockfile release, so it
+cannot be compared with v0.8.1`).
 
 The image lines are part of what the review fingerprints, but a new image
 changes nothing a human reviewed: when the upgraded images are the only
