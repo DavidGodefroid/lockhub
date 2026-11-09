@@ -220,6 +220,11 @@ gathers; it never takes a secret. A remote store (Loki, Elasticsearch,
 OpenSearch) is written in `.locklog/config.toml` by hand (locklog's README).
 `lox run` then derives the lock's mount plan and auto rules from the reviewed
 copy and shows both ([lox-run.md](lox-run.md#locklog-the-mount-plan-and-the-containers-map)).
+`--only` takes directories under `/var/log` or `/run/log/journal`, or under a
+root of `LOCKLOG_EXTRA_ROOTS`; such a directory is written as the lock's
+`log_roots`, which `lox run` reviews and allows. Any other is refused here,
+before anything is written, with the message `lox run` would stop the lock
+with.
 Local sources need Linux with a rootful Docker engine 19.03 or later.
 
 ### lockssh

@@ -260,3 +260,22 @@ func TestHeaderReadsAsked(t *testing.T) {
 		t.Errorf("header marks shop/dev:\n%s", got)
 	}
 }
+
+// A lock lox run did not start is in the header with its reason, next to
+// the consoles it serves (lockhub#177).
+func TestHeaderNotStarted(t *testing.T) {
+	v := sampleView()
+	v.Consoles = []LockConsole{{Instance: "shop", Lock: "locksql", State: ConsoleServing},
+		{Instance: "logs", Lock: "locklog", State: ConsoleNotStarted, Err: "mount plan: /home/u is not under an allowed log root"}}
+	got := ""
+	for _, l := range header(v, 200, Style{}) {
+		got += l.text() + "\n"
+	}
+	if !strings.Contains(got, "logs not started: mount plan: /home/u is not under an allowed log root") || !strings.Contains(got, "shop serving") {
+		t.Errorf("header:\n%s", got)
+	}
+	st := &state{s: &Session{NotStarted: []LockConsole{{Instance: "logs", Lock: "locklog", Err: "why"}}}}
+	if cs := st.lockConsoles(); len(cs) != 1 || cs[0].State != ConsoleNotStarted || cs[0].Err != "why" {
+		t.Errorf("lockConsoles: %+v", cs)
+	}
+}

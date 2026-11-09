@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/egress"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
@@ -46,6 +47,20 @@ func (d *Doctor) Do(ctx context.Context) int {
 		fail("lockfamily.yaml: %v", err)
 	} else {
 		ok("lockfamily.yaml: %d lock(s): %s", len(c.Locks), strings.Join(c.Instances(), ", "))
+		// The locks the last lox run did not start: said once here, and
+		// left out of the checks of what it applied.
+		ns, err := ReadNotStarted(d.State)
+		if err != nil {
+			fail("locks not started: %v", err)
+		}
+		skip := map[string]string{}
+		for _, n := range c.Instances() {
+			if why, has := ns[n]; has {
+				fail("lock %s: not started: %s (fix it, then lox run: the other locks are served)", n, why)
+				skip[n] = why
+			}
+		}
+		c = c.without(skip)
 	}
 
 	engine := true
@@ -84,6 +99,15 @@ func (d *Doctor) Do(ctx context.Context) int {
 		}
 	}
 	if !upRan {
+		// A workspace never started (lox run refused) still says whose hub
+		// serves the shared facade socket, without reading its queue (#172).
+		sock := filepath.Join(d.Runtime, "lockhub", "facade.sock")
+		if fi, err := os.Lstat(sock); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			var fe *ForeignFacadeError
+			if err := CheckFacadeHub(ctx, approve.Dial(sock), sock, d.State); errors.As(err, &fe) {
+				fail("%v (this workspace's hub cannot serve it, and exits)", err)
+			}
+		}
 		d.accounts(warn)
 		return fails
 	}
@@ -149,7 +173,20 @@ func (d *Doctor) Do(ctx context.Context) int {
 		fail("facade socket %s: owned by uid %d, not by you", sock, st.Uid)
 	} else {
 		ok("facade socket %s", sock)
-		d.hubLimits(ctx, sock, c, ok, warn, fail)
+		// Another workspace's hub on the shared socket: this workspace's
+		// hub cannot serve it and exits (#172).
+		switch err := CheckFacadeHub(ctx, approve.Dial(sock), sock, d.State); {
+		case err == nil:
+			ok("the hub on the facade socket is this workspace's")
+			d.hubLimits(ctx, sock, c, ok, warn, fail)
+		case errors.Is(err, ErrFacadeOldHub):
+			warn("the hub on the facade socket predates GET /v1/hub: lox doctor cannot tell it is this workspace's (lox run upgrades it)")
+			d.hubLimits(ctx, sock, c, ok, warn, fail)
+		case errors.Is(err, ErrFacadeUnserved):
+			fail("hub does not answer on the facade socket: %v (docker compose logs lockhub)", err)
+		default:
+			fail("%v (this workspace's hub cannot serve it, and exits)", err)
+		}
 	}
 
 	if c != nil && engine {
@@ -241,7 +278,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		return slices.DeleteFunc(slices.Clone(s), func(l string) bool {
 			// The allowlists and the mount plans derive from the
 			// profiles, not from the yaml.
-			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l) || logPlanLine.MatchString(l)
+			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l) || logPlanLine.MatchString(l) || notStartedRe.MatchString(l)
 		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {

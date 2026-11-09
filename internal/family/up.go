@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -163,6 +164,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		}
 		if len(l.AllowedUIDs) > 0 {
 			s = append(s, fmt.Sprintf("lock %s serves uids %s besides its clients group (allowed_uids)", n, l.AllowedUIDsFlag()))
+		}
+		if len(l.LogRoots) > 0 {
+			s = append(s, fmt.Sprintf("lock %s log roots %s besides %s (log_roots)", n, strings.Join(l.LogRoots, " "), strings.Join(DefaultLogRoots, " ")))
 		}
 		if m := c.Hub.Mobile; m != nil {
 			if !l.Devices {
@@ -546,6 +550,9 @@ func (u *Up) Do(ctx context.Context) error {
 	// The mount plans of the locks that read host logs (locklog),
 	// derived in their image from the reviewed copy and checked here.
 	plans := map[string]*LogPlan{}
+	// A lock whose mount plan is refused is not started: the others are
+	// (lockhub#177). lox add of that very lock still stops on it.
+	notStarted := map[string]string{}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		if !Kinds[l.Type].Mounts {
@@ -555,12 +562,22 @@ func (u *Up) Do(ctx context.Context) error {
 			return fmt.Errorf("lock %s: the workspace %s holds a character a mount cannot carry: move or rename it", n, ws)
 		}
 		out, err := u.runSetup(ctx, project, composeYAML, profiles[l.Type].Tar, "mounts-"+n)
+		var pl *LogPlan
 		if err != nil {
-			return fmt.Errorf("mount plan of %s (locklog mounts): %w", n, err)
+			err = fmt.Errorf("mount plan of %s (locklog mounts): %w", n, err)
+		} else if pl, err = DeriveLogPlan(ctx, u.Run, u.LogHost.forLock(l), out, LogMapDir(u.State, n)); err != nil {
+			err = fmt.Errorf("lock %s: %w", n, err)
 		}
-		pl, err := DeriveLogPlan(ctx, u.Run, u.LogHost, out, LogMapDir(u.State, n))
 		if err != nil {
-			return fmt.Errorf("lock %s: %w", n, err)
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			if n == u.Focus || slices.Contains(rot.locks, n) {
+				return err
+			}
+			notStarted[n] = strings.TrimPrefix(err.Error(), "lock "+n+": ")
+			fmt.Fprintf(u.Out, "lock %s: not started: %s (the other locks are)\n", n, notStarted[n])
+			continue
 		}
 		// Its auto rules, from the same copy: rules lox run cannot read
 		// leave every ticket asked (the console enforces its own anyway).
@@ -585,6 +602,21 @@ func (u *Up) Do(ctx context.Context) error {
 			egresses[n] = localLogEgress()
 		}
 		plans[n] = pl
+	}
+	if len(notStarted) > 0 {
+		// Out of everything applied: no key at the hub, no route, no
+		// container (compose up removes one left from before).
+		c = c.without(notStarted)
+		for n := range notStarted {
+			delete(lockPubs, n)
+			delete(egresses, n)
+		}
+		for t := range profiles {
+			if !slices.Contains(types(c), t) {
+				delete(profiles, t)
+			}
+		}
+		composeYAML = []byte(Compose(c, paths))
 	}
 	// The auto rules of the lockssh locks, read the same way from their
 	// reviewed copy: rules lox run cannot read leave every ticket asked.
@@ -658,6 +690,9 @@ func (u *Up) Do(ctx context.Context) error {
 			sum = append(sum, logNetLine(project, n, pl))
 		}
 		sum = append(sum, SSHRulesLines(n, sshRules[n])...)
+	}
+	for _, n := range slices.Sorted(maps.Keys(notStarted)) {
+		sum = append(sum, notStartedLine(n, notStarted[n]))
 	}
 	for _, t := range types(c) {
 		sum = append(sum, fmt.Sprintf("profile %s %s %s", t, profileDir(ws, t), profiles[t].Fingerprint))
@@ -773,13 +808,7 @@ func (u *Up) Do(ctx context.Context) error {
 				heading = "Also applied:"
 			} else {
 				fmt.Fprintln(u.Out, "The configuration changed since the last lox run:")
-				// Only an added line can be rendered by a block: a removed
-				// line is always shown.
-				for _, l := range d {
-					if rest, ok := strings.CutPrefix(l, "+ "); !ok || !cov[rest] {
-						changed = append(changed, l)
-					}
-				}
+				changed = shortChanged(c, u.Focus, d, cov)
 				if caChanged(d) {
 					changed = append(changed, vaultCANote)
 				}
@@ -1003,6 +1032,9 @@ func (u *Up) Do(ctx context.Context) error {
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
 	}
+	if err := writeNotStarted(u.State, notStarted); err != nil {
+		return err
+	}
 	if err := writeHubKeys(u.State, hp); err != nil {
 		return err
 	}
@@ -1067,6 +1099,9 @@ func (u *Up) Do(ctx context.Context) error {
 		return err
 	}
 	fmt.Fprintf(u.Out, "up: project %s, hub and %d lock(s)\n", project, len(lockPubs))
+	for _, n := range slices.Sorted(maps.Keys(notStarted)) {
+		fmt.Fprintf(u.Out, "lock %s: not started: %s (fix it, then lox run)\n", n, notStarted[n])
+	}
 	if rot.hub {
 		fmt.Fprintf(u.Out, "hub key rotated: lox audit verify takes --hub-key-file %s (every hub key, oldest first)\n", filepath.Join(u.State, HubKeysFile))
 	}

@@ -257,6 +257,28 @@ honours it); a compose implementation that ignores it makes the missing
 directory as before (as root under a rootful engine), the hub refuses it
 and its error names the fix, and the next `lox run` repairs it.
 
+### Two workspaces on one host
+
+Every workspace's hub serves the same `$XDG_RUNTIME_DIR/lockhub/facade.sock`:
+while one workspace's hub serves it, another's cannot (its hub exits with
+`another hub is serving it`). So before it starts anything, and again
+whenever the hub comes back after a loss, `lox run` asks the hub on the
+socket for its key (`GET /v1/hub`) and compares it with its own
+workspace's (`hub.pub` in its state directory, the `hub_key` of up.json).
+Another workspace's hub is refused: `lox run` (and `lox up`) stop before
+showing any of its tickets, naming it from that workspace's state directory:
+
+```
+lox run: the facade socket /run/user/1000/lockhub/facade.sock is served by the hub of workspace /home/you/Documents (lockfamily-177a1535); stop it, or run this workspace with its own XDG_RUNTIME_DIR
+```
+
+`lox doctor` fails with the same line. A hub too old to answer `GET /v1/hub`
+cannot say whose it is: `lox run` upgrades it (unless `--no-upgrade` or
+`--pin` keep it), and refuses to serve it otherwise. To run two workspaces at
+once, give the second its own runtime directory, for every `lox` command of
+that workspace: `XDG_RUNTIME_DIR=~/.run-b lox run` (lea's deck and
+`lox approve` then need the same `XDG_RUNTIME_DIR`, or `--socket`).
+
 When `XDG_RUNTIME_DIR` is unset, the runtime directory is
 `$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.
@@ -473,10 +495,12 @@ lock shop-db (locksql)
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
 `credentials` then reads `vault, <path>`. A profile that changed since the last
-`lox run` says so. Every summary line that no block renders is listed under
-`Other changes since the last lox run:` (`Also applied:` on the first run), so
-the fingerprint that `lox run` compares still covers everything the review
-shows or lists. The question is `Apply? [y/N]`.
+`lox run` says so, and its changed lines are listed under `Other changes since
+the last lox run:`, each with its old value (`-`) and its new one (`+`); an
+added line shows `+`, a removed one `-`. Every summary line that no block
+renders is listed there too (`Also applied:` on the first run, where the
+profile row stands for the profile's lines), so the fingerprint that `lox run`
+compares still covers everything the review shows or lists. The question is `Apply? [y/N]`.
 
 `lox run --review` shows everything: on the first run the whole configuration,
 then, for a later change, the lines that changed and every profile line by
@@ -733,8 +757,8 @@ unpacked in a tmpfs at the workspace's path) and checks every line it prints
 on the host:
 
 - a `file` line binds its directory: one under `/var/log` or
-  `/run/log/journal`, a real path (no link, not `/`), with no character a
-  mount cannot carry;
+  `/run/log/journal`, or under one of the lock's `log_roots` (below), a real
+  path (no link, not `/`), with no character a mount cannot carry;
 - a `journald` line binds the host's `/var/log/journal` and
   `/run/log/journal`;
 - a `docker` line binds the Docker containers root (`docker info`'s
@@ -773,6 +797,32 @@ follows `docker events` under lox run, and `lox doctor` says when the map is
 stale. A locklog lock with no applied plan (a workspace applied before lox
 run derived mount plans) is a warning in `lox doctor`: run `lox run` to
 review and apply it.
+
+A log directory outside `/var/log` and `/run/log/journal` is bound only when
+the lock's `log_roots` in `lockfamily.yaml` names it (or a directory above
+it):
+
+```yaml
+locks:
+  logs:
+    type: locklog
+    image: ghcr.io/davidgodefroid/locklog@sha256:...
+    log_roots: [/srv/app/logs]
+```
+
+`lox add locklog --only DIR` writes it for a directory outside the default
+roots that `LOCKLOG_EXTRA_ROOTS` lets in (as `locklog profile add` takes it),
+and refuses one it does not, with the message `lox run` would give: lox add
+never declares a lock lox run refuses. `log_roots` is reviewed (`lock <name>
+log roots ...`) and passed to the console as `LOCKLOG_EXTRA_ROOTS`.
+
+**A lock whose mount plan lox run refuses is not started**; the other locks
+are. lox run says `lock <name>: not started: <reason>` before the review and
+after `up:`, leaves it out of what it applies (no key at the hub, no route, no
+container), shows it in its header (`locks <name> not started: <reason>`)
+and `lox doctor` fails it with the reason. Fix the profile or `log_roots`,
+then `lox run` again: the lock's start is a change to review. `lox add` of
+that very lock (and `--rotate` of it) still stops on the refusal.
 
 ### locklog: networks and routing
 

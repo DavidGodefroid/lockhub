@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -73,7 +74,16 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ownState := stateDir(family.Project(family.Workspace(abs)))
+	hubc := approve.Dial(*sock)
 	if !*noStart {
+		// Another workspace's hub on the facade socket: refused before this
+		// workspace's hub starts and fails to serve it (#172). A hub too
+		// old to say whose it is may be this workspace's, which starting
+		// upgrades: the session checks it again.
+		if foreignHub(ctx, hubc, *sock, ownState, stderr, "run") {
+			return 1
+		}
 		r := family.QuietExec{Verbose: *verbose, Stderr: stderr}
 		u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout,
@@ -91,11 +101,22 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// asked (fail closed).
 	var rules func(lock, instance, profile string) loxrun.ProfileRules
 	var consoleLocks []lockconsoles.Lock
+	var notStarted []loxrun.LockConsole
 	if c, err := family.Load(abs); err == nil {
-		locks = len(c.Locks)
 		st := stateDir(family.Project(family.Workspace(abs)))
 		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedSSHRules(st, c))
+		// The locks the last lox run did not start: in the header, with
+		// their reason; the others are served.
+		ns, err := family.ReadNotStarted(st)
+		if err != nil {
+			fmt.Fprintln(stderr, "lox run:", err)
+		}
 		for _, name := range c.Instances() {
+			if why, skip := ns[name]; skip {
+				notStarted = append(notStarted, loxrun.LockConsole{Instance: name, Lock: c.Locks[name].Type, Err: why})
+				continue
+			}
+			locks++
 			consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
 		}
 	}
@@ -118,8 +139,10 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if *manual {
 		mode = loxrun.Manual
 	}
-	s := &loxrun.Session{Hub: approve.Dial(*sock), Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
-		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules}
+	s := &loxrun.Session{Hub: hubc, Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
+		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules, NotStarted: notStarted}
+	// Only this workspace's hub's tickets are shown (#172).
+	s.CheckHub = func(ctx context.Context) error { return checkHub(ctx, hubc, *sock, ownState) }
 	// A question plays a sound of its own (not lea's), again while it waits.
 	snd, warns := loxrun.SoundFromEnv(os.LookupEnv, loxrun.SystemHost(runtime.GOOS))
 	for _, w := range warns {
@@ -165,6 +188,36 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "lox run stopped: no decision is served any more; tickets wait at the hub for the next lox run (fail closed), and the locks close their connections once idle")
 	return 0
+}
+
+// foreignHub says (on stderr, as lox cmd) when another workspace's hub
+// serves the facade socket, before this workspace's hub is started: it
+// could not serve the socket (#172).
+func foreignHub(ctx context.Context, c family.HubKeyAsker, sock, state string, stderr io.Writer, cmd string) bool {
+	var fe *family.ForeignFacadeError
+	if err := family.CheckFacadeHub(ctx, c, sock, state); errors.As(err, &fe) {
+		fmt.Fprintf(stderr, "lox %s: %v\n", cmd, err)
+		return true
+	}
+	return false
+}
+
+// checkHub is lox run's Session.CheckHub: another workspace's hub stops
+// the session; no hub answering is the hub unreachable. A hub that
+// predates GET /v1/hub (every lockhub release before it) cannot say whose
+// it is: it is served, as before #172, since refusing it would stop every
+// lox run kept on such a hub (an upgrade refused, --no-upgrade, --pin);
+// lox doctor warns about it.
+func checkHub(ctx context.Context, c family.HubKeyAsker, sock, state string) error {
+	err := family.CheckFacadeHub(ctx, c, sock, state)
+	var fe *family.ForeignFacadeError
+	switch {
+	case errors.As(err, &fe):
+		return &loxrun.ForeignHub{Msg: err.Error()}
+	case errors.Is(err, family.ErrFacadeOldHub):
+		return nil
+	}
+	return err
 }
 
 // profileRules are the engine's per-profile rules from the locks' own

@@ -230,6 +230,12 @@ type Lock struct {
 	// Vault: the lock reads its credentials from the top-level vault:
 	// block (not on lockhttp, which reads no secret).
 	Vault bool `yaml:"vault,omitempty"`
+	// LogRoots (locklog only) are the log roots beyond DefaultLogRoots a
+	// file source of the lock's profile may be bound from, reviewed in lox
+	// run: what LOCKLOG_EXTRA_ROOTS let locklog profile add take (lox add
+	// writes the directories it took). The console gets them as
+	// LOCKLOG_EXTRA_ROOTS.
+	LogRoots []string `yaml:"log_roots,omitempty"`
 }
 
 // UIDList is allowed_uids: a YAML list of plain decimal integers, as the
@@ -294,6 +300,28 @@ func validAllowedUIDs(name string, l Lock) error {
 			return fmt.Errorf("locks.%s.allowed_uids: %d is the console's own uid", name, u)
 		case slices.Contains(l.AllowedUIDs[:i], u):
 			return fmt.Errorf("locks.%s.allowed_uids: %d is listed twice", name, u)
+		}
+	}
+	return nil
+}
+
+// validLogRoots checks a lock's log_roots: a locklog lock's, each an
+// absolute clean directory other than /, without a glob character, a space
+// or a character a mount cannot carry (as the launcher takes
+// LOCKLOG_EXTRA_ROOTS), each once.
+func validLogRoots(name string, l Lock) error {
+	if len(l.LogRoots) == 0 {
+		return nil
+	}
+	if !Kinds[l.Type].Mounts {
+		return fmt.Errorf("locks.%s.log_roots: a %s lock binds no log directory (only locklog)", name, l.Type)
+	}
+	for i, r := range l.LogRoots {
+		if err := CheckLogRootName(r); err != nil {
+			return fmt.Errorf("locks.%s.log_roots: %w", name, err)
+		}
+		if slices.Contains(l.LogRoots[:i], r) {
+			return fmt.Errorf("locks.%s.log_roots: %s is listed twice", name, r)
 		}
 	}
 	return nil
@@ -418,6 +446,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("locks.%s.image: want ghcr.io/davidgodefroid/%s@sha256:<digest>", name, l.Type)
 		}
 		if err := validAllowedUIDs(name, l); err != nil {
+			return err
+		}
+		if err := validLogRoots(name, l); err != nil {
 			return err
 		}
 		if l.Vault && l.Type == "lockhttp" {

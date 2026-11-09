@@ -13,6 +13,21 @@ digest).
   under umask 002 (0775) let a member of the group replace a lock's
   reviewed configuration between two `lox run`s.
 
+- A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
+  plan lox run refuses is not started, with its reason (`lock <name>: not
+  started: <reason>`, in lox run's header and as a `lox doctor` failure,
+  kept in the state's `not-started.json`); the other locks start and are
+  served. A locklog lock's `log_roots` (reviewed, passed to its console as
+  `LOCKLOG_EXTRA_ROOTS`) allows log directories outside `/var/log` and
+  `/run/log/journal`: `lox add locklog --only` writes it for a directory
+  `LOCKLOG_EXTRA_ROOTS` lets in, and refuses any other with lox run's
+  message, so it never declares a lock lox run refuses.
+
+- `lox run`'s short review lists a changed profile line's new value (#173):
+  under `Other changes since the last lox run:` it showed only the old (`-`)
+  lines of a profile, never the new (`+`) ones, so a loosening
+  (`tier = "write"`, a new host) was approved unseen. A changed line now
+  shows `-` and `+`, an added one `+`, a removed one `-`.
 - `lox add lockfile --source sftp --known-hosts FILE` no longer writes a host
   path the console cannot open (#174): it copies FILE to
   `.lockfile/known_hosts` and the profile names
@@ -28,6 +43,17 @@ digest).
   lockfile release`). Its release is now the newest whose image in ghcr.io
   has the pinned digest (GitHub's release list, then one registry lookup per
   release), once cosign verified the pinned image for that very tag.
+
+- Two workspaces on one host (#172): their hubs share the facade socket,
+  and a second workspace's `lox run` used to serve the first one's hub,
+  listing its tickets. The hub now answers `GET /v1/hub` (its key) on the
+  facade socket; `lox run` and `lox up` compare it with their workspace's
+  hub key before starting anything, `lox run` again whenever the hub comes
+  back, and refuse another workspace's hub, naming its workspace and
+  project (`stop it, or run this workspace with its own XDG_RUNTIME_DIR`),
+  so the second hub is never started to fail on the socket. `lox doctor`
+  reports it, and the hub's own `another hub is serving it` error points at
+  the shared runtime directory. e2e: `ci/e2e/two-workspaces.sh`.
 
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow

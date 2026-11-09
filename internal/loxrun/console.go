@@ -26,6 +26,9 @@ const (
 	// ConsoleUnreachable: lox run cannot reach its terminal here (Err:
 	// why); lox attach still does.
 	ConsoleUnreachable ConsoleState = "unreachable"
+	// ConsoleNotStarted: lox run did not start it (Err: why, such as a
+	// mount plan it refused); the other locks are served.
+	ConsoleNotStarted ConsoleState = "not started"
 )
 
 // ConsoleQuestion is a question a console waits for at its terminal: the
@@ -285,9 +288,13 @@ func (st *state) forgetConsole(instance string) {
 
 // lockConsoles is the header's view of the consoles, by instance.
 func (st *state) lockConsoles() []LockConsole {
-	out := make([]LockConsole, 0, len(st.consoles))
+	out := make([]LockConsole, 0, len(st.consoles)+len(st.s.NotStarted))
 	for _, c := range st.consoles {
 		out = append(out, *c)
+	}
+	for _, c := range st.s.NotStarted {
+		c.State = ConsoleNotStarted
+		out = append(out, c)
 	}
 	slices.SortFunc(out, func(a, b LockConsole) int { return strings.Compare(a.Instance, b.Instance) })
 	return out
