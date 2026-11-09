@@ -414,7 +414,7 @@ func consolesLine(v View, st Style) line {
 		switch s {
 		case ConsoleWaiting:
 			return 0
-		case ConsoleStopped, ConsoleUnreachable:
+		case ConsoleStopped, ConsoleUnreachable, ConsoleNotStarted:
 			return 1
 		}
 		return 2
@@ -441,6 +441,12 @@ func consolesLine(v View, st Style) line {
 				msg += " (" + c.Err + ")"
 			}
 			l = l.add(msg+": lox attach "+c.Instance, st.errored())
+		case ConsoleNotStarted:
+			msg := "not started"
+			if c.Err != "" {
+				msg += ": " + c.Err
+			}
+			l = l.add(msg, st.errored())
 		case ConsoleServing:
 			l = l.add("serving", st.approved())
 		default:

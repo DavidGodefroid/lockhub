@@ -292,7 +292,7 @@ func (s *Steps) declare(ctx context.Context, l Lock) error {
 		}
 	}
 	if err := family.Add(s.File, family.AddOptions{Type: l.Type, Name: l.Name, Image: image, Profile: l.Profile,
-		AllowedUIDs: s.AllowedUIDs, Vault: vault}); err != nil {
+		AllowedUIDs: s.AllowedUIDs, Vault: vault, LogRoots: l.LogRoots}); err != nil {
 		return s.failed(ctx, "lox add", err)
 	}
 	s.say("lock %s declared in %s", l.Name, s.rel(s.File))

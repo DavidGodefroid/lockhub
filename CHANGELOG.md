@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
+  plan lox run refuses is not started, with its reason (`lock <name>: not
+  started: <reason>`, in lox run's header and as a `lox doctor` failure,
+  kept in the state's `not-started.json`); the other locks start and are
+  served. A locklog lock's `log_roots` (reviewed, passed to its console as
+  `LOCKLOG_EXTRA_ROOTS`) allows log directories outside `/var/log` and
+  `/run/log/journal`: `lox add locklog --only` writes it for a directory
+  `LOCKLOG_EXTRA_ROOTS` lets in, and refuses any other with lox run's
+  message, so it never declares a lock lox run refuses.
+
 - `lox run`'s short review lists a changed profile line's new value (#173):
   under `Other changes since the last lox run:` it showed only the old (`-`)
   lines of a profile, never the new (`+`) ones, so a loosening

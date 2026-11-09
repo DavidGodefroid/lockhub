@@ -2,6 +2,7 @@ package loxadd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/DavidGodefroid/lockhub/internal/family"
@@ -19,6 +20,9 @@ type Lock struct {
 	// Vault is set only when the vault block is created now (vault-address
 	// answered).
 	Vault *family.Vault
+	// LogRoots is a locklog lock's log_roots: its directories outside
+	// family.DefaultLogRoots, which LOCKLOG_EXTRA_ROOTS let in.
+	LogRoots []string
 	// Copies are host files Apply copies into the lock's profile
 	// directory before its profile add: a lockfile sftp known_hosts.
 	Copies []ProfileCopy
@@ -40,6 +44,9 @@ const (
 	LockfileKnownHosts     = "known_hosts"
 	LockfileKnownHostsPath = "~/.config/lockfile/" + LockfileKnownHosts
 )
+
+// getenv reads LOCKLOG_EXTRA_ROOTS (tests replace it).
+var getenv = os.Getenv
 
 // targetKeys are the answers that become target flags, in argv order, per
 // lock (each key is the flag name of the lock's `profile add`).
@@ -84,6 +91,12 @@ func Build(lock string, a Answers) (Lock, error) {
 			switch {
 			case lock == "locklog" && k == "only":
 				v = normDirs(v) // locklog profile add --only does not trim
+				// lox run's root rule, now: never a lock it refuses.
+				roots, err := family.AddLogRoots(strings.Split(v, ","), strings.Fields(getenv("LOCKLOG_EXTRA_ROOTS")))
+				if err != nil {
+					return Lock{}, fmt.Errorf("only: %w", err)
+				}
+				l.LogRoots = roots
 			case lock == "lockssh" && k == "allow":
 				// One --allow per rule (lockssh profile add repeats it).
 				for _, r := range splitRules(v) {

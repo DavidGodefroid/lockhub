@@ -96,11 +96,22 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// asked (fail closed).
 	var rules func(lock, instance, profile string) loxrun.ProfileRules
 	var consoleLocks []lockconsoles.Lock
+	var notStarted []loxrun.LockConsole
 	if c, err := family.Load(abs); err == nil {
-		locks = len(c.Locks)
 		st := stateDir(family.Project(family.Workspace(abs)))
 		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedSSHRules(st, c))
+		// The locks the last lox run did not start: in the header, with
+		// their reason; the others are served.
+		ns, err := family.ReadNotStarted(st)
+		if err != nil {
+			fmt.Fprintln(stderr, "lox run:", err)
+		}
 		for _, name := range c.Instances() {
+			if why, skip := ns[name]; skip {
+				notStarted = append(notStarted, loxrun.LockConsole{Instance: name, Lock: c.Locks[name].Type, Err: why})
+				continue
+			}
+			locks++
 			consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
 		}
 	}
@@ -124,7 +135,7 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		mode = loxrun.Manual
 	}
 	s := &loxrun.Session{Hub: hubc, Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
-		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules}
+		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules, NotStarted: notStarted}
 	// Only this workspace's hub's tickets are shown (#172).
 	s.CheckHub = func(ctx context.Context) error { return checkHub(ctx, hubc, *sock, ownState) }
 	// A question plays a sound of its own (not lea's), again while it waits.

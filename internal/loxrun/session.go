@@ -115,6 +115,9 @@ type Session struct {
 	// their questions (policy review, production name, passwords) are
 	// asked in a card here and answered there.
 	Consoles Consoles
+	// NotStarted are the locks lox run did not start (Err: why): the
+	// header says so, next to the consoles.
+	NotStarted []LockConsole
 	// RefusalLoop is how many identical lock-side refusals in a row, read
 	// at a console, raise an alert in the global feed (0: RefusalLoop).
 	RefusalLoop int

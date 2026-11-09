@@ -72,6 +72,19 @@ func (h *LogHost) roots() []string {
 	return DefaultLogRoots
 }
 
+// forLock is h with lock l's reviewed log_roots added to its roots.
+func (h *LogHost) forLock(l Lock) *LogHost {
+	if len(l.LogRoots) == 0 {
+		return h
+	}
+	var c LogHost
+	if h != nil {
+		c = *h
+	}
+	c.Roots = append(slices.Clone(h.roots()), l.LogRoots...)
+	return &c
+}
+
 func (h *LogHost) journals() []string {
 	if h != nil && h.Journals != nil {
 		return h.Journals
@@ -265,13 +278,66 @@ func (pl *planner) reach(dir, file string) {
 	pl.p.Warnings = append(pl.p.Warnings, fmt.Sprintf("the console cannot read %s (its group is not one it may join: %s)", file, strings.Join(logGroups, ", ")))
 }
 
-func (pl *planner) underRoot(d string) bool {
-	for _, r := range pl.h.roots() {
-		if d == r || strings.HasPrefix(d, r+"/") {
-			return true
+// LockLogRoots are the roots a locklog lock's file sources may be bound
+// from: DefaultLogRoots and the lock's reviewed log_roots.
+func LockLogRoots(l Lock) []string {
+	return append(slices.Clone(DefaultLogRoots), l.LogRoots...)
+}
+
+// CheckLogRootName checks a log root as the launcher takes one from
+// LOCKLOG_EXTRA_ROOTS: an absolute clean directory other than /, without
+// a glob character, a space or a character a mount cannot carry.
+func CheckLogRootName(r string) error {
+	switch {
+	case r == "/":
+		return errors.New("/ cannot be a log root")
+	case !strings.HasPrefix(r, "/") || path.Clean(r) != r:
+		return fmt.Errorf("%s is not an absolute clean path", r)
+	case strings.ContainsAny(r, "*?[ \t") || !mountSafe(r):
+		return fmt.Errorf("%s holds a glob character, a space or a character a mount cannot carry", r)
+	}
+	return nil
+}
+
+// AddLogRoots is lox add's check of a locklog lock's directories (its
+// profile add --only), with the same rule lox run applies: each must be
+// under DefaultLogRoots or under one of extra (LOCKLOG_EXTRA_ROOTS, which
+// locklog profile add honours), or lox add refuses it. It returns the
+// lock's log_roots: the directories outside DefaultLogRoots, which lox
+// run then allows (reviewed), and nothing wider.
+func AddLogRoots(dirs, extra []string) ([]string, error) {
+	roots := slices.Clone(DefaultLogRoots)
+	for _, r := range extra {
+		if err := CheckLogRootName(r); err != nil {
+			return nil, fmt.Errorf("LOCKLOG_EXTRA_ROOTS: %w", err)
+		}
+		roots = append(roots, r)
+	}
+	var out []string
+	for _, d := range dirs {
+		if err := CheckLogRootName(d); err != nil {
+			return nil, err
+		}
+		if err := UnderLogRoot(d, roots); err != nil {
+			return nil, fmt.Errorf("%w; a human can add one with LOCKLOG_EXTRA_ROOTS", err)
+		}
+		if UnderLogRoot(d, DefaultLogRoots) != nil && !slices.Contains(out, d) {
+			out = append(out, d)
 		}
 	}
-	return false
+	return out, nil
+}
+
+// UnderLogRoot is the one root check of a log directory, lox add's and
+// lox run's: dir is one of roots or under one, or the error lox run
+// stops the lock with.
+func UnderLogRoot(dir string, roots []string) error {
+	for _, r := range roots {
+		if dir == r || strings.HasPrefix(dir, r+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not under an allowed log root (%s)", dir, strings.Join(roots, " "))
 }
 
 var dockerGlob = regexp.MustCompile(`^[A-Za-z0-9_.*?][A-Za-z0-9_.*?-]*$`)
@@ -298,8 +364,9 @@ func (pl *planner) line(l string) error {
 			return fmt.Errorf("%s is not a clean path", glob)
 		case !physical(dir):
 			return fmt.Errorf("%s is not a directory with no symbolic link on its path", dir)
-		case !pl.underRoot(dir):
-			return fmt.Errorf("%s is not under an allowed log root (%s)", dir, strings.Join(pl.h.roots(), " "))
+		}
+		if err := UnderLogRoot(dir, pl.h.roots()); err != nil {
+			return err
 		}
 		pl.bind(dir, "")
 		pl.reach(dir, "")

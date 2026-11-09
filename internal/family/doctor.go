@@ -47,6 +47,20 @@ func (d *Doctor) Do(ctx context.Context) int {
 		fail("lockfamily.yaml: %v", err)
 	} else {
 		ok("lockfamily.yaml: %d lock(s): %s", len(c.Locks), strings.Join(c.Instances(), ", "))
+		// The locks the last lox run did not start: said once here, and
+		// left out of the checks of what it applied.
+		ns, err := ReadNotStarted(d.State)
+		if err != nil {
+			fail("locks not started: %v", err)
+		}
+		skip := map[string]string{}
+		for _, n := range c.Instances() {
+			if why, has := ns[n]; has {
+				fail("lock %s: not started: %s (fix it, then lox run: the other locks are served)", n, why)
+				skip[n] = why
+			}
+		}
+		c = c.without(skip)
 	}
 
 	engine := true
@@ -264,7 +278,7 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 		return slices.DeleteFunc(slices.Clone(s), func(l string) bool {
 			// The allowlists and the mount plans derive from the
 			// profiles, not from the yaml.
-			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l) || logPlanLine.MatchString(l)
+			return strings.Contains(l, " key ") || strings.HasPrefix(l, "profile ") || strings.HasPrefix(l, "hub secret ") || strings.HasPrefix(l, "device ") || egressLine.MatchString(l) || logPlanLine.MatchString(l) || notStartedRe.MatchString(l)
 		})
 	}
 	if ch := diff(noKeys(a.Summary), noKeys(Summary(c, "", nil, nil))); len(ch) > 0 {

@@ -755,8 +755,8 @@ unpacked in a tmpfs at the workspace's path) and checks every line it prints
 on the host:
 
 - a `file` line binds its directory: one under `/var/log` or
-  `/run/log/journal`, a real path (no link, not `/`), with no character a
-  mount cannot carry;
+  `/run/log/journal`, or under one of the lock's `log_roots` (below), a real
+  path (no link, not `/`), with no character a mount cannot carry;
 - a `journald` line binds the host's `/var/log/journal` and
   `/run/log/journal`;
 - a `docker` line binds the Docker containers root (`docker info`'s
@@ -795,6 +795,32 @@ follows `docker events` under lox run, and `lox doctor` says when the map is
 stale. A locklog lock with no applied plan (a workspace applied before lox
 run derived mount plans) is a warning in `lox doctor`: run `lox run` to
 review and apply it.
+
+A log directory outside `/var/log` and `/run/log/journal` is bound only when
+the lock's `log_roots` in `lockfamily.yaml` names it (or a directory above
+it):
+
+```yaml
+locks:
+  logs:
+    type: locklog
+    image: ghcr.io/davidgodefroid/locklog@sha256:...
+    log_roots: [/srv/app/logs]
+```
+
+`lox add locklog --only DIR` writes it for a directory outside the default
+roots that `LOCKLOG_EXTRA_ROOTS` lets in (as `locklog profile add` takes it),
+and refuses one it does not, with the message `lox run` would give: lox add
+never declares a lock lox run refuses. `log_roots` is reviewed (`lock <name>
+log roots ...`) and passed to the console as `LOCKLOG_EXTRA_ROOTS`.
+
+**A lock whose mount plan lox run refuses is not started**; the other locks
+are. lox run says `lock <name>: not started: <reason>` before the review and
+after `up:`, leaves it out of what it applies (no key at the hub, no route, no
+container), shows it in its header (`locks <name> not started: <reason>`)
+and `lox doctor` fails it with the reason. Fix the profile or `log_roots`,
+then `lox run` again: the lock's start is a change to review. `lox add` of
+that very lock (and `--rotate` of it) still stops on the refusal.
 
 ### locklog: networks and routing
 
