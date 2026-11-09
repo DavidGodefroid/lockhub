@@ -5,6 +5,14 @@ digest).
 
 ## Unreleased
 
+- `lox add` (every type, both forms) and `lox run` (`--no-start` too)
+  refuse a workspace that is not the user's or that group or others can
+  write: the workspace directory, `.lockfamily/` and each lock's
+  `.<type>/`, with one message for every type and its fix, `chmod go-w
+  <directory>` (#178). Only locklog refused it before; a workspace made
+  under umask 002 (0775) let a member of the group replace a lock's
+  reviewed configuration between two `lox run`s.
+
 - A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
   plan lox run refuses is not started, with its reason (`lock <name>: not
   started: <reason>`, in lox run's header and as a `lox doctor` failure,

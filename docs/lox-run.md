@@ -283,8 +283,10 @@ When `XDG_RUNTIME_DIR` is unset, the runtime directory is
 `$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.
 
-`lox run` refuses a `.lockfamily/` that is a link, not the user's, or
-writable by group or others, and keeps its own copy of up.json in its state
+`lox run` (`--no-start` too) and `lox add` refuse a workspace directory,
+a `.lockfamily/` or a lock's `.<type>/` that is a link, not the user's, or
+writable by group or others (a umask 002 makes them 0775), with the command
+to run: `chmod go-w <directory>`. lox run keeps its own copy of up.json in its state
 directory. It writes up.json through a fresh file renamed into place (a
 planted link is replaced, never followed).
 

@@ -67,6 +67,11 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox run:", err)
 		return 1
 	}
+	// --no-start too: the rules it serves come from the workspace.
+	if err := family.CheckWorkspace(family.Workspace(abs)); err != nil {
+		fmt.Fprintln(stderr, "lox run:", err)
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ownState := stateDir(family.Project(family.Workspace(abs)))
