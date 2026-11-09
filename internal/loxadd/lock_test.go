@@ -34,7 +34,7 @@ func TestProfileArgs(t *testing.T) {
 		{"lockfile sftp", "lockfile", Answers{"name": "drop", "credentials": "ask", "source": "sftp", "host": "sftp.example.com", "port": "22", "user": "orders",
 			"auth": "key", "key": "/home/u/.ssh/id", "known-hosts": "/home/u/.ssh/kh", "base-dir": "in"},
 			[]string{"--profile", "drop", "--credentials", "ask", "--source", "sftp", "--host", "sftp.example.com", "--port", "22", "--user", "orders",
-				"--auth", "key", "--key", "/home/u/.ssh/id", "--known-hosts", "/home/u/.ssh/kh", "--base-dir", "in"}, ""},
+				"--auth", "key", "--key", "/home/u/.ssh/id", "--known-hosts", "~/.config/lockfile/known_hosts", "--base-dir", "in"}, ""},
 		{"lockfile local, no credentials", "lockfile", Answers{"name": "local", "source": "local", "path": "/srv/files", "credentials": "vault", "vault-path": "a/b"},
 			[]string{"--profile", "local", "--source", "local", "--path", "/srv/files"}, ""},
 		{"lockhttp", "lockhttp", Answers{"name": "web", "production": "y"},

@@ -705,6 +705,22 @@ digest as a label, so a new profile recreates the console. The review shows
 shows the profile under `HostConfig.SecurityOpt`. The other locks and the hub
 keep Docker's default.
 
+## lockfile: its sftp files
+
+A lockfile console never sees the workspace: it
+reads its profile's reviewed copy at `~/.config/lockfile`
+(`/home/lockfile/.config/lockfile`, read-only), `~/` being the lockfile
+account's home, which the console expands. A `known_hosts` the profile keeps
+beside its `config.toml` is therefore named `~/.config/lockfile/known_hosts`
+(`lox add lockfile --known-hosts FILE` copies FILE to `.lockfile/known_hosts`
+and writes that path). Before the review, lox run checks an sftp profile's
+`known_hosts` and, with `auth = "key"`, its `key`, as for locksql: a path
+under `~/.config/lockfile` in the reviewed copy, a path into the workspace's
+`.lockfile` (which the console cannot open) with the path to write instead,
+any other path in the console's container (a key in its home volume gets
+the command that copies it there). A relative path is not resolved against
+the profile's directory by the console: write `~/.config/lockfile/…`.
+
 ## locklog: the mount plan and the containers map
 
 A locklog console reads host logs, so lox run mounts the directories its
