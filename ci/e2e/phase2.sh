@@ -595,6 +595,9 @@ if [ -n "$sql" ]; then
 	reaches "$p-lock-db-1" host.docker.internal "$DECOY_PORT" && die "lock-db reached the port of an unreviewed profile"
 	tty 'n\n' "$lox" up >up-edit.out 2>&1 || true
 	tr -d '\r' <up-edit.out | grep -qF "  egress       only host.docker.internal:$DECOY_PORT" || { cat up-edit.out; die "lox run did not show the edited allowlist"; }
+	# lockhub#173: the short review lists the new value, before Apply?.
+	tr -d '\r' <up-edit.out | sed -n '/^Other changes since the last lox run:/,/Apply? \[y\/N\]/p' |
+		grep -Eq "^  \+ profile locksql config\.toml:[0-9]+ port = $DECOY_PORT\$" || { cat up-edit.out; die "the short review does not list the new port before Apply?"; }
 	grep -q 'not applied' up-edit.out || die "the edited allowlist was applied without a yes"
 	[ "$(docker inspect -f '{{json .Config.Cmd}}' "$p-gwout-db-1")" = "$gw_before" ] || die "the gateway changed without a yes"
 	reaches "$p-lock-db-1" host.docker.internal "$DECOY_PORT" && die "lock-db reached the port of a declined profile"
