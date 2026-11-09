@@ -10,8 +10,9 @@ name: e2e-lox-up
 # (ci/e2e/seccomp.sh), and locklog's mount plan, containers map and lox
 # refresh (ci/e2e/locklog.sh), and a host agent's `locklog mcp`
 # (ci/e2e/locklog-agent.sh), and a host agent's `lockssh mcp` against an
-# SSH server (ci/e2e/lockssh-agent.sh). Phases 2 and 5, the first run, the seccomp
-# and the locklog checks run this commit's hub image (ci/e2e/local-hub.sh), not the latest release
+# SSH server (ci/e2e/lockssh-agent.sh), and two workspaces sharing the
+# facade socket (ci/e2e/two-workspaces.sh). Phases 2 and 5, the first run,
+# the seccomp, the two workspaces and the locklog checks run this commit's hub image (ci/e2e/local-hub.sh), not the latest release
 # that lox add pins. The upgrade (ci/e2e/upgrade.sh) runs released hubs:
 # lox run upgrading a workspace on the previous releases to the ones this
 # lox ships with.
@@ -224,6 +225,35 @@ jobs:
           export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           sh ci/e2e/seccomp.sh "$RUNNER_TEMP/bin/lox"
+
+  # Two workspaces on one runner (#172): the second's lox run and lox up
+  # refuse the first's hub on the shared facade socket, naming it; lox
+  # doctor reports it; with its own XDG_RUNTIME_DIR, both hubs run.
+  two-workspaces:
+    name: e2e two workspaces (one facade socket, the second workspace refuses the first's hub)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+      # cosign v3: lockfile's releases sign their images in its bundle
+      # format (see lockfile-seccomp).
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - run: go build -o "$RUNNER_TEMP/bin/lox" ./cmd/lox
+      - name: this commit's hub image (containerd image store, cosign shim)
+        run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
+      - name: two workspaces
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          E2E_ID: e2e-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          export XDG_STATE_HOME="$RUNNER_TEMP/state" XDG_RUNTIME_DIR="$RUNNER_TEMP/run"
+          mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+          sh ci/e2e/two-workspaces.sh "$RUNNER_TEMP/bin/lox"
 
   locklog:
     name: e2e locklog mounts (lox run binds a locklog plan, the containers map, lox refresh, networks and routing)

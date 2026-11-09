@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/egress"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
@@ -149,7 +150,20 @@ func (d *Doctor) Do(ctx context.Context) int {
 		fail("facade socket %s: owned by uid %d, not by you", sock, st.Uid)
 	} else {
 		ok("facade socket %s", sock)
-		d.hubLimits(ctx, sock, c, ok, warn, fail)
+		// Another workspace's hub on the shared socket: this workspace's
+		// hub cannot serve it and exits (#172).
+		switch err := CheckFacadeHub(ctx, approve.Dial(sock), sock, d.State); {
+		case err == nil:
+			ok("the hub on the facade socket is this workspace's")
+			d.hubLimits(ctx, sock, c, ok, warn, fail)
+		case errors.Is(err, ErrFacadeOldHub):
+			warn("the hub on the facade socket predates GET /v1/hub: lox doctor cannot tell it is this workspace's (lox run upgrades it)")
+			d.hubLimits(ctx, sock, c, ok, warn, fail)
+		case errors.Is(err, ErrFacadeUnserved):
+			fail("hub does not answer on the facade socket: %v (docker compose logs lockhub)", err)
+		default:
+			fail("%v (this workspace's hub cannot serve it, and exits)", err)
+		}
 	}
 
 	if c != nil && engine {

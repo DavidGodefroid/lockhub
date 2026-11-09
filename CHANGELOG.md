@@ -5,6 +5,17 @@ digest).
 
 ## Unreleased
 
+- Two workspaces on one host (#172): their hubs share the facade socket,
+  and a second workspace's `lox run` used to serve the first one's hub,
+  listing its tickets. The hub now answers `GET /v1/hub` (its key) on the
+  facade socket; `lox run` and `lox up` compare it with their workspace's
+  hub key before starting anything, `lox run` again whenever the hub comes
+  back, and refuse another workspace's hub, naming its workspace and
+  project (`stop it, or run this workspace with its own XDG_RUNTIME_DIR`),
+  so the second hub is never started to fail on the socket. `lox doctor`
+  reports it, and the hub's own `another hub is serving it` error points at
+  the shared runtime directory. e2e: `ci/e2e/two-workspaces.sh`.
+
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to

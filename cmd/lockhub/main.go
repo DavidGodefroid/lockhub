@@ -624,7 +624,7 @@ func listenFacade(h *hub.Hub, path, mode string, errc chan<- error, extra ...fun
 		// Do not take over a socket another hub still serves.
 		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
 			c.Close()
-			return nil, fmt.Errorf("%s: another hub is serving it", path)
+			return nil, fmt.Errorf("%s: another hub is serving it (another workspace's, sharing this $XDG_RUNTIME_DIR? lox doctor names it; give this workspace its own XDG_RUNTIME_DIR)", path)
 		}
 		os.Remove(path)
 	}
