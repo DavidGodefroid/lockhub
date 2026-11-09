@@ -304,6 +304,27 @@ func TestDoctorForeignHubOnFacade(t *testing.T) {
 	}
 }
 
+// A workspace never started (its lox run refused another workspace's
+// hub) has no state directory: lox doctor still names the hub on the
+// socket.
+func TestDoctorForeignHubOnFacadeNoState(t *testing.T) {
+	d, _ := healthy(t)
+	other := filepath.Join(filepath.Dir(d.State), "lockfamily-0ther")
+	write(t, filepath.Join(other, UpFile), `{"version":1,"project":"lockfamily-0ther","workspace":"/home/u/other","hub_key":"OTHERKEY"}`)
+	d.State = filepath.Join(filepath.Dir(d.State), "lockfamily-never")
+	hubKeyAnswer.Store("OTHERKEY")
+	t.Cleanup(func() { hubKeyAnswer.Store("") })
+	out, n := doc(t, d)
+	want := "FAIL the facade socket " + filepath.Join(d.Runtime, "lockhub", "facade.sock") +
+		" is served by the hub of workspace /home/u/other (lockfamily-0ther)"
+	if n == 0 || !strings.Contains(out, want) || !strings.Contains(out, "missing: run lox run") {
+		t.Fatalf("%d problems:\n%s", n, out)
+	}
+	if strings.Contains(out, "hub answers on the facade socket") {
+		t.Errorf("another workspace's queue is read:\n%s", out)
+	}
+}
+
 func TestDoctorOldHubOnFacade(t *testing.T) {
 	d, _ := healthy(t)
 	hubKeyAnswer.Store("404")

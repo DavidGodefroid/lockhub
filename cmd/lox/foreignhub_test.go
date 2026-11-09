@@ -89,7 +89,8 @@ func TestRunRefusesAnotherWorkspacesHub(t *testing.T) {
 }
 
 // No hub on the socket is the hub unreachable (lox run waits for it); a
-// hub before GET /v1/hub cannot say whose it is, and is refused.
+// hub before GET /v1/hub cannot say whose it is, and is served (the
+// released hubs predate it).
 func TestRunCheckHubUnservedAndOldHub(t *testing.T) {
 	dir, err := os.MkdirTemp("", "lxf") // a short path: a unix socket's is bounded
 	if err != nil {
@@ -109,7 +110,7 @@ func TestRunCheckHubUnservedAndOldHub(t *testing.T) {
 	srv := &http.Server{Handler: http.NotFoundHandler()}
 	go srv.Serve(ln)
 	t.Cleanup(func() { srv.Close() })
-	if err := checkHub(context.Background(), approve.Dial(sock), sock, state); !errors.As(err, &fh) || !strings.Contains(fh.Msg, "predates lockhub's GET /v1/hub") {
-		t.Errorf("old hub: %v", err)
+	if err := checkHub(context.Background(), approve.Dial(sock), sock, state); err != nil {
+		t.Errorf("old hub: %v, want served", err)
 	}
 }

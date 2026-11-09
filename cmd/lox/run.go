@@ -186,9 +186,12 @@ func foreignHub(ctx context.Context, c family.HubKeyAsker, sock, state string, s
 	return false
 }
 
-// checkHub is lox run's Session.CheckHub: another workspace's hub, or a
-// hub that cannot say whose it is, stops the session; no hub answering is
-// the hub unreachable.
+// checkHub is lox run's Session.CheckHub: another workspace's hub stops
+// the session; no hub answering is the hub unreachable. A hub that
+// predates GET /v1/hub (every lockhub release before it) cannot say whose
+// it is: it is served, as before #172, since refusing it would stop every
+// lox run kept on such a hub (an upgrade refused, --no-upgrade, --pin);
+// lox doctor warns about it.
 func checkHub(ctx context.Context, c family.HubKeyAsker, sock, state string) error {
 	err := family.CheckFacadeHub(ctx, c, sock, state)
 	var fe *family.ForeignFacadeError
@@ -196,7 +199,7 @@ func checkHub(ctx context.Context, c family.HubKeyAsker, sock, state string) err
 	case errors.As(err, &fe):
 		return &loxrun.ForeignHub{Msg: err.Error()}
 	case errors.Is(err, family.ErrFacadeOldHub):
-		return &loxrun.ForeignHub{Msg: fmt.Sprintf("the hub on the facade socket %s predates lockhub's GET /v1/hub, so lox run cannot tell it is this workspace's: run lox run without --no-upgrade or --pin to upgrade it, or stop the other workspace's hub", sock)}
+		return nil
 	}
 	return err
 }

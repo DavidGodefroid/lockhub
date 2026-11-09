@@ -85,6 +85,15 @@ func (d *Doctor) Do(ctx context.Context) int {
 		}
 	}
 	if !upRan {
+		// A workspace never started (lox run refused) still says whose hub
+		// serves the shared facade socket, without reading its queue (#172).
+		sock := filepath.Join(d.Runtime, "lockhub", "facade.sock")
+		if fi, err := os.Lstat(sock); err == nil && fi.Mode()&os.ModeSocket != 0 {
+			var fe *ForeignFacadeError
+			if err := CheckFacadeHub(ctx, approve.Dial(sock), sock, d.State); errors.As(err, &fe) {
+				fail("%v (this workspace's hub cannot serve it, and exits)", err)
+			}
+		}
 		d.accounts(warn)
 		return fails
 	}
