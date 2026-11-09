@@ -641,15 +641,22 @@ say "I11: lox up refuses a .lockfamily others can write, or a link"
 chmod g+w .lockfamily
 rc=0; tty 'y\n' "$lox" up >up4.out 2>&1 || rc=$?
 tr -d '\r' <up4.out | tail -3
-[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: mode 0775: writable by others than you" up4.out || die "lox up took a group-writable .lockfamily (exit $rc)"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily is writable by someone else than you (mode 0775)" up4.out && grep -qF "chmod go-w $ws/.lockfamily" up4.out || die "lox up took a group-writable .lockfamily (exit $rc)"
 grep -q "up: project " up4.out && die "lox up applied a group-writable .lockfamily"
 chmod g-w .lockfamily
 mv .lockfamily lf-real
 ln -s lf-real .lockfamily
 rc=0; tty 'y\n' "$lox" up >up5.out 2>&1 || rc=$?
 tr -d '\r' <up5.out | tail -3
-[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily: not a directory (a link?)" up5.out || die "lox up took a .lockfamily that is a link (exit $rc)"
+[ "$rc" != 0 ] && grep -qF "$ws/.lockfamily is not a directory (a symbolic link or a file)" up5.out || die "lox up took a .lockfamily that is a link (exit $rc)"
 grep -q "up: project " up5.out && die "lox up applied a .lockfamily that is a link"
 rm .lockfamily
 mv lf-real .lockfamily
+say "lox up refuses a workspace its group can write (umask 002), with the chmod to run (#178)"
+chmod g+w "$ws"
+rc=0; tty 'y\n' "$lox" up >up6.out 2>&1 || rc=$?
+tr -d '\r' <up6.out | tail -3
+[ "$rc" != 0 ] && grep -qF "chmod go-w $ws " up6.out || die "lox up took a group-writable workspace (exit $rc)"
+grep -q "up: project " up6.out && die "lox up applied a group-writable workspace"
+chmod g-w "$ws"
 echo "phase 2: OK"
