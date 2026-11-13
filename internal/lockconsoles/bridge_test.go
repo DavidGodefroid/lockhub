@@ -45,8 +45,7 @@ func (f fakeDocker) Question(_ context.Context, _, _ string) (string, error) {
 	if os.IsNotExist(err) {
 		return "", nil
 	}
-	q, _, _ := strings.Cut(strings.TrimSpace(string(b)), "\n")
-	return q, err
+	return string(b), err
 }
 
 func (f fakeDocker) Attach(ctx context.Context, _ string) *exec.Cmd {

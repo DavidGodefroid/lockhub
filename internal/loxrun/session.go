@@ -3,6 +3,7 @@ package loxrun
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -40,6 +41,9 @@ const (
 	EvAlert     EventKind = "alert"     // a lock-side refusal loop (Instance): its line in the global feed
 	EvPolicy    EventKind = "policy"    // a lock's policy state changed (Instance), as its console said
 	EvWithdrawn EventKind = "withdrawn" // the human's withdrawal of a ticket was answered (Err: refused)
+	// EvVaultToken: a Vault token went to a vault_token: cli lock
+	// (Instance; ID for a connect ticket's), VaultToken says how.
+	EvVaultToken EventKind = "vault-token"
 )
 
 // Event is one thing that happened in a session.
@@ -54,6 +58,9 @@ type Event struct {
 	Result   Result
 	Mode     Mode
 	Err      error
+	// VaultToken is VaultFromCLI or VaultTyped (EvVaultToken), never the
+	// token.
+	VaultToken string
 }
 
 // Session is one `lox run`'s decision service: Run follows the hub's
@@ -114,16 +121,35 @@ type Session struct {
 	// their questions (policy review, production name, passwords) are
 	// asked in a card here and answered there.
 	Consoles Consoles
+	// NotStarted are the locks lox run did not start (Err: why): the
+	// header says so, next to the consoles.
+	NotStarted []LockConsole
+	// Vault, if set, gives the locks with vault_token: cli the host's
+	// Vault CLI token (vault.go).
+	Vault *VaultCLI
 	// RefusalLoop is how many identical lock-side refusals in a row, read
 	// at a console, raise an alert in the global feed (0: RefusalLoop).
 	RefusalLoop int
 	// Sound calls the human when a question waits (nil: the terminal
 	// bell only, and the header shows no sound state).
 	Sound *Sound
+	// CheckHub, if set, says whether the hub answering is this
+	// workspace's own, before the first queue and again after each loss
+	// of the hub: a *ForeignHub error stops the session (Run returns it)
+	// before any of that hub's tickets is shown; any other error is the
+	// hub unreachable. Two workspaces on one host share the facade socket
+	// (#172).
+	CheckHub func(ctx context.Context) error
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
 }
+
+// ForeignHub is CheckHub's answer when the facade socket is served by a
+// hub that is not this workspace's: its tickets are never shown.
+type ForeignHub struct{ Msg string }
+
+func (e *ForeignHub) Error() string { return e.Msg }
 
 // tracked is a ticket lox run follows.
 type tracked struct {
@@ -175,6 +201,11 @@ type state struct {
 	consoles       map[string]*LockConsole
 	consoleCards   map[string]*tracked
 	consoleAnswers map[string]*consoleAnswer
+	// vaultFetches are the questions to read the host's Vault CLI token
+	// for, off the loop; vaultCLIAt when a console prompt was answered
+	// with it (by answerKey): asked again this soon, the lock refused it.
+	vaultFetches []*tracked
+	vaultCLIAt   map[string]time.Time
 	// locks are the locks' feeds read at their consoles, by instance;
 	// tab the lock tab shown ("" the global feed), reveal whether its
 	// statements show in clear (o); loops the refusal loops' lines.
@@ -239,7 +270,7 @@ func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[secretKey][]byte{},
 		ran: map[string]ranAt{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
-		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, locks: map[string]*LockFeed{}, dirty: true}
+		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, vaultCLIAt: map[string]time.Time{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.muted = s.Sound != nil && s.Sound.Off
 	return st
@@ -272,8 +303,9 @@ func (s *Session) Run(ctx context.Context) error {
 	defer cancel()
 
 	type queueMsg struct {
-		res api.QueueResult
-		err error
+		res   api.QueueResult
+		err   error
+		fatal error // another workspace's hub: the session stops
 	}
 	queueCh := make(chan queueMsg, 1)
 	wg.Add(1)
@@ -282,17 +314,36 @@ func (s *Session) Run(ctx context.Context) error {
 		var ver uint64
 		wait := time.Duration(0)
 		backoff := 500 * time.Millisecond
+		check := s.CheckHub != nil
 		for ctx.Err() == nil {
-			res, err := s.Hub.QueueAll(ctx, ver, wait)
+			var res api.QueueResult
+			var err error
+			if check {
+				err = s.CheckHub(ctx)
+				var fh *ForeignHub
+				if errors.As(err, &fh) {
+					select {
+					case queueCh <- queueMsg{fatal: err}:
+					case <-ctx.Done():
+					}
+					return
+				}
+			}
+			if err == nil {
+				check = false
+				res, err = s.Hub.QueueAll(ctx, ver, wait)
+			}
 			if ctx.Err() != nil {
 				return
 			}
 			select {
-			case queueCh <- queueMsg{res, err}:
+			case queueCh <- queueMsg{res: res, err: err}:
 			case <-ctx.Done():
 				return
 			}
 			if err != nil {
+				// The hub that comes back may not be the one that left.
+				check = s.CheckHub != nil
 				select {
 				case <-time.After(backoff):
 				case <-ctx.Done():
@@ -331,6 +382,14 @@ func (s *Session) Run(ctx context.Context) error {
 		err error
 	}
 	commandCh := make(chan commandMsg, 8)
+	type vaultMsg struct {
+		t   *tracked
+		tok []byte
+		err error
+	}
+	// Unbuffered: a token read after the loop ended is wiped, never left
+	// in a channel.
+	vaultCh := make(chan vaultMsg)
 
 	var consoleCh <-chan ConsoleEvent
 	if s.Consoles != nil {
@@ -385,6 +444,19 @@ func (s *Session) Run(ctx context.Context) error {
 			}()
 		}
 		st.commands = nil
+		for _, t := range st.vaultFetches {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tok, err := s.Vault.Token(ctx, t.instance)
+				select {
+				case vaultCh <- vaultMsg{t, tok, err}:
+				case <-ctx.Done():
+					clear(tok)
+				}
+			}()
+		}
+		st.vaultFetches = nil
 		st.syncTop()
 		if st.flushKeys {
 			st.flushKeys = false
@@ -402,6 +474,9 @@ func (s *Session) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case m := <-queueCh:
+			if m.fatal != nil {
+				return m.fatal
+			}
 			st.onQueue(m.res, m.err)
 		case k, ok := <-s.Keys:
 			if !ok {
@@ -423,6 +498,8 @@ func (s *Session) Run(ctx context.Context) error {
 			st.onDecided(m.t, m.req, m.err)
 		case m := <-commandCh:
 			st.onCommanded(m.c, m.err)
+		case m := <-vaultCh:
+			st.onVaultToken(m.t, m.tok, m.err)
 		case m := <-withdrawCh:
 			st.onWithdrawn(m.ef, m.res, m.err)
 		case m := <-stateCh:

@@ -38,6 +38,11 @@ type answer struct {
 	secret []byte
 	human  bool
 	cached bool // approved with the session's secret for the profile
+	// The host's Vault CLI token (vault_token: cli): being read for it
+	// (vaultFetching), why it could not be used (vaultWhy: the human is
+	// asked), how the token sent went (vaultHow: cli or typed).
+	vaultFetching      bool
+	vaultWhy, vaultHow string
 }
 
 func clean(s string) string { return sanitize.Terminal(s, false) }
@@ -213,7 +218,7 @@ func (st *state) onQueue(res api.QueueResult, err error) {
 		st.hubOK, st.hubErr = true, ""
 		st.observeHub(nil)
 	}
-	st.withdraw.queue = res.Tickets
+	st.withdraw.listed(res.Tickets)
 	inQueue := map[string]bool{}
 	for _, it := range res.Tickets {
 		k := key(it.Instance, it.ID)
@@ -621,6 +626,9 @@ func (st *state) onDecided(t *tracked, req api.DecideRequest, err error) {
 			st.printEntry(t.entry)
 		}
 		st.s.observe(Event{Kind: EvDecided, Instance: t.instance, ID: t.id, Approved: req.Approved, Rule: req.Rule})
+		if req.Approved && req.Secret != nil && t.vaultHow != "" && st.vaultCLI(t.instance) {
+			st.s.observe(Event{Kind: EvVaultToken, Instance: t.instance, ID: t.id, VaultToken: t.vaultHow})
+		}
 		return
 	}
 	var he *approve.HubError
@@ -1007,6 +1015,9 @@ func (st *state) approve(t *tracked) {
 			st.setFlash("this lock's key is not pinned here: no secret can be sealed to it (restart lox run to pin it); n denies")
 			return
 		}
+		if st.vaultConnect(t) {
+			return
+		}
 		t.promptKind = promptSecret
 		// The endpoint tells a profile's legs apart (its bastion, its
 		// database): each asks its own password.
@@ -1017,6 +1028,9 @@ func (st *state) approve(t *tracked) {
 		label := "password for " + of + ":"
 		if t.tk.Subject.Credential == ticket.CredentialVault {
 			label = "Vault token for " + of + " (its token expired):"
+			if t.vaultWhy != "" {
+				label = "Vault token for " + of + " (its token expired; " + clean(t.vaultWhy) + "):"
+			}
 		}
 		p := &Prompt{Label: label, Secret: true}
 		if c := st.cachedSecret(t); c != nil {
@@ -1089,6 +1103,9 @@ func (st *state) promptKey(t *tracked, k Key) {
 				// Kept for the profile only once the lock connected with it.
 				clear(t.secret)
 				t.secret = slices.Clone(secret)
+			}
+			if t.tk.Subject.Credential == ticket.CredentialVault {
+				t.vaultHow = VaultTyped
 			}
 			t.card.Prompt = nil
 			st.send(t, true, "", secret)

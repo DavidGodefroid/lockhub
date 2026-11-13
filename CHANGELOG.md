@@ -17,6 +17,40 @@ digest).
   run's networks, or when the engine's default address pools (lea's and other
   projects') have fewer than 4 subnets free, with the `default-address-pools`
   fix for `/etc/docker/daemon.json`. See `docs/networks.md`.
+
+- A console's card in `lox run` shows the context lines the lock
+  recorded with its question (#166): lockconsoles reads the question
+  file with lockkit's `console.ParseQuestion` (lockkit v0.17.0), takes
+  its first line as the prompt and the lines printed above it as the
+  context, cleaned for a terminal and capped at 16. A lock built on an
+  older lockkit records none: its context is still read from its screen.
+  Before, a question file with context became the card's whole prompt.
+  lockkit v0.17.0 also raises the defaults `lox doctor` shows: 30 plans
+  pending per lock and 30 new tickets per 5m0s.
+
+- `lox run`'s `w` overlay no longer shows again, for a moment, the
+  tickets just withdrawn (#171): the hub's list read after the
+  withdrawals could be one it made before them, and `x` then picked a
+  ticket already withdrawn instead of the selected one.
+
+- `lox add` (every type, both forms) and `lox run` (`--no-start` too)
+  refuse a workspace that is not the user's or that group or others can
+  write: the workspace directory, `.lockfamily/` and each lock's
+  `.<type>/`, with one message for every type and its fix, `chmod go-w
+  <directory>` (#178). Only locklog refused it before; a workspace made
+  under umask 002 (0775) let a member of the group replace a lock's
+  reviewed configuration between two `lox run`s.
+
+- A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
+  plan lox run refuses is not started, with its reason (`lock <name>: not
+  started: <reason>`, in lox run's header and as a `lox doctor` failure,
+  kept in the state's `not-started.json`); the other locks start and are
+  served. A locklog lock's `log_roots` (reviewed, passed to its console as
+  `LOCKLOG_EXTRA_ROOTS`) allows log directories outside `/var/log` and
+  `/run/log/journal`: `lox add locklog --only` writes it for a directory
+  `LOCKLOG_EXTRA_ROOTS` lets in, and refuses any other with lox run's
+  message, so it never declares a lock lox run refuses.
+
 - `lox run`'s short review lists a changed profile line's new value (#173):
   under `Other changes since the last lox run:` it showed only the old (`-`)
   lines of a profile, never the new (`+`) ones, so a loosening
@@ -37,6 +71,17 @@ digest).
   lockfile release`). Its release is now the newest whose image in ghcr.io
   has the pinned digest (GitHub's release list, then one registry lookup per
   release), once cosign verified the pinned image for that very tag.
+
+- Two workspaces on one host (#172): their hubs share the facade socket,
+  and a second workspace's `lox run` used to serve the first one's hub,
+  listing its tickets. The hub now answers `GET /v1/hub` (its key) on the
+  facade socket; `lox run` and `lox up` compare it with their workspace's
+  hub key before starting anything, `lox run` again whenever the hub comes
+  back, and refuse another workspace's hub, naming its workspace and
+  project (`stop it, or run this workspace with its own XDG_RUNTIME_DIR`),
+  so the second hub is never started to fail on the socket. `lox doctor`
+  reports it, and the hub's own `another hub is serving it` error points at
+  the shared runtime directory. e2e: `ci/e2e/two-workspaces.sh`.
 
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow

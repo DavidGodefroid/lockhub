@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/lockconsoles"
 	"github.com/DavidGodefroid/lockhub/internal/loxaudit"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
+	"github.com/DavidGodefroid/lockhub/internal/vaulttoken"
 )
 
 // runCmd is lox run: in its own terminal, outside any agent harness, it
@@ -66,9 +68,23 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox run:", err)
 		return 1
 	}
+	// --no-start too: the rules it serves come from the workspace.
+	if err := family.CheckWorkspace(family.Workspace(abs)); err != nil {
+		fmt.Fprintln(stderr, "lox run:", err)
+		return 1
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	ownState := stateDir(family.Project(family.Workspace(abs)))
+	hubc := approve.Dial(*sock)
 	if !*noStart {
+		// Another workspace's hub on the facade socket: refused before this
+		// workspace's hub starts and fails to serve it (#172). A hub too
+		// old to say whose it is may be this workspace's, which starting
+		// upgrades: the session checks it again.
+		if foreignHub(ctx, hubc, *sock, ownState, stderr, "run") {
+			return 1
+		}
 		r := family.QuietExec{Verbose: *verbose, Stderr: stderr}
 		u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout,
@@ -86,11 +102,28 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// asked (fail closed).
 	var rules func(lock, instance, profile string) loxrun.ProfileRules
 	var consoleLocks []lockconsoles.Lock
+	var notStarted []loxrun.LockConsole
+	var vault *loxrun.VaultCLI
 	if c, err := family.Load(abs); err == nil {
-		locks = len(c.Locks)
 		st := stateDir(family.Project(family.Workspace(abs)))
+		if v, err := family.AppliedVaultCLI(st); err != nil {
+			fmt.Fprintln(stderr, "lox run: vault_token: cli is not served (Vault tokens are asked):", err)
+		} else if v != nil {
+			vault = vaultCLI(v, c)
+		}
 		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedSSHRules(st, c))
+		// The locks the last lox run did not start: in the header, with
+		// their reason; the others are served.
+		ns, err := family.ReadNotStarted(st)
+		if err != nil {
+			fmt.Fprintln(stderr, "lox run:", err)
+		}
 		for _, name := range c.Instances() {
+			if why, skip := ns[name]; skip {
+				notStarted = append(notStarted, loxrun.LockConsole{Instance: name, Lock: c.Locks[name].Type, Err: why})
+				continue
+			}
+			locks++
 			consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
 		}
 	}
@@ -113,8 +146,10 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if *manual {
 		mode = loxrun.Manual
 	}
-	s := &loxrun.Session{Hub: approve.Dial(*sock), Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
-		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules}
+	s := &loxrun.Session{Hub: hubc, Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
+		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules, NotStarted: notStarted, Vault: vault}
+	// Only this workspace's hub's tickets are shown (#172).
+	s.CheckHub = func(ctx context.Context) error { return checkHub(ctx, hubc, *sock, ownState) }
 	// A question plays a sound of its own (not lea's), again while it waits.
 	snd, warns := loxrun.SoundFromEnv(os.LookupEnv, loxrun.SystemHost(runtime.GOOS))
 	for _, w := range warns {
@@ -142,8 +177,11 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	journal(loxrun.RunEvent{Event: loxrun.RunStart, Mode: mode.String()})
 	s.Observe = func(e loxrun.Event) {
-		if e.Kind == loxrun.EvMode {
+		switch e.Kind {
+		case loxrun.EvMode:
 			journal(loxrun.RunEvent{Event: loxrun.RunMode, Mode: e.Mode.String()})
+		case loxrun.EvVaultToken:
+			journal(loxrun.RunEvent{Event: loxrun.RunVaultToken, Instance: e.Instance, Vault: e.VaultToken})
 		}
 	}
 	if tm.Full {
@@ -160,6 +198,36 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stdout, "lox run stopped: no decision is served any more; tickets wait at the hub for the next lox run (fail closed), and the locks close their connections once idle")
 	return 0
+}
+
+// foreignHub says (on stderr, as lox cmd) when another workspace's hub
+// serves the facade socket, before this workspace's hub is started: it
+// could not serve the socket (#172).
+func foreignHub(ctx context.Context, c family.HubKeyAsker, sock, state string, stderr io.Writer, cmd string) bool {
+	var fe *family.ForeignFacadeError
+	if err := family.CheckFacadeHub(ctx, c, sock, state); errors.As(err, &fe) {
+		fmt.Fprintf(stderr, "lox %s: %v\n", cmd, err)
+		return true
+	}
+	return false
+}
+
+// checkHub is lox run's Session.CheckHub: another workspace's hub stops
+// the session; no hub answering is the hub unreachable. A hub that
+// predates GET /v1/hub (every lockhub release before it) cannot say whose
+// it is: it is served, as before #172, since refusing it would stop every
+// lox run kept on such a hub (an upgrade refused, --no-upgrade, --pin);
+// lox doctor warns about it.
+func checkHub(ctx context.Context, c family.HubKeyAsker, sock, state string) error {
+	err := family.CheckFacadeHub(ctx, c, sock, state)
+	var fe *family.ForeignFacadeError
+	switch {
+	case errors.As(err, &fe):
+		return &loxrun.ForeignHub{Msg: err.Error()}
+	case errors.Is(err, family.ErrFacadeOldHub):
+		return nil
+	}
+	return err
 }
 
 // profileRules are the engine's per-profile rules from the locks' own
@@ -188,6 +256,35 @@ func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*f
 		}
 		return nil
 	}
+}
+
+// vaultCLI serves vault_token: cli (lockhub#124) to the locks the last
+// confirmed lox run reviewed with it (v) that lockfamily.yaml (c) still
+// sets it on: dropping it from the file takes effect without a review.
+// The host's token is checked at the reviewed Vault, on the lock's
+// reviewed vault_path, with the reviewed CA, before each use.
+func vaultCLI(v *family.VaultCLI, c *family.Config) *loxrun.VaultCLI {
+	locks := map[string]bool{}
+	for n := range v.Locks {
+		if l, ok := c.Locks[n]; ok && l.Vault && l.VaultToken == family.VaultTokenCLI {
+			locks[n] = true
+		}
+	}
+	if len(locks) == 0 {
+		return nil
+	}
+	return &loxrun.VaultCLI{Address: v.Address, Locks: locks, Token: func(ctx context.Context, instance string) ([]byte, error) {
+		path := v.Locks[instance]
+		if path == "" {
+			return nil, errors.New("the lock's reviewed profile names no vault_path")
+		}
+		ca, err := v.CA()
+		if err != nil {
+			return nil, err
+		}
+		src := &vaulttoken.Source{Address: v.Address, Namespace: v.Namespace, CA: ca}
+		return src.Token(ctx, []string{path})
+	}}
 }
 
 // upgrader is lox run's automatic upgrade: to the releases this lox

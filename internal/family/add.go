@@ -26,6 +26,9 @@ type AddOptions struct {
 	// Vault writes vault: true (the lock reads its credentials from the
 	// vault: block).
 	Vault bool
+	// LogRoots is a locklog lock's log_roots (optional, see
+	// Lock.LogRoots).
+	LogRoots []string
 }
 
 // SetVault writes (or replaces) the top-level vault: block of the
@@ -119,6 +122,13 @@ func Add(path string, o AddOptions) error {
 	if o.Vault {
 		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "vault"},
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"})
+	}
+	if len(o.LogRoots) > 0 {
+		roots := &yaml.Node{Kind: yaml.SequenceNode}
+		for _, r := range o.LogRoots {
+			roots.Content = append(roots.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: r, Tag: "!!str"})
+		}
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "log_roots"}, roots)
 	}
 	locks.Content = append(locks.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: o.Name}, entry)
 	out, c, err := encodeValid(&doc)

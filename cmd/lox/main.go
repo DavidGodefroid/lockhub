@@ -403,8 +403,12 @@ func upCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	state := stateDir(family.Project(family.Workspace(abs)))
+	if !*dry && foreignHub(ctx, approve.Dial(defaultSocket()), defaultSocket(), state, stderr, "up") {
+		return 1
+	}
 	r := family.QuietExec{Verbose: *verbose, Stderr: stderr}
-	u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
+	u := &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 		User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout, DryRun: *dry,
 		Pin: *pin, Rotate: rotate, Review: *review}
 	if err := u.Do(ctx); err != nil {

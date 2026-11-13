@@ -3,11 +3,13 @@ package loxrun
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"io"
+	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
@@ -19,37 +21,8 @@ import (
 func TestSessionWithdraw(t *testing.T) {
 	lk := newLockKey()
 	hub := newFakeHub()
-	var frames []string
-	var mu sync.Mutex
-	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
-		s.Size = func() (int, int) { return 120, 30 }
-		s.Style = Style{Unicode: true}
-		s.Out = writerFunc(func(p []byte) {
-			mu.Lock()
-			frames = append(frames, string(p))
-			mu.Unlock()
-		})
-	})
-	last := func(want string) string {
-		h.t.Helper()
-		deadline := time.Now().Add(3 * time.Second)
-		for time.Now().Before(deadline) {
-			mu.Lock()
-			for i := len(frames) - 1; i >= 0; i-- {
-				if strings.Contains(frames[i], want) {
-					f := frames[i]
-					mu.Unlock()
-					return f
-				}
-			}
-			mu.Unlock()
-			time.Sleep(10 * time.Millisecond)
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		t.Fatalf("no frame with %q; last:\n%s", want, frames[len(frames)-1])
-		return ""
-	}
+	var sc *screen
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) { sc = newScreen(t, s, 120, 30) })
 	var stuck []string
 	for i := 0; i < 3; i++ {
 		it := lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT id FROM orders WHERE id < 2", nil)
@@ -64,16 +37,15 @@ func TestSessionWithdraw(t *testing.T) {
 	hub.push(upd)
 	h.wait(EvQuestion, upd.ID)
 
-	h.keys <- R('w')
-	f := last("pending at the hub")
+	f := sc.press(R('w'))
+	sc.want(f, "pending at the hub")
 	for _, want := range []string{"4 tickets", "shop 4", "(3 unverifiable)", "10m", "unverifiable", "asked", "UPDATE orders"} {
 		if !strings.Contains(f, want) {
 			t.Errorf("overlay lacks %q:\n%s", want, f)
 		}
 	}
-	h.keys <- R('U')
-	last("withdraw all 3 unverifiable tickets of shop? [y/N]")
-	h.keys <- R('y')
+	sc.want(sc.press(R('U')), "withdraw all 3 unverifiable tickets of shop? [y/N]")
+	sc.keys <- R('y')
 	left := map[string]bool{stuck[0]: true, stuck[1]: true, stuck[2]: true}
 	for len(left) > 0 { // withdrawn concurrently: in any order
 		e := h.wait(EvWithdrawn, "")
@@ -91,28 +63,50 @@ func TestSessionWithdraw(t *testing.T) {
 			t.Errorf("withdrawal of %s: %+v", id, r)
 		}
 	}
-	last("withdrew 3 tickets")
+	sc.want(sc.now(), "withdrew 3 tickets")
 
-	h.keys <- R('x')
-	last("withdraw ticket " + upd.ID + " of shop (asked")
-	h.keys <- R('n')
-	last("nothing withdrawn")
+	sc.want(sc.press(R('x')), "withdraw ticket "+upd.ID+" of shop (asked")
+	sc.want(sc.press(R('n')), "nothing withdrawn")
 	if _, ok := hub.withdrawals()[upd.ID]; ok {
 		t.Fatal("n withdrew the ticket")
 	}
-	h.keys <- R('x')
-	last("withdraw ticket " + upd.ID)
-	h.keys <- R('y')
+	sc.want(sc.press(R('x')), "withdraw ticket "+upd.ID)
+	sc.keys <- R('y')
 	h.wait(EvWithdrawn, upd.ID)
 	if _, ok := hub.decision(upd.ID); ok {
 		t.Error("a withdrawn question was decided too")
 	}
-	f = last("withdrew 1 ticket")
+	f = sc.now()
+	sc.want(f, "withdrew 1 ticket")
 	if strings.Contains(f, "UPDATE orders SET paid = true\n") {
 		t.Errorf("the question's card is still up:\n%s", f)
 	}
-	h.keys <- Key{Code: KeyEsc}
-	last("(withdrawn by you)")
+	sc.want(sc.press(Key{Code: KeyEsc}), "(withdrawn by you)")
+}
+
+// A queue the hub listed before a withdrawal, read by the loop after
+// it (the long poll answered while the withdrawals were in flight),
+// does not bring the withdrawn ticket back into the w overlay (#171).
+func TestWithdrawStaleQueue(t *testing.T) {
+	lk := newLockKey()
+	st := newState(&Session{Size: func() (int, int) { return 120, 30 }, Out: io.Discard, Display: "david",
+		LockKeys: map[string]ed25519.PublicKey{"shop": lk.pub}})
+	var items []api.QueueItem
+	for i := 0; i < 2; i++ {
+		it := lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT id FROM orders", nil)
+		it.Facades = []string{"mobile"}
+		items = append(items, it)
+	}
+	st.onQueue(api.QueueResult{Tickets: slices.Clone(items), Version: 2}, nil)
+	st.onWithdrawn(withdrawEffect{"shop", items[0].ID}, api.WithdrawResult{Told: true}, nil)
+	st.onQueue(api.QueueResult{Tickets: slices.Clone(items), Version: 2}, nil) // listed before the withdrawal
+	if rows := st.withdrawRows(); len(rows) != 1 || rows[0].ID != items[1].ID {
+		t.Fatalf("rows after a stale queue: %+v", rows)
+	}
+	st.onQueue(api.QueueResult{Tickets: items[1:], Version: 3}, nil)
+	if len(st.withdraw.gone) != 0 {
+		t.Errorf("gone kept after the hub listed without it: %v", st.withdraw.gone)
+	}
 }
 
 // The w overlay with nothing pending says so, and shows its keys.

@@ -166,6 +166,10 @@ func addCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return 1
 	}
 	ws := family.Workspace(abs)
+	if err := family.CheckWorkspace(ws); err != nil {
+		fmt.Fprintln(stderr, "lox add:", err)
+		return 1
+	}
 	project := family.Project(ws)
 	state := stateDir(project)
 	draftPath := filepath.Join(state, "add-"+typ+".json")
@@ -327,6 +331,10 @@ func declareCmd(o family.AddOptions, file, version string, stdout, stderr io.Wri
 	if !slices.Contains(family.Types, o.Type) {
 		fmt.Fprintf(stderr, "lox add: unknown type %q: want one of %s\n", o.Type, strings.Join(family.Types, ", "))
 		return 2
+	}
+	if err := family.CheckWorkspace(family.Workspace(abs)); err != nil {
+		fmt.Fprintln(stderr, "lox add:", err)
+		return 1
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

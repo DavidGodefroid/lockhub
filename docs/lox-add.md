@@ -19,6 +19,12 @@ the lock in `lockfamily.yaml`, pinned by digest, and runs nothing else (see
 
 ## What it does
 
+`lox add`, both forms and every type, first refuses a workspace that is not
+yours or that group or others can write (the workspace directory, its
+`.lockfamily/` or a lock's `.<type>/`): others could replace a lock's
+reviewed configuration. The message names the directory and the fix,
+`chmod go-w <directory>`.
+
 At a terminal, `lox add TYPE` runs these steps in order:
 
 1. **The questions** (below). Ctrl-C here ends `lox add` with nothing written.
@@ -214,6 +220,11 @@ gathers; it never takes a secret. A remote store (Loki, Elasticsearch,
 OpenSearch) is written in `.locklog/config.toml` by hand (locklog's README).
 `lox run` then derives the lock's mount plan and auto rules from the reviewed
 copy and shows both ([lox-run.md](lox-run.md#locklog-the-mount-plan-and-the-containers-map)).
+`--only` takes directories under `/var/log` or `/run/log/journal`, or under a
+root of `LOCKLOG_EXTRA_ROOTS`; such a directory is written as the lock's
+`log_roots`, which `lox run` reviews and allows. Any other is refused here,
+before anything is written, with the message `lox run` would stop the lock
+with.
 Local sources need Linux with a rootful Docker engine 19.03 or later.
 
 ### lockssh
@@ -302,6 +313,33 @@ the next ones do not.
 No secret is ever written to disk, to `lockfamily.yaml`, to the draft or to a
 command line. The Vault token is typed at the console's start, masked, under
 `lox attach` (step 5), never at a `lox add` question.
+
+### The host's Vault CLI token: `vault_token`
+
+A lock with `vault: true` may take the token of the Vault CLI you are already
+logged in with on the host (`vault login`, OIDC, a token helper) instead of a
+typed one. `lox add` writes nothing for it: edit `lockfamily.yaml` yourself.
+
+```yaml
+locks:
+  inventory:
+    type: locksql
+    image: ghcr.io/davidgodefroid/locksql@sha256:…
+    vault: true
+    vault_token: cli   # ask (the default): typed; cli: the host's Vault CLI
+```
+
+`vault_token` is valid only with `vault: true` and takes `ask` (the default,
+today's behaviour) or `cli`. `cli` is a loosening: the next `lox run` shows
+`vault token   from the host's Vault CLI` in the lock's review block and waits
+for your yes like any reviewed change. Back to `ask` (or the line removed),
+`lox run` stops using the CLI's token at once, even before the review.
+
+With `cli`, `lox run` (never the lock, the hub or an agent) reads the token
+each time the lock needs one, checks it, and hands it to the lock; when the
+token is missing or unusable, it asks you as before and says why. See
+[lox-run.md](lox-run.md#consoles-under-compose) for the sources, the checks
+and the fallback.
 
 To write or change the shared block by itself:
 

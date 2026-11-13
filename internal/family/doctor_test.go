@@ -3,6 +3,7 @@ package family
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/DavidGodefroid/lockkit/hubclient"
 )
 
 // answers is a Runner that answers by substring of the command line.
@@ -38,7 +41,14 @@ func (a *answers) Run(_ context.Context, _ []byte, name string, args ...string) 
 // queueAnswer is what the fake hub answers to GET /v1/queue.
 var queueAnswer atomic.Value
 
-func init() { queueAnswer.Store(`{"tickets":[],"version":1}`) }
+// hubKeyAnswer is the key the fake hub answers to GET /v1/hub: "" is
+// the workspace's own (its hub.pub), "404" a hub before GET /v1/hub.
+var hubKeyAnswer atomic.Value
+
+func init() {
+	queueAnswer.Store(`{"tickets":[],"version":1}`)
+	hubKeyAnswer.Store("")
+}
 
 // healthy lays out what a confirmed lox up leaves: state, keys, socket.
 func healthy(t *testing.T) (*Doctor, *answers) {
@@ -60,7 +70,22 @@ func healthy(t *testing.T) (*Doctor, *answers) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
+	state := filepath.Join(w.dir, "state")
 	go http.Serve(l, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/hub" {
+			k := hubKeyAnswer.Load().(string)
+			if k == "404" {
+				http.NotFound(w, r)
+				return
+			}
+			if k == "" {
+				b, _ := os.ReadFile(filepath.Join(state, "hub.pub"))
+				k = strings.TrimSpace(string(b))
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"key":%q}`, k)
+			return
+		}
 		if r.URL.Path != "/v1/queue" {
 			http.NotFound(w, r)
 			return
@@ -97,7 +122,7 @@ func healthy(t *testing.T) (*Doctor, *answers) {
 		"network inspect":                    "true\n",
 		"{{json .NetworkSettings.Networks}}": `{"p_lockhub":{},"p_egress":{}}`,
 	}}
-	return &Doctor{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: run, Root: root, Run: a}, a
+	return &Doctor{File: w.file, State: state, Runtime: run, Root: root, Run: a}, a
 }
 
 func doc(t *testing.T, d *Doctor) (string, int) {
@@ -114,7 +139,7 @@ func TestDoctorHealthy(t *testing.T) {
 		t.Fatalf("%d problems:\n%s", n, out)
 	}
 	for _, want := range []string{"lockfamily.yaml", "engine", "hub key", "facade socket", "lock-events running", "internal",
-		"hub answers on the facade socket: 0 ticket(s) pending", "at most 20 plans pending", "10 new tickets per 5m0s", "at most 50 per lock", "one agent can use it up", "pending crm-prod on the hub: 0 of 20"} {
+		"the hub on the facade socket is this workspace's", "hub answers on the facade socket: 0 ticket(s) pending", fmt.Sprintf("at most %d plans pending", hubclient.MaxPending), fmt.Sprintf("%d new tickets per %s", hubclient.RateN, hubclient.RateWindow), "at most 50 per lock", "one agent can use it up", fmt.Sprintf("pending crm-prod on the hub: 0 of %d", hubclient.MaxPending)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q:\n%s", want, out)
 		}
@@ -218,11 +243,12 @@ func TestDoctorWritesNothing(t *testing.T) {
 
 func TestDoctorHubAnswersAndCaps(t *testing.T) {
 	t.Cleanup(func() { queueAnswer.Store(`{"tickets":[],"version":1}`) })
-	tickets := `{"tickets":[` + strings.Repeat(`{"instance":"crm-prod"},`, 16) + `{"instance":"events"}],"version":3}`
+	near := hubclient.MaxPending * 4 / 5 // the warning's threshold
+	tickets := `{"tickets":[` + strings.Repeat(`{"instance":"crm-prod"},`, near) + `{"instance":"events"}],"version":3}`
 	queueAnswer.Store(tickets)
 	d, _ := healthy(t)
 	out, n := doc(t, d)
-	if n != 0 || !strings.Contains(out, "17 ticket(s) pending") || !strings.Contains(out, "warn pending crm-prod on the hub: 16 of 20") || !strings.Contains(out, "near the cap") || !strings.Contains(out, "ok   pending events on the hub: 1 of 20") {
+	if n != 0 || !strings.Contains(out, fmt.Sprintf("%d ticket(s) pending", near+1)) || !strings.Contains(out, fmt.Sprintf("warn pending crm-prod on the hub: %d of %d", near, hubclient.MaxPending)) || !strings.Contains(out, "near the cap") || !strings.Contains(out, fmt.Sprintf("ok   pending events on the hub: 1 of %d", hubclient.MaxPending)) {
 		t.Errorf("%d:\n%s", n, out)
 	}
 	queueAnswer.Store("down")
@@ -259,5 +285,55 @@ func TestDoctorStaleSocket(t *testing.T) {
 	}
 	if out, n := doc(t, d); n == 0 || !strings.Contains(out, "FAIL hub does not answer on the facade socket") {
 		t.Errorf("%d:\n%s", n, out)
+	}
+}
+
+// Another workspace's hub on the shared facade socket (#172): lox doctor
+// names its workspace, from that workspace's state directory.
+func TestDoctorForeignHubOnFacade(t *testing.T) {
+	d, _ := healthy(t)
+	other := filepath.Join(filepath.Dir(d.State), "lockfamily-0ther")
+	write(t, filepath.Join(other, UpFile), `{"version":1,"project":"lockfamily-0ther","workspace":"/home/u/other","hub_key":"OTHERKEY"}`)
+	hubKeyAnswer.Store("OTHERKEY")
+	t.Cleanup(func() { hubKeyAnswer.Store("") })
+	out, n := doc(t, d)
+	want := "FAIL the facade socket " + filepath.Join(d.Runtime, "lockhub", "facade.sock") +
+		" is served by the hub of workspace /home/u/other (lockfamily-0ther); stop it, or run this workspace with its own XDG_RUNTIME_DIR"
+	if n == 0 || !strings.Contains(out, want) {
+		t.Fatalf("%d problems:\n%s", n, out)
+	}
+	if strings.Contains(out, "hub answers on the facade socket") {
+		t.Errorf("another workspace's queue is read:\n%s", out)
+	}
+}
+
+// A workspace never started (its lox run refused another workspace's
+// hub) has no state directory: lox doctor still names the hub on the
+// socket.
+func TestDoctorForeignHubOnFacadeNoState(t *testing.T) {
+	d, _ := healthy(t)
+	other := filepath.Join(filepath.Dir(d.State), "lockfamily-0ther")
+	write(t, filepath.Join(other, UpFile), `{"version":1,"project":"lockfamily-0ther","workspace":"/home/u/other","hub_key":"OTHERKEY"}`)
+	d.State = filepath.Join(filepath.Dir(d.State), "lockfamily-never")
+	hubKeyAnswer.Store("OTHERKEY")
+	t.Cleanup(func() { hubKeyAnswer.Store("") })
+	out, n := doc(t, d)
+	want := "FAIL the facade socket " + filepath.Join(d.Runtime, "lockhub", "facade.sock") +
+		" is served by the hub of workspace /home/u/other (lockfamily-0ther)"
+	if n == 0 || !strings.Contains(out, want) || !strings.Contains(out, "missing: run lox run") {
+		t.Fatalf("%d problems:\n%s", n, out)
+	}
+	if strings.Contains(out, "hub answers on the facade socket") {
+		t.Errorf("another workspace's queue is read:\n%s", out)
+	}
+}
+
+func TestDoctorOldHubOnFacade(t *testing.T) {
+	d, _ := healthy(t)
+	hubKeyAnswer.Store("404")
+	t.Cleanup(func() { hubKeyAnswer.Store("") })
+	out, n := doc(t, d)
+	if n != 0 || !strings.Contains(out, "warn the hub on the facade socket predates GET /v1/hub") {
+		t.Fatalf("%d problems:\n%s", n, out)
 	}
 }

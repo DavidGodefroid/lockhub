@@ -64,7 +64,12 @@ profile's session connection, endpoints and password by hand (the profile of
 the question on top; with no question up, every profile). `y` on a connect
 always shows the password prompt: Enter alone keeps the session's password,
 anything typed replaces it. A Vault token is asked
-each time the lock asks. The header lists the connected profiles (a connect
+each time the lock asks. For a lock with `vault_token: cli` the card keeps
+its y/n, but `y` reads the host's Vault CLI token again (a new `vault login`
+since is picked up), checks it, and seals it in place of the prompt; the
+prompt comes only when that token is unusable, with the reason in it
+(`Vault token for … (its token expired; the Vault CLI's token is expired or
+revoked …):`). See [Consoles under compose](#consoles-under-compose). The header lists the connected profiles (a connect
 ticket the lock acted on) with their age, until they have been idle for the
 locks' idle timeout.
 
@@ -257,12 +262,36 @@ honours it); a compose implementation that ignores it makes the missing
 directory as before (as root under a rootful engine), the hub refuses it
 and its error names the fix, and the next `lox run` repairs it.
 
+### Two workspaces on one host
+
+Every workspace's hub serves the same `$XDG_RUNTIME_DIR/lockhub/facade.sock`:
+while one workspace's hub serves it, another's cannot (its hub exits with
+`another hub is serving it`). So before it starts anything, and again
+whenever the hub comes back after a loss, `lox run` asks the hub on the
+socket for its key (`GET /v1/hub`) and compares it with its own
+workspace's (`hub.pub` in its state directory, the `hub_key` of up.json).
+Another workspace's hub is refused: `lox run` (and `lox up`) stop before
+showing any of its tickets, naming it from that workspace's state directory:
+
+```
+lox run: the facade socket /run/user/1000/lockhub/facade.sock is served by the hub of workspace /home/you/Documents (lockfamily-177a1535); stop it, or run this workspace with its own XDG_RUNTIME_DIR
+```
+
+`lox doctor` fails with the same line. A hub too old to answer `GET /v1/hub`
+cannot say whose it is: `lox run` upgrades it (unless `--no-upgrade` or
+`--pin` keep it), and refuses to serve it otherwise. To run two workspaces at
+once, give the second its own runtime directory, for every `lox` command of
+that workspace: `XDG_RUNTIME_DIR=~/.run-b lox run` (lea's deck and
+`lox approve` then need the same `XDG_RUNTIME_DIR`, or `--socket`).
+
 When `XDG_RUNTIME_DIR` is unset, the runtime directory is
 `$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.
 
-`lox run` refuses a `.lockfamily/` that is a link, not the user's, or
-writable by group or others, and keeps its own copy of up.json in its state
+`lox run` (`--no-start` too) and `lox add` refuse a workspace directory,
+a `.lockfamily/` or a lock's `.<type>/` that is a link, not the user's, or
+writable by group or others (a umask 002 makes them 0775), with the command
+to run: `chmod go-w <directory>`. lox run keeps its own copy of up.json in its state
 directory. It writes up.json through a fresh file renamed into place (a
 planted link is replaced, never followed).
 
@@ -380,7 +409,10 @@ lea's checks, in POSIX sh:
   line; in `.mcp.json`, `"args": ["mcp", "--instance", "NAME"]`). With
   several and no `--instance`, the error names them.
 - `socket_volume` is `<project>_<instance>-run`, `client_gid` the image's
-  clients group.
+  clients group. `lox run` always writes the image's clients group; a
+  launcher given an empty `client_gid` skips only that comparison, and every
+  other check still applies (the volume is proved by Docker's labels, not by
+  the gid).
 - Docker confirms the volume: `docker volume inspect` prints its labels
   `com.docker.compose.project`, `com.docker.compose.volume`
   (`<instance>-run`), `dev.lockfamily.role` (`socket`),
@@ -398,8 +430,9 @@ lea's checks, in POSIX sh:
 
 Without up.json, or with a lock or volume it cannot trust, the launcher
 says why and what to do (`lox run`), exits 2 (as a client that finds no
-console) and runs nothing: it never falls back to the fixed `<type>-run`
-volume of the consoles the launchers used to start. up.json only names the
+console) and runs nothing, except `<lock> doctor`, which still runs and
+reports why the lock cannot be used. It never falls back to the fixed
+`<type>-run` volume of the consoles the launchers used to start. up.json only names the
 lock: what is mounted is what Docker's labels prove. `.mcp.json` stays
 `<lock> mcp`.
 
@@ -412,7 +445,8 @@ workspace, whose profile directory lox run's console serves.
 
 lockhub's end-to-end test (`ci/e2e/phase2.sh`, run by the e2e workflow's
 phase 2 on every pull request) drives both launchers as `.mcp.json` starts
-them, over MCP on stdio, against the images `lox add` pins: `locksql mcp`
+them (`<lock> init claude` writes it; the test runs the command and args
+it reads there), over MCP on stdio, against the images `lox add` pins: `locksql mcp`
 plans and runs a query and, once the ticket is approved at `lox approve`,
 gets its rows; `lockmq mcp` reads a stream (RabbitMQ) and, once approved,
 gets its message. `ci/e2e/locklog-agent.sh` does the same for locklog:
@@ -470,7 +504,8 @@ lock shop-db (locksql)
 ```
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
-`credentials` then reads `vault, <path>`. A profile that changed since the last
+`credentials` then reads `vault, <path>`; with `vault_token: cli`, a `vault
+token   from the host's Vault CLI` row follows the environment. A profile that changed since the last
 `lox run` says so, and its changed lines are listed under `Other changes since
 the last lox run:`, each with its old value (`-`) and its new one (`+`); an
 added line shows `+`, a removed one `-`. Every summary line that no block
@@ -698,8 +733,49 @@ Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
 names a `ca_file`) from the workspace's one `vault:` block; its profile names
 its own Vault path. The review shows the environment and the path of each such
 lock. The token is typed at the console's start (`lox attach`), never
-written anywhere. See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
+written anywhere, or, with `vault_token: cli`, taken from the host's Vault
+CLI (below). See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
 set`.
+
+**The host's Vault CLI token (`vault_token: cli`).** For such a lock, lox run
+answers its console's `Vault token for <vault.address>:` prompt itself, when
+the address is the reviewed one exactly; any other prompt is still yours. The
+feed line says `vault token: from CLI` and no card waits. Everything comes
+from the last confirmed review (`applied.json`), never from the workspace's
+`lockfamily.yaml`, which agents can write: the lock must be `vault_token: cli`
+there and still in the file, and the token is checked at the reviewed address
+and namespace, on the lock's reviewed `vault_path`, with the reviewed
+`ca_file` (its digest checked again).
+
+- **Sources, in this order.** (a) `vault print token`, run by lox run with
+  `VAULT_ADDR` and `VAULT_NAMESPACE` set from the `vault:` block, which
+  honours your token helper; 5 s at most, its output and errors never shown or
+  logged. (b) Without a `vault` binary on `PATH`, `~/.vault-token`, only if it
+  is a regular file (a symbolic link is refused) owned by you, mode 0600 or
+  stricter, at most 4 KiB. `VAULT_TOKEN` in lox's own environment is never
+  used (it is removed from the CLI's environment too): too easy to inherit by
+  accident.
+- **Checks, before each use.** `GET /v1/auth/token/lookup-self` with
+  `X-Vault-Token` (and `X-Vault-Namespace`): its `ttl` is 0 (no expiry) or at
+  least 60 s. Then `POST /v1/sys/capabilities-self` on the lock's reviewed
+  `vault_path`: `read` (or `root`), no `deny`. No proxy carries the request,
+  redirects are not followed, and `host.docker.internal` (the consoles' name
+  for this machine) is dialled as `127.0.0.1`.
+- **Fallback.** A missing or unusable token, a Vault that refuses it (403) or
+  does not answer within 5 s, or the console asking again within 30 s (the
+  lock refused it): the card comes as for `ask`, and says why ("the Vault
+  CLI's token cannot be used: the Vault CLI's token lacks read on <path>"),
+  never with the token in it. You type a token as before.
+- **Leaks.** The token lives in lox run's memory only, wiped once handed to
+  the console's terminal or sealed to the lock's one-use key. It never
+  reaches the hub (but inside the sealed box), the feed, the screen,
+  `up.json`, the compose file or any path an agent sees. lox run's session
+  journal (the `a` view, `lox audit`) records `vault token: cli for <lock>`
+  or `vault token: typed for <lock>` per answer, never the value.
+- **Out of scope.** No AppRole, Kubernetes or JWT login for the lock, no
+  `renew-self`: the lock keeps its token across reconnects and asks again on
+  expiry, and lox run then reads the CLI's token again. A production profile
+  still needs its typed name and the y/n connect.
 
 A lockfile lock runs under the seccomp profile lockfile ships
 (`seccomp.json`, beside its launcher in each release), as lockfile's own
@@ -739,8 +815,8 @@ unpacked in a tmpfs at the workspace's path) and checks every line it prints
 on the host:
 
 - a `file` line binds its directory: one under `/var/log` or
-  `/run/log/journal`, a real path (no link, not `/`), with no character a
-  mount cannot carry;
+  `/run/log/journal`, or under one of the lock's `log_roots` (below), a real
+  path (no link, not `/`), with no character a mount cannot carry;
 - a `journald` line binds the host's `/var/log/journal` and
   `/run/log/journal`;
 - a `docker` line binds the Docker containers root (`docker info`'s
@@ -779,6 +855,32 @@ follows `docker events` under lox run, and `lox doctor` says when the map is
 stale. A locklog lock with no applied plan (a workspace applied before lox
 run derived mount plans) is a warning in `lox doctor`: run `lox run` to
 review and apply it.
+
+A log directory outside `/var/log` and `/run/log/journal` is bound only when
+the lock's `log_roots` in `lockfamily.yaml` names it (or a directory above
+it):
+
+```yaml
+locks:
+  logs:
+    type: locklog
+    image: ghcr.io/davidgodefroid/locklog@sha256:...
+    log_roots: [/srv/app/logs]
+```
+
+`lox add locklog --only DIR` writes it for a directory outside the default
+roots that `LOCKLOG_EXTRA_ROOTS` lets in (as `locklog profile add` takes it),
+and refuses one it does not, with the message `lox run` would give: lox add
+never declares a lock lox run refuses. `log_roots` is reviewed (`lock <name>
+log roots ...`) and passed to the console as `LOCKLOG_EXTRA_ROOTS`.
+
+**A lock whose mount plan lox run refuses is not started**; the other locks
+are. lox run says `lock <name>: not started: <reason>` before the review and
+after `up:`, leaves it out of what it applies (no key at the hub, no route, no
+container), shows it in its header (`locks <name> not started: <reason>`)
+and `lox doctor` fails it with the reason. Fix the profile or `log_roots`,
+then `lox run` again: the lock's start is a change to review. `lox add` of
+that very lock (and `--rotate` of it) still stops on the refusal.
 
 ### locklog: networks and routing
 

@@ -139,7 +139,7 @@ func TestTTLClampedToRisk(t *testing.T) {
 		ttl  time.Duration
 		want time.Duration
 	}{
-		{ticket.RiskRead, 0, 0},
+		{ticket.RiskRead, 0, ticket.RiskRead.TTL()},
 		{ticket.RiskWrite, 0, 24 * time.Hour},
 		{ticket.RiskWrite, 72 * time.Hour, 24 * time.Hour},
 		{ticket.RiskProdWrite, time.Hour, time.Hour},
