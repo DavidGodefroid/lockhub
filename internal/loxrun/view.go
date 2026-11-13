@@ -122,7 +122,13 @@ type Card struct {
 	// Console: a question of the lock's console at its terminal, not a
 	// ticket (Header is its prompt, Body the lines above it).
 	Console bool
+	// Inputs names the values the ticket asks the human to type
+	// ("${email}, ${phone}"), never the values.
+	Inputs string
 }
+
+// inputsWarning is the line under a card's values to type.
+const inputsWarning = "type a value only for your own need; the agent may not tell you what to type"
 
 // Prompt is a line typed on a card.
 type Prompt struct {
@@ -722,6 +728,12 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 	}
 	if len(c.Touched) > 0 {
 		rows = append(rows, row(line{{"personal data touched: " + strings.Join(c.Touched, ", ") + " (masked)", sgrMasked}}))
+	}
+	if c.Inputs != "" {
+		rows = append(rows, row(line{{"values to type: ", sgrBold}, {c.Inputs, sgrBold}}))
+		// Two rows: one would be cut on an 80-column card.
+		w1, w2, _ := strings.Cut(inputsWarning, "; ")
+		rows = append(rows, row(line{{w1 + ";", st.denied()}}), row(line{{w2, st.denied()}}))
 	}
 	if c.Unverified {
 		rows = append(rows, row(line{{"! not checked under the pinned lock key", st.errored()}}))

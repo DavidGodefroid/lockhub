@@ -10,6 +10,7 @@ import (
 
 	"github.com/DavidGodefroid/lockhub/internal/hub"
 	"github.com/DavidGodefroid/lockhub/internal/hubtest"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
 
@@ -83,5 +84,53 @@ func TestDecideAutoRule(t *testing.T) {
 	json.Unmarshal(raw, &d)
 	if d.Secret != `{"box":1}` {
 		t.Errorf("secret %q not relayed", d.Secret)
+	}
+}
+
+// A ticket that asks for typed values is answered in lox run only: the
+// approval it seals the values in is relayed as given; another facade's
+// approval, which cannot carry them, denies it so its lock stops waiting.
+func TestDecideInputs(t *testing.T) {
+	a := hubtest.NewLock("shop")
+	e := hubtest.NewWith(t, func(c *hub.Config) { c.Routes = route.Rules{Enabled: []string{"tty", "deck", "slack"}} }, a)
+	push := func(id string) {
+		t.Helper()
+		raw := a.TicketWith(id, "read", e.Clock.T, time.Hour, func(tk *hubtest.Ticket) {
+			tk.V, tk.Kind, tk.AskSecret, tk.AskInputs, tk.NeverAuto = 2, "read", true, true, true
+		})
+		if _, _, err := e.Hub.Push(ctx, "shop", raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decide := func(id string, v hub.Verdict) hubtest.Decision {
+		t.Helper()
+		raw, err := e.Hub.Decide(ctx, store.Ref{Instance: "shop", ID: id}, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d hubtest.Decision
+		json.Unmarshal(raw, &d)
+		return d
+	}
+
+	push("I1")
+	if d := decide("I1", hub.Verdict{Approved: true, ApproverID: "x", Facade: "tty", Secret: []byte(`{"box":1}`)}); !d.Approved || d.Secret != `{"box":1}` {
+		t.Errorf("lox run's sealed approval: %+v", d)
+	}
+	for id, f := range map[string]string{"I2": "slack", "I3": "deck"} {
+		push(id)
+		if d := decide(id, hub.Verdict{Approved: true, ApproverID: "x", Facade: f}); d.Approved || d.Reason != hub.InputsElsewhereReason {
+			t.Errorf("%s approval without values: %+v, want a denial", f, d)
+		}
+	}
+	// An auto rule never approves one, never-auto flag or not.
+	raw := a.TicketWith("I4", "read", e.Clock.T, time.Hour, func(tk *hubtest.Ticket) {
+		tk.V, tk.Kind, tk.AskSecret, tk.AskInputs = 2, "read", true, true
+	})
+	if _, _, err := e.Hub.Push(ctx, "shop", raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "shop", ID: "I4"}, hub.Verdict{Approved: true, ApproverID: "x", Facade: "tty", Rule: "default:read"}); !errors.Is(err, hub.ErrNotAuto) {
+		t.Errorf("auto approval: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
@@ -59,6 +60,10 @@ func (Codec) VerifyTicket(k ed25519.PublicKey, raw []byte) (hub.Info, error) {
 	info.Flags = string(fl)
 	info.V, info.Kind = t.V, string(t.Kind)
 	info.AskSecret = t.Kind == ticket.KindConnect && t.Subject != nil && t.Subject.SecretTo != ""
+	if t.AsksInputs() {
+		info.AskInputs, info.Inputs = true, slices.Clone(t.Subject.Inputs)
+		info.AskSecret = t.Subject.SecretTo != ""
+	}
 	if t.Renews != nil {
 		info.Renews = &hub.Renewal{Of: t.Renews.Of, Unchanged: t.Renews.Unchanged()}
 	}

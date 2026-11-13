@@ -120,6 +120,13 @@ func (r Request) Profile() string {
 	return r.Subject.Profile
 }
 
+// inputsWhy is why a ticket that asks for typed values is asked.
+const inputsWhy = "asks for typed values: a human decides"
+
+// AsksInputs reports whether the request asks the human for typed values
+// (Subject.Inputs).
+func (r Request) AsksInputs() bool { return r.Subject != nil && len(r.Subject.Inputs) > 0 }
+
 // verb is the request's verb ("" when it names none).
 func (r Request) verb() string {
 	if r.Subject == nil {
@@ -262,6 +269,11 @@ func (e *Engine) Decide(r Request) Verdict {
 		// production, whatever a rule says (the console signs both
 		// never-auto anyway).
 		v = Ask
+	}
+	if r.AsksInputs() {
+		// Typed values are the human's to type: no rule decides, not
+		// even a deny (lockkit marks such a ticket NeverAuto too).
+		return Verdict{Outcome: Question, Rule: "ask:" + string(ra), Why: inputsWhy, Tag: "ask:inputs"}
 	}
 	if v == Deny && r.V >= ticket.VersionKinds && r.Verified {
 		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra), Tag: "deny:" + string(ra)}

@@ -56,7 +56,17 @@ type Info struct {
 	V         int
 	Kind      string
 	AskSecret bool
+	// AskInputs: a read or action ticket whose lock asks the human for
+	// typed values (lockkit Subject.Inputs), sealed to it like a connect
+	// secret (AskSecret is set too). Inputs are their names.
+	AskInputs bool
+	Inputs    []string
 }
+
+// InputsElsewhereReason is the denial of a ticket that asks for typed
+// values when a facade other than lox run approves it: only lox run asks
+// them and seals them to the lock.
+const InputsElsewhereReason = "typed values: decide in lox run"
 
 // Renewal is what the hub needs of a ticket's Renews (lockkit
 // ticket.Renewal).
@@ -512,6 +522,18 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 			return fmt.Errorf("%w: stored ticket: %v", ErrBadTicket, err)
 		}
 		info.Raw = tk.Raw
+		if v.Approved && info.AskInputs && len(v.Secret) == 0 && v.Rule == "" {
+			// Only lox run asks a human for typed values and seals them
+			// to the lock: another facade's approval of such a ticket
+			// denies it, so its lock is not left waiting for values.
+			v.Approved, v.Reason, v.Retype = false, InputsElsewhereReason, ""
+			v.Device, v.DeviceID, v.DeviceRecord, v.Nonce, v.At = nil, "", nil, "", time.Time{}
+			onDevice = false
+			ev = state.Deny
+			if to, err = state.Next(tk.State, ev); err != nil {
+				return err
+			}
+		}
 		if v.Rule != "" {
 			// An auto rule never approves for the human where the lock
 			// or the hub wants one: a never-auto ticket (a grant, a
@@ -521,7 +543,7 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 			switch {
 			case info.V < 2:
 				return fmt.Errorf("%w: an auto rule decides only a ticket that names its kind (version 2)", ErrBadRequest)
-			case v.Approved && info.NeverAuto:
+			case v.Approved && (info.NeverAuto || info.AskInputs):
 				return fmt.Errorf("%w: ticket %s is never decided by an auto rule", ErrNotAuto, ref.ID)
 			case v.Approved && needsRetype(info):
 				return fmt.Errorf("%w: approving ticket %s needs its instance name typed", ErrNotAuto, ref.ID)

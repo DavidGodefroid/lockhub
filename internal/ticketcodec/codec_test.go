@@ -3,6 +3,7 @@ package ticketcodec
 import (
 	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -221,5 +222,56 @@ func TestLockkitFixturesKinds(t *testing.T) {
 	}
 	if _, err := c.SignDecision(hubKey, i1, hub.Verdict{Approved: true, ApproverID: "x", Facade: "tty", Rule: "r"}, time.Now()); err == nil {
 		t.Error("a version-1 decision named a rule")
+	}
+}
+
+// A ticket that asks for typed values: the hub sees their names and that
+// a sealed box is asked, and relays lox run's box in a decision the lock
+// opens to exactly the values typed.
+func TestTicketInputs(t *testing.T) {
+	lockPub, lock, _ := ed25519.GenerateKey(nil)
+	hubPub, hubKey, _ := ed25519.GenerateKey(nil)
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk := ticket.NewKindTicket(ticket.Source{Lock: "lockfile", Instance: "files", KeyID: ticket.KeyID(lockPub)}, ticket.KindRead,
+		ticket.RiskRead, &ticket.Subject{Profile: "dev", Inputs: []string{"needle"}, SecretTo: ticket.EncodeX25519(priv.PublicKey())},
+		"sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), time.Now(), time.Hour)
+	tk.Flags.NeverAuto = true
+	if err := tk.Sign(lock); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := tk.Marshal()
+	var c Codec
+	info, err := c.VerifyTicket(lockPub, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.AskInputs || !info.AskSecret || !info.NeverAuto || len(info.Inputs) != 1 || info.Inputs[0] != "needle" {
+		t.Fatalf("info %+v: want the inputs asked, sealed, never auto", info)
+	}
+	box, err := ticket.SealInputs(tk, map[string][]byte{"needle": []byte("alice@example.org")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, _ := json.Marshal(box)
+	out, err := c.SignDecision(hubKey, info, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: "tty", Secret: sealed}, tk.Created.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "alice@example.org") {
+		t.Fatal("the decision holds the value in clear")
+	}
+	d, err := ticket.VerifyDecision(hubPub, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Match(tk); err != nil {
+		t.Fatal(err)
+	}
+	vals, err := d.OpenInputs(tk, priv)
+	if err != nil || len(vals) != 1 || string(vals["needle"]) != "alice@example.org" {
+		t.Fatalf("opened %q, %v", vals, err)
 	}
 }
