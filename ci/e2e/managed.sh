@@ -70,8 +70,8 @@ up up1.out
 hub_cosigned up1.out
 grep -qF "lock crm: not started: blocked by company policy: locksql.bounds.tier = write (profile p: tier = ddl)" up1.out ||
 	die "locksql is not refused with the bound"
-grep -qx "lock events: started" up1.out || die "lockmq did not start"
-grep -qx "lock crm: started" up1.out && die "locksql started"
+grep -qF "lock events: started" up1.out || die "lockmq did not start"
+grep -qF "lock crm: started" up1.out && die "locksql started"
 grep -q "^managed: E2E Corp sha256:" up1.out || die "no managed line in the review"
 p=$(ws_project "$ws")
 hub_is_local "$p"
@@ -100,7 +100,7 @@ egress = ["*.allowed.internal:5432", "mq.e2e.internal:15672"]
 up up2.out
 grep -qF "lock crm: not started: blocked by company policy: lox.egress does not allow db.other.internal:5432 (lock crm)" up2.out ||
 	die "locksql is not refused by lox.egress"
-grep -qx "lock events: started" up2.out || die "lockmq did not start under the egress allowlist"
+grep -qF "lock events: started" up2.out || die "lockmq did not start under the egress allowlist"
 
 say "3. allow_no_upgrade = false: lox run --no-upgrade exits 3 before anything"
 managed 'version = 1
