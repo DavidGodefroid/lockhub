@@ -15,7 +15,10 @@
 # in up.json; a re-run changes nothing) — lox add locksql for orders (the
 # form, the review, then the console's policy, password, privilege audit
 # and PII) — with E2E_VAULT=1, the same for inventory with credentials
-# vault — a host agent's query approved through the facade on each lock —
+# vault, then lockhub#124: vault_token: cli answers its console's Vault
+# token prompt from the host's Vault CLI, and a revoked CLI token falls
+# back to the typed one — a host agent's query approved through the facade
+# on each lock —
 # without E2E_VAULT, lockhub#158: a lock whose tls_ca is missing from its
 # home flagged at lox add, copied with the review's command, then started
 # past the console's file check; lockhub#167: a relative tls_ca in the
@@ -388,6 +391,75 @@ if [ "$vault" = 1 ]; then
 		-- "$lox" attach inventory >"$out/attach-serving.out" 2>&1 ||
 		{ cat "$out/attach-serving.out"; die "lox attach did not say the serving console asks nothing"; }
 
+	say "lockhub#124: vault_token: cli, the host's Vault CLI token answers the console's prompt"
+	# A child token of the dev root token, so revoking it leaves the typed
+	# fallback working. The host's Vault CLI is a vault binary on PATH that
+	# prints it (as a token helper would), only with the reviewed address
+	# and without lox's VAULT_TOKEN.
+	cli_tok=$(docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="$E2E_VAULT_TOKEN" \
+		"$E2E_VAULT_CONTAINER" vault token create -policy=root -ttl=1h -field=token)
+	[ -n "$cli_tok" ] || die "no child Vault token"
+	(umask 077 && printf '%s\n' "$cli_tok" >"$top/vault-token")
+	printf '#!/bin/sh\n[ "$1 $2" = "print token" ] || exit 2\n[ "$VAULT_ADDR" = http://host.docker.internal:58200 ] || exit 3\n[ -z "${VAULT_TOKEN:-}" ] || exit 4\nexec cat %s\n' "$top/vault-token" >"$bin/vault"
+	chmod 0755 "$bin/vault"
+	awk '{ print } /^  inventory:$/ { on = 1; next } /^  [^ ]/ { on = 0 } on && /^    vault: true$/ { print "    vault_token: cli" }' \
+		.lockfamily/lockfamily.yaml >"$out/lf.yaml" && cat "$out/lf.yaml" >.lockfamily/lockfamily.yaml
+	block inventory .lockfamily/lockfamily.yaml | grep -q '^    vault_token: cli$' || die "lockfamily.yaml: no vault_token: cli on inventory"
+	# restart_inventory: its console asks the Vault token again, recorded
+	# next to its socket.
+	restart_inventory() {
+		docker restart "$p-lock-inventory-1" >/dev/null
+		i=0
+		until docker exec "$p-lock-inventory-1" sh -c 'ls /run/locksql/*.question' >/dev/null 2>&1; do
+			i=$((i + 1))
+			[ "$i" -le 60 ] || die "the restarted inventory console recorded no question"
+			sleep 1
+		done
+	}
+	restart_inventory
+	# lox run with its output piped: plain lines, keys still read at the
+	# terminal. The review asks the loosening; the Vault token prompt is
+	# answered by lox run alone, the console's next question by the human.
+	python3 "$here/expect.py" 600 \
+		'Apply? [y/N]' 'y\n' \
+		'vault token: from CLI' '' \
+		'Type "continue" to proceed' '<pause>continue\n' \
+		'+ you' '<pause>qq' \
+		-- sh -c '"$1" run 2>&1 | cat' sh "$lox" >"$out/run-cli.raw" 2>&1 ||
+		{ tr -d '\r' <"$out/run-cli.raw"; die "lox run (vault_token: cli) failed"; }
+	tr -d '\r' <"$out/run-cli.raw" >"$out/run-cli.out"
+	cat "$out/run-cli.out"
+	grep -qF "vault token  from the host's Vault CLI" "$out/run-cli.out" || die "the review does not show vault_token: cli"
+	# One card only: the console's "continue", not its Vault token prompt.
+	[ "$(grep -c 'answer: type it, then Enter' "$out/run-cli.out")" = 1 ] || die "lox run asked the human more than the console's continue"
+	python3 "$here/expect.py" 60 \
+		'lock inventory is serving: nothing to answer' '<detach>' \
+		-- "$lox" attach inventory >"$out/attach-cli.out" 2>&1 ||
+		{ cat "$out/attach-cli.out"; die "inventory is not serving with the Vault CLI's token"; }
+	say "a host agent's locksql query on inventory, its console on the Vault CLI's token"
+	sql_query inventory inventory stock sku sku-1
+
+	say "lockhub#124: the Vault CLI's token revoked, the next start falls back to the typed token"
+	docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="$E2E_VAULT_TOKEN" \
+		"$E2E_VAULT_CONTAINER" vault token revoke "$cli_tok" >/dev/null || die "the child token was not revoked"
+	restart_inventory
+	python3 "$here/expect.py" 600 \
+		"the Vault CLI's token cannot be used" "<pause>$E2E_VAULT_TOKEN\\n" \
+		'Type "continue" to proceed' '<pause>continue\n' \
+		'+ you' '<pause>qq' \
+		-- sh -c '"$1" run 2>&1 | cat' sh "$lox" >"$out/run-revoked.raw" 2>&1 ||
+		{ tr -d '\r' <"$out/run-revoked.raw"; die "lox run (revoked CLI token) failed"; }
+	tr -d '\r' <"$out/run-revoked.raw" >"$out/run-revoked.out"
+	cat "$out/run-revoked.out"
+	python3 "$here/expect.py" 60 \
+		'lock inventory is serving: nothing to answer' '<detach>' \
+		-- "$lox" attach inventory >"$out/attach-typed.out" 2>&1 ||
+		{ cat "$out/attach-typed.out"; die "inventory is not serving with the typed token"; }
+	# The journal says how each token went, never the token.
+	how=$(jq -r 'select(.event == "vault-token" and .instance == "inventory") | .vault' "$state/runs.jsonl" | tr '\n' ' ')
+	[ "$how" = "cli typed " ] || { cat "$state/runs.jsonl"; die "the journal says '$how', want 'cli typed '"; }
+	rm "$bin/vault"
+
 	say "lockhub#123: the Vault address is an endpoint of the vault: true lock only"
 	reaches "$p-lock-inventory-1" host.docker.internal 58200 || die "inventory (vault: true) does not reach Vault"
 	reaches "$p-lock-orders-1" host.docker.internal 55432 || die "control: orders does not reach its database"
@@ -412,7 +484,7 @@ jq -e '.locks | length == 0' "$ws/.lockfamily/up.json" >/dev/null || die "up.jso
 
 say "no secret written: the workspace (but .env) and lox up's state directory"
 leak=""
-if [ "$vault" = 1 ]; then secrets="$inv_pw $E2E_VAULT_TOKEN"; else secrets=$inv_pw; fi
+if [ "$vault" = 1 ]; then secrets="$inv_pw $E2E_VAULT_TOKEN $cli_tok"; else secrets=$inv_pw; fi
 for s in $secrets; do
 	if grep -rlF --exclude=.env -- "$s" "$ws" "$state" 2>/dev/null; then leak=1; fi
 done

@@ -158,6 +158,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 			if c.Vault.Namespace != "" {
 				s = append(s, fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace))
 			}
+			if l.VaultToken == VaultTokenCLI {
+				s = append(s, fmt.Sprintf(vaultCLILine, n))
+			}
 		}
 		if usesSeccomp(l.Type) {
 			s = append(s, fmt.Sprintf("lock %s seccomp lockfile's shipped profile sha256:%s", n, LockfileSeccompSum))

@@ -383,3 +383,26 @@ func TestRuns(t *testing.T) {
 		t.Errorf("since: %d", len(rs))
 	}
 }
+
+// The journal says how a vault_token: cli lock got its Vault token (cli
+// or typed), never the token; any other value is not read.
+func TestRunsVaultToken(t *testing.T) {
+	p := filepath.Join(t.TempDir(), RunsFile)
+	t1 := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	for _, e := range []loxrun.RunEvent{
+		{At: t1, Event: loxrun.RunVaultToken, Instance: "inventory", Vault: loxrun.VaultFromCLI},
+		{At: t1.Add(time.Minute), Event: loxrun.RunVaultToken, Instance: "inventory", Vault: loxrun.VaultTyped},
+		{At: t1.Add(2 * time.Minute), Event: loxrun.RunVaultToken, Instance: "inventory", Vault: "hvs.not-a-how"},
+	} {
+		if err := AppendRun(p, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs, err := ReadRuns(p, time.Time{})
+	if err != nil || len(rs) != 2 || rs[0].Vault != "cli" || rs[1].Vault != "typed" || rs[0].Instance != "inventory" {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	if l := loxrun.AuditRunLine(rs[0], time.UTC, 100, loxrun.Style{}); !strings.Contains(l, "vault token: cli for inventory at 10:00:00") {
+		t.Errorf("listing line %q", l)
+	}
+}

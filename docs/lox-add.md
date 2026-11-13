@@ -314,6 +314,33 @@ No secret is ever written to disk, to `lockfamily.yaml`, to the draft or to a
 command line. The Vault token is typed at the console's start, masked, under
 `lox attach` (step 5), never at a `lox add` question.
 
+### The host's Vault CLI token: `vault_token`
+
+A lock with `vault: true` may take the token of the Vault CLI you are already
+logged in with on the host (`vault login`, OIDC, a token helper) instead of a
+typed one. `lox add` writes nothing for it: edit `lockfamily.yaml` yourself.
+
+```yaml
+locks:
+  inventory:
+    type: locksql
+    image: ghcr.io/davidgodefroid/locksql@sha256:…
+    vault: true
+    vault_token: cli   # ask (the default): typed; cli: the host's Vault CLI
+```
+
+`vault_token` is valid only with `vault: true` and takes `ask` (the default,
+today's behaviour) or `cli`. `cli` is a loosening: the next `lox run` shows
+`vault token   from the host's Vault CLI` in the lock's review block and waits
+for your yes like any reviewed change. Back to `ask` (or the line removed),
+`lox run` stops using the CLI's token at once, even before the review.
+
+With `cli`, `lox run` (never the lock, the hub or an agent) reads the token
+each time the lock needs one, checks it, and hands it to the lock; when the
+token is missing or unusable, it asks you as before and says why. See
+[lox-run.md](lox-run.md#consoles-under-compose) for the sources, the checks
+and the fallback.
+
 To write or change the shared block by itself:
 
 ```sh

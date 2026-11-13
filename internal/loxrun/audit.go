@@ -59,6 +59,10 @@ type RunEvent struct {
 	User      string    `json:"user,omitempty"`
 	Mode      string    `json:"mode,omitempty"`
 	Workspace string    `json:"workspace,omitempty"`
+	// Instance and Vault (RunVaultToken): the lock a Vault token went to,
+	// and how (VaultFromCLI, VaultTyped). Never the token.
+	Instance string `json:"instance,omitempty"`
+	Vault    string `json:"vault,omitempty"`
 }
 
 // Run events.
@@ -66,6 +70,8 @@ const (
 	RunStart = "start"
 	RunMode  = "mode"
 	RunStop  = "stop"
+	// RunVaultToken: a vault_token: cli lock got a Vault token.
+	RunVaultToken = "vault-token"
 )
 
 // Decision is how the exchange was decided: auto (a rule approved it),
@@ -221,6 +227,9 @@ func runLine(r RunEvent, loc *time.Location, w int, st Style) line {
 		return l
 	case RunMode:
 		return lead.add("switched to ", sgrDim).add(clean(r.Mode), join(st.modeStyle(r.Mode), sgrBold)).add(" at "+ts+" ", sgrDim).
+			add(st.g("──", "--"), sgrDim)
+	case RunVaultToken:
+		return lead.add("vault token: "+clean(r.Vault), sgrBold).add(" for "+clean(r.Instance)+" at "+ts+" ", sgrDim).
 			add(st.g("──", "--"), sgrDim)
 	}
 	return sepLine("lox run stopped at "+ts+": tickets wait for the next one", sgrDim, w, st)
