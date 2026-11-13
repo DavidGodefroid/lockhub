@@ -155,7 +155,7 @@ func (st *state) wipe() {
 }
 
 func (st *state) view() View {
-	v := View{Workspace: st.s.Workspace, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
+	v := View{Workspace: st.s.Workspace, Managed: st.s.Managed, Mode: st.eng.Mode, HubOK: st.hubOK, HubErr: st.hubErr, Locks: st.s.Locks,
 		Overlay: st.overlay, Flash: st.flash, Now: st.s.now(), Quitting: st.quitting, Consoles: st.lockConsoles(),
 		Tabs: st.tabs(), Lock: st.lockView()}
 	if st.s.Sound != nil {

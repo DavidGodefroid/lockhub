@@ -153,13 +153,16 @@ type ProfileConn struct {
 // View is everything one frame shows.
 type View struct {
 	Workspace string
-	Mode      Mode
-	HubOK     bool
-	HubErr    string
-	Locks     int
-	Profiles  []ProfileConn
-	Cards     []Card
-	Feed      []Entry
+	// Managed is "Managed by <organisation> (…)", after the workspace
+	// ("": no managed file).
+	Managed  string
+	Mode     Mode
+	HubOK    bool
+	HubErr   string
+	Locks    int
+	Profiles []ProfileConn
+	Cards    []Card
+	Feed     []Entry
 	// Overlay is "help", "audit" (the session's decisions) or
 	// "withdraw" (the hub's pending tickets), "" none.
 	Overlay string
@@ -368,6 +371,9 @@ func header(v View, w int, st Style) []line {
 		right = right.add(" "+st.g("·", "-")+" "+st.g("🔕", "sound off"), sgrDim)
 	}
 	ws := line{{"  " + v.Workspace, sgrDim}}
+	if v.Managed != "" {
+		ws = ws.add(" "+st.g("·", "-")+" "+v.Managed, sgrDim)
+	}
 	gap := w - l.width() - right.width() - 1
 	if gap < 4 {
 		ws = nil

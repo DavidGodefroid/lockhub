@@ -190,9 +190,45 @@ type Engine struct {
 	// product the ticket names, Request.Lock; nil: Defaults alone). A
 	// locklog profile with no known rules asks its reads (rulesOf).
 	Rules func(lock, instance, profile string) ProfileRules
+	// Caps are the company's ceilings on the verdicts (nil: none).
+	Caps *Caps
 
 	connected map[string]bool // instance/profile: connection approved this session
 	endpoints map[string]bool // instance/profile/endpoint/target: reached this session
+}
+
+// Caps are the managed file's ceilings on the engine's verdicts ([lox]
+// auto_max and production_auto_max): a rule, a default or a session
+// approval never decides more loosely than its action's cap. They only
+// make a decision stricter, so the ticket's production flag is trusted
+// for them.
+type Caps struct {
+	// Auto caps every ticket; Production a production ticket, with Auto
+	// (the stricter wins).
+	Auto, Production ProfileRules
+}
+
+var valueRank = map[Value]int{Deny: 0, Ask: 1, Allow: 2}
+
+// capOf is the strictest cap on r for its actions a and ra, and the
+// managed key that sets it ("" when none caps it).
+func (c *Caps) capOf(r Request, a, ra Action) (Value, string) {
+	if c == nil {
+		return Allow, ""
+	}
+	v, key := Allow, ""
+	try := func(m ProfileRules, table string) {
+		for _, x := range []Action{a, ra} {
+			if cv, ok := m[x]; ok && valueRank[cv] < valueRank[v] {
+				v, key = cv, fmt.Sprintf("lox.%s.%s = %s", table, x, cv)
+			}
+		}
+	}
+	try(c.Auto, "auto_max")
+	if r.Production {
+		try(c.Production, "production_auto_max")
+	}
+	return v, key
 }
 
 // NewEngine is an engine in mode m, with the defaults.
@@ -270,12 +306,20 @@ func (e *Engine) Decide(r Request) Verdict {
 		// never-auto anyway).
 		v = Ask
 	}
+	// The company's ceiling: never looser than its action's cap.
+	capped := ""
+	if cv, key := e.Caps.capOf(r, a, ra); key != "" && valueRank[cv] < valueRank[v] {
+		v, capped = cv, key
+	}
 	if r.AsksInputs() {
 		// Typed values are the human's to type: no rule decides, not
 		// even a deny (lockkit marks such a ticket NeverAuto too).
 		return Verdict{Outcome: Question, Rule: "ask:" + string(ra), Why: inputsWhy, Tag: "ask:inputs"}
 	}
 	if v == Deny && r.V >= ticket.VersionKinds && r.Verified {
+		if capped != "" {
+			return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: "blocked by company policy: " + capped, Tag: "deny:managed"}
+		}
 		return Verdict{Outcome: Refuse, Rule: "deny:" + string(ra), Why: fmt.Sprintf("the profile denies %s", ra), Tag: "deny:" + string(ra)}
 	}
 	ask := func(tag, why string) Verdict {
@@ -314,6 +358,9 @@ func (e *Engine) Decide(r Request) Verdict {
 			}
 			return ask(string(ra), "new endpoint in this session")
 		}
+	}
+	if capped != "" {
+		return ask("managed", "company policy: "+capped)
 	}
 	return ask(string(ra), string(ra)+" is always asked")
 }

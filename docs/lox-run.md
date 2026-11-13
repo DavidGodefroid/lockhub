@@ -1012,6 +1012,67 @@ clear) is answered on `tty`, `deck` or `mobile` only, never in a chat:
 `lock NAME answers read-pii on the local facades only, never in a chat
 (lockssh's default)`, and `lox doctor` checks it.
 
+## The company's managed configuration
+
+A company can bound every lock, `lox` and lea on a machine with one
+root-owned file, `/etc/lockfamily/managed.toml` (macOS: `/Library/Application
+Support/lockfamily/managed.toml`): see lockfamily
+[`docs/managed.md`](https://github.com/DavidGodefroid/lockfamily/blob/main/docs/managed.md)
+for its format, its signature and its precedence. `lox run` applies it:
+
+- **It reads the file on the host** before anything starts, with lockkit's
+  checks (root-owned, valid, signature verified against `signer.toml`). A
+  file it cannot read or trust, or a `[lox]` section it does not take (an
+  unknown key, a bad value), refuses the whole run with the reason, exit 3:
+  nothing starts. `lox run` and the review then say
+  `Managed by <organisation> (sha256:…)` and
+  `managed: <organisation> sha256:<12> [signed]`.
+- **It copies it read-only into every lock**: the volume `managed`, filled
+  by a root setup service with no network, mounted `:ro` at
+  `/etc/lockfamily` in every lock (the containers are Linux, whatever the
+  host), as the locks' own launchers mount it. A signed file goes with its
+  bundle, `signer.toml` and `managed.toml.verified`, the stamp of the
+  signature `lox` verified on the host (a container has neither cosign
+  nor the network). The file's fingerprint is a label of every lock: a
+  change recreates them. With no file, there is no volume and no mount.
+- **A change of the file alone asks nothing**: the admin decided it. Its
+  fingerprint is kept in `applied.json` (`managed_fingerprint`), outside the
+  reviewed fingerprint; `lox run` prints `managed: changed sha256:<old> →
+  sha256:<new>` and applies it.
+- **Each lock is checked before it starts**: `<tool> managed check` runs in
+  the lock's image, with no network, as its console's account, on the
+  reviewed copy of its profile (on its stdin, as the `rules-` and `mounts-`
+  services) and under the managed volume. Exit 0 starts the lock; a
+  refusal keeps it from starting, the others start: `lock crm: not
+  started: blocked by company policy: locksql.bounds.tier = write (profile
+  p: tier = ddl) (the other locks are)`. An image that does not know the
+  command passes only when the file has no section for its lock; else
+  `<tool> <version> predates managed support: upgrade it or set [lox]
+  image_min`. The lock's console still enforces the bounds itself, at start
+  and at every poll.
+- **`[lox]`**:
+  - `auto_max` and `production_auto_max` (action → `auto`, `ask` or
+    `deny`; actions `connect`, `read`, `write`, `ddl`, `endpoint`,
+    `policy`, `action`) cap the auto mode: no rule, default or session
+    approval decides more loosely (`ask:managed`, `deny:managed` in the
+    feed). `production_auto_max` adds its caps for a production ticket
+    (the stricter wins). Manual mode stays manual.
+  - `allow_no_upgrade = false` refuses `lox run --no-upgrade` (exit 3).
+  - `image_min` (lock → `vX.Y.Z`): a lock whose image's release is older,
+    or unknown, is not started (`lox.image_min.<lock>`).
+  - `egress` (`host:port` patterns: `*.name` for any name under it, `*`
+    for any host or port): a lock whose profile names an endpoint outside
+    it is not started (`lox.egress does not allow <host:port> (lock
+    <name>)`). lockhttp's egress is bounded by its own `[lockhttp]`
+    section.
+- **`[family] vault`** takes the place of `lockfamily.yaml`'s `vault:` for
+  the locks with `vault: true` (`VAULT_ADDR`, `VAULT_NAMESPACE`, its CA),
+  shown in the review; the locks enforce `required` themselves.
+
+A lock not started for the managed file is kept with the others not
+started (`not-started.json`, the header, `lox doctor`). `lox managed show`
+prints the file as `lox` applies it; `lox doctor` has a `managed` line.
+
 ## Upgrading the images
 
 At start, `lox run` compares the images lockfamily.yaml pins with the

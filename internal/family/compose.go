@@ -79,6 +79,11 @@ type Paths struct {
 	// set in the file: none is left to the engine's default address
 	// pools. A network without one takes the engine's choice.
 	Subnets map[string]string
+	// Managed is the fingerprint of the managed directory lox run copies
+	// into the volume managed (Managed.Fingerprint): mounted read-only at
+	// ManagedDir in every lock, and their label, so that a change
+	// recreates them. "": no managed file, no volume, no mount.
+	Managed string
 }
 
 // lockNet reports whether lock l sits on its own network, locknet-<n>
@@ -386,7 +391,7 @@ func Compose(c *Config, p Paths) string {
 		if usesSeccomp(l.Type) && p.Seccomp != "" {
 			sec, ssum = []string{"seccomp=" + p.Seccomp}, p.SeccompSum
 		}
-		if fp != "" || dev || vsum != "" || ssum != "" || k.Mounts {
+		if fp != "" || dev || vsum != "" || ssum != "" || k.Mounts || p.Managed != "" {
 			w("    labels:")
 			if k.Mounts {
 				// A locklog console: never in a containers map.
@@ -404,6 +409,9 @@ func Compose(c *Config, p Paths) string {
 			if ssum != "" {
 				w("      lockfamily.seccomp: %s", q(ssum))
 			}
+			if p.Managed != "" {
+				w("      lockfamily.managed: %s", q(p.Managed))
+			}
 		}
 		limits(w, k.Mem, k.Pids, sec...)
 		if n := k.cpus(p.NCPU); n > 0 {
@@ -420,6 +428,10 @@ func Compose(c *Config, p Paths) string {
 		w("      - %s", q(name+"-run:/run/"+l.Type))
 		w("      - %s", q(name+"-home:"+home))
 		w("      - hubkey:%s:ro", HubKeyDir)
+		if p.Managed != "" {
+			// The company's managed file, where the lock reads it.
+			w("      - managed:%s:ro", ManagedDir)
+		}
 		// The reviewed copy of the lock's profile, never the workspace's
 		// directory itself (agents can write it).
 		if k.Project {
@@ -618,6 +630,9 @@ func Compose(c *Config, p Paths) string {
 			}
 		}
 	}
+	if p.Managed != "" {
+		managedServices(w, c, p)
+	}
 	// profile-<type> copies the reviewed profile into its volume (lox
 	// up runs it after the human's yes), as root: the lock reads it only.
 	for _, t := range types(c) {
@@ -687,6 +702,9 @@ func Compose(c *Config, p Paths) string {
 	}
 	w("volumes:")
 	w("  hubkey: {}")
+	if p.Managed != "" {
+		w("  managed: {}")
+	}
 	for _, t := range types(c) {
 		w("  %s: {}", q("profile-"+t))
 	}
@@ -701,6 +719,62 @@ func Compose(c *Config, p Paths) string {
 		}
 	}
 	return b.String()
+}
+
+// managedServices writes the setup services of the managed file:
+// managed, which copies it into its volume (the archive on its stdin, as
+// root: the locks refuse a managed file or directory another account
+// could write), and managedcheck-<instance>, which runs the lock's
+// `<type> managed check` on the reviewed copy of its profile (on its
+// stdin, unpacked in a tmpfs where the console sees it) under that
+// volume, as the console's account, with no network: the lock's own
+// verdict on the managed bounds, before it is started.
+func managedServices(w func(string, ...any), c *Config, p Paths) {
+	w("  managed:")
+	w("    image: %s", q(c.Hub.Image))
+	w("    profiles: [setup]")
+	w("    user: \"0:0\"")
+	w("    entrypoint: [\"/bin/sh\", \"-c\", %s]", q(fmt.Sprintf("find /m -mindepth 1 -delete && head -c %d | tar -x -C /m && chown -R 0:0 /m && chmod 0755 /m && chmod 0644 /m/*", 4*maxManaged)))
+	w("    network_mode: none")
+	hardening(w)
+	w("    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE]")
+	w("    volumes:")
+	w("      - managed:/m")
+	for _, name := range c.Instances() {
+		l := c.Locks[name]
+		k := Kinds[l.Type]
+		// The console's working directory and the tmpfs that holds the
+		// copy: the workspace for a project kind, else its home.
+		dir, wd := ConsoleProfileDir(p.Workspace, l.Type), ConsoleHome(l.Type)
+		if k.Project {
+			wd = p.Workspace
+		}
+		// $$: compose would otherwise read the script's own $ as its variables.
+		script := fmt.Sprintf(`mkdir -p "$0" && head -c %d | tar -x -C "$0" && chmod 0700 "$0" && cd "$1" && shift && exec %s managed check "$@"`, maxTar, l.Type)
+		args := []string{"/bin/sh", "-c", strings.ReplaceAll(script, "$", "$$"), dir, wd}
+		if prof := l.Profile; prof != "" || l.Type == "lockfile" {
+			if prof == "" {
+				prof = "default"
+			}
+			args = append(args, "--profile", prof)
+		}
+		w("  %s:", q("managedcheck-"+name))
+		w("    image: %s", q(l.Image))
+		w("    profiles: [setup]")
+		w("    user: %s", q(k.UID+":"+k.GID))
+		w("    environment:")
+		w("      HOME: %s", q(ConsoleHome(l.Type)))
+		w("    entrypoint: [%s]", quoteAll(args))
+		w("    network_mode: none")
+		w("    read_only: true")
+		w("    cap_drop: [ALL]")
+		w("    security_opt: [\"no-new-privileges:true\"]")
+		w("    tmpfs: [\"/tmp:size=16m\", %s]", q(wd+":size=4m,uid="+k.UID+",gid="+k.GID+",mode=0700"))
+		w("    pids_limit: 64")
+		w("    mem_limit: 256m")
+		w("    volumes:")
+		w("      - managed:%s:ro", ManagedDir)
+	}
 }
 
 // gateway writes a lock's egress gateway (egress.go): gw-<name>, on the

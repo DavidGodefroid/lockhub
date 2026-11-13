@@ -1,0 +1,1 @@
+lox managed show: managed: DIR/managed.toml: [lox]: unknown key "egress_allow"

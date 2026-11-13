@@ -36,8 +36,16 @@ func failed(ctx context.Context, stderr io.Writer, cmd string, err error) int {
 		return exitInterrupted
 	}
 	fmt.Fprintf(stderr, "lox %s: %v\n", cmd, err)
+	var me *family.ManagedError
+	if errors.As(err, &me) {
+		return exitManaged
+	}
 	return 1
 }
+
+// exitManaged is the exit of a command the company's managed file
+// refuses (lockfamily docs/managed.md: 3, as the locks).
+const exitManaged = 3
 
 // answerFlags are the answers lox add TYPE takes as flags; each is the
 // form's key of the same name, except --dir (lockfile's directory, key
@@ -280,7 +288,8 @@ func applyAdd(abs, project, state, draftPath string, l loxadd.Lock, a loxadd.Ans
 		Up: func(ctx context.Context, focus string) error {
 			u := &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 				User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: family.QuietExec{Verbose: verbose, Stderr: stderr},
-				In: in, Out: stdout, Review: review, Focus: focus, OfferCopy: true}
+				Resolve: upgrader(family.QuietExec{Verbose: verbose, Stderr: stderr}),
+				In:      in, Out: stdout, Review: review, Focus: focus, OfferCopy: true}
 			return u.Do(ctx)
 		},
 		Attach: func(_ context.Context, name string) error { return attachConsole(abs, name, stdin, stdout, stderr) },

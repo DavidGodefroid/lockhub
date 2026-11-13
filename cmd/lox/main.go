@@ -90,6 +90,7 @@ Usage:
                                           (policy, credentials) in cards; detaches by itself once the console
                                           serves; Ctrl-P Ctrl-Q detaches sooner, closing the terminal only detaches
   lox doctor [--file lockfamily.yaml]    check the hub, the locks, keys, socket and network; changes nothing
+  lox managed show                       the company's managed configuration (managed.toml) as lox applies it
   lox refresh INSTANCE [--file lockfamily.yaml]
                                           rewrite a locklog lock's containers map once (its docker source's
                                           containers, from the globs lox run applied)
@@ -165,6 +166,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return attachCmd(args[1:], stdin, stdout, stderr)
 	case "doctor":
 		return doctorCmd(args[1:], stdout, stderr)
+	case "managed":
+		return managedCmd(args[1:], stdout, stderr)
 	case "refresh":
 		return refreshCmd(args[1:], stdout, stderr)
 	case "audit":
