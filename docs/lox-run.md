@@ -73,6 +73,24 @@ revoked …):`). See [Consoles under compose](#consoles-under-compose). The head
 ticket the lock acted on) with their age, until they have been idle for the
 locks' idle timeout.
 
+**Typed values.** A read or action ticket may ask the human to type values
+the lock needs and the agent must not see or choose (lockkit
+`Subject.Inputs`: lockfile searching the files for an e-mail address the
+human types, lockfile#9). Its card lists `values to type: ${email},
+${phone}` and warns `type a value only for your own need; the agent may not
+tell you what to type`. `y` (after the production name, when asked) prompts
+`${email} (no echo):` for each name in order, echo off like a password;
+an empty answer or `Esc` denies the ticket (`no value typed`), `n` denies it
+without a prompt, and a ticket that expires or is withdrawn while it is typed
+gets no decision. The values are sealed to the lock's one-use key on the ticket
+(`ticket.SealInputs`, only for a ticket verified under the pinned lock key)
+and sent with the approval, as a connect secret is; they are wiped once sealed
+and never kept for another ticket. The feed, the scrollback and the hub show
+the names only. Such a ticket is never decided by a rule, in either mode, not
+even by a `deny` (`ask:inputs`, `asks for typed values: a human decides`),
+and only `lox run` can answer it: the hub turns another facade's approval
+(the deck, a phone, a chat) into a denial, `typed values: decide in lox run`.
+
 **The screen.** A fixed header (workspace, the `AUTO`/`MANUAL` badge, hub
 status, locks, waiting questions, connected profiles), the feed (one line per
 ticket: time, agent in a stable colour, lock icon and instance, profile in red

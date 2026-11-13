@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- `lox run` asks the values a ticket wants typed (#187, lockkit v0.18.0
+  `Subject.Inputs`): the card lists their names and a warning, `y` prompts
+  for each without echo, and the values go to the lock sealed to its
+  one-use key (`ticket.SealInputs`), never to the feed, the scrollback or
+  the hub. An empty answer or `Esc` denies (`no value typed`). Such a
+  ticket is never decided by an auto rule, and the hub denies another
+  facade's approval of it (`typed values: decide in lox run`). First
+  consumer: lockfile#9. lockkit v0.18.0 also drops the auto-mode
+  identifiers and `auto_approve` from its status (lockkit#120).
+
 - `lox run` no longer exhausts Docker's default address pools (#175): each
   network of a workspace gets a small subnet of its own (`lockhub` a /24, the
   others a /28), set in the compose file, from the workspace's pool

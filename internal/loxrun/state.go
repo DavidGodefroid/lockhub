@@ -23,7 +23,12 @@ import (
 const (
 	promptRetype = "retype"
 	promptSecret = "secret"
+	promptInputs = "inputs"
 )
+
+// noValueReason is the denial of a ticket whose typed values the human
+// did not type (an empty answer, Esc).
+const noValueReason = "no value typed"
 
 // answer is how the human is answering a ticket (embedded in tracked).
 type answer struct {
@@ -43,6 +48,19 @@ type answer struct {
 	// asked), how the token sent went (vaultHow: cli or typed).
 	vaultFetching      bool
 	vaultWhy, vaultHow string
+	// inputs are the values typed so far for a ticket that asks for
+	// them (Subject.Inputs), by name: sealed to the lock on the last
+	// one, then wiped. Never kept across tickets.
+	inputs map[string][]byte
+}
+
+// wipeInputs drops the values typed for t.
+func (a *answer) wipeInputs() {
+	for k, b := range a.inputs {
+		clear(b)
+		delete(a.inputs, k)
+	}
+	a.inputs = nil
 }
 
 func clean(s string) string { return sanitize.Terminal(s, false) }
@@ -128,6 +146,7 @@ func (st *state) wipe() {
 	for _, t := range st.seen {
 		clear(t.secret)
 		t.secret = nil
+		t.wipeInputs()
 	}
 	for k, a := range st.consoleAnswers {
 		clear(a.value)
@@ -329,6 +348,9 @@ func (st *state) add(it api.QueueItem) {
 	}
 	t.entry = &Entry{ID: it.ID, At: now, Agent: clean(tk.Requester.Agent), Instance: clean(it.Instance), Lock: clean(tk.Source.Lock),
 		Profile: clean(t.req.Profile()), Kind: t.req.Kind, Production: tk.Flags.Production, Summary: summary(tk), Target: target}
+	if n := inputNames(tk); n != "" {
+		t.entry.Summary += " (values to type: " + n + ")" // the names, never the values
+	}
 	st.s.observe(Event{Kind: EvTicket, Instance: it.Instance, ID: it.ID})
 	if !local(it.Facades) {
 		t.entry.Status, t.entry.Note = Elsewhere, "(not answerable here)"
@@ -403,6 +425,26 @@ func shortNote(s string) string {
 		s = s[:120]
 	}
 	return s
+}
+
+// needsInputs: t asks the human for typed values and lox run can seal
+// them to its lock: a ticket verified under the pinned lock key, with the
+// lock's one-use key (Subject.SecretTo).
+func needsInputs(t *tracked) bool {
+	return t.tk != nil && t.req.Verified && t.tk.AsksInputs() && t.tk.Subject.SecretTo != ""
+}
+
+// inputNames lists the names of the values tk asks for, as the card and
+// the feed show them: "${email}, ${phone}". Never the values.
+func inputNames(tk *ticket.Ticket) string {
+	if tk == nil || !tk.AsksInputs() {
+		return ""
+	}
+	var ns []string
+	for _, n := range tk.Subject.Inputs {
+		ns = append(ns, "${"+clean(n)+"}")
+	}
+	return strings.Join(ns, ", ")
 }
 
 func needsSecret(t *tracked) bool {
@@ -491,6 +533,7 @@ func (st *state) ask(t *tracked, why, tag string) {
 	for _, p := range tk.PII.Touched {
 		c.Touched = append(c.Touched, clean(p))
 	}
+	c.Inputs = inputNames(tk)
 	if t.item.Expires != nil {
 		c.Expires = *t.item.Expires
 	}
@@ -514,6 +557,7 @@ func (st *state) removeCard(t *tracked) {
 	if t.card != nil && t.card.Prompt != nil {
 		clear(t.card.Prompt.Typed)
 	}
+	t.wipeInputs()
 	st.cards = slices.DeleteFunc(st.cards, func(x *tracked) bool { return x == t })
 	t.card = nil
 	st.dirty = true
@@ -568,6 +612,39 @@ func (st *state) send(t *tracked, approved bool, rule string, secret []byte) {
 	st.pending = append(st.pending, effect{t, req})
 }
 
+// sendInputs approves t with the values typed for it, sealed to the
+// lock's one-use key on the ticket (lockkit ticket.SealInputs): the hub
+// relays the box, only the lock opens it. The values are wiped once
+// sealed.
+func (st *state) sendInputs(t *tracked) {
+	box, err := ticket.SealInputs(t.tk, t.inputs)
+	t.wipeInputs()
+	var raw json.RawMessage
+	if err == nil {
+		raw, err = json.Marshal(box)
+	}
+	if err != nil {
+		st.failed(t, "cannot seal the typed values: "+err.Error())
+		return
+	}
+	req := api.DecideRequest{Approved: true, Facade: route.TTY, Display: st.s.Display, Retype: t.retyped,
+		Asked: askedText(t.entry.Asked), Secret: raw}
+	st.pending = append(st.pending, effect{t, req})
+}
+
+// denyTyped denies t, whose values were not typed.
+func (st *state) denyTyped(t *tracked) {
+	t.wipeInputs()
+	t.card.Prompt = nil
+	st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: route.TTY, Display: st.s.Display,
+		Reason: noValueReason, Asked: askedText(t.entry.Asked)}})
+}
+
+// inputPrompt is the no-echo prompt for t's i-th typed value.
+func inputPrompt(t *tracked, i int) *Prompt {
+	return &Prompt{Label: "${" + clean(t.tk.Subject.Inputs[i]) + "} (no echo):", Secret: true}
+}
+
 // detach gives t a feed line of its own when it was folded into a line
 // of equal auto reads (its decision went otherwise).
 func (st *state) detach(t *tracked) {
@@ -588,6 +665,7 @@ func (st *state) failed(t *tracked, note string) {
 	t.decided = true
 	clear(t.secret)
 	t.secret = nil
+	t.wipeInputs()
 	st.printEntry(t.entry)
 	st.s.observe(Event{Kind: EvFailed, Instance: t.instance, ID: t.id, Err: errors.New(note)})
 }
@@ -1010,6 +1088,17 @@ func (st *state) approve(t *tracked) {
 		t.card.Prompt = &Prompt{Label: retypeLabel(t)}
 		return
 	}
+	if t.tk != nil && t.tk.AsksInputs() {
+		if !needsInputs(t) {
+			st.setFlash("this lock's key is not pinned here: no typed value can be sealed to it (restart lox run to pin it); n denies")
+			return
+		}
+		t.wipeInputs()
+		t.inputs = map[string][]byte{}
+		t.promptKind = promptInputs
+		t.card.Prompt = inputPrompt(t, 0)
+		return
+	}
 	if needsSecret(t) {
 		if !t.req.Verified {
 			st.setFlash("this lock's key is not pinned here: no secret can be sealed to it (restart lox run to pin it); n denies")
@@ -1052,6 +1141,9 @@ func (st *state) promptKey(t *tracked, k Key) {
 	case KeyEsc:
 		clear(p.Typed)
 		t.card.Prompt = nil
+		if t.cq == nil && t.promptKind == promptInputs {
+			st.denyTyped(t) // Esc on a typed value denies
+		}
 	case KeyBackspace:
 		if n := len(p.Typed); n > 0 {
 			p.Typed[n-1] = 0
@@ -1085,6 +1177,19 @@ func (st *state) promptKey(t *tracked, k Key) {
 			t.retyped = typed
 			t.card.Prompt = nil
 			st.approve(t)
+		case promptInputs:
+			if len(secret) == 0 {
+				st.denyTyped(t)
+				return
+			}
+			names := t.tk.Subject.Inputs
+			t.inputs[names[len(t.inputs)]] = slices.Clone(secret)
+			if len(t.inputs) < len(names) {
+				t.card.Prompt = inputPrompt(t, len(t.inputs))
+				return
+			}
+			t.card.Prompt = nil
+			st.sendInputs(t)
 		case promptSecret:
 			if len(secret) == 0 {
 				c := st.cachedSecret(t)
