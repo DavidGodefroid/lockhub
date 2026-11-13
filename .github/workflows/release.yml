@@ -24,6 +24,12 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      # ShippedLocks must name each lock's latest release (lockhttp#44).
+      - name: shipped locks are the latest releases
+        env:
+          LOX_CHECK_SHIPPED: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: go test -run TestShippedLocksAreLatest -v ./internal/family
 
   # The lox CLI as static archives for the Lock Family install.sh
   # (lockfamily.dev/install.sh): lox_X.Y.Z_<os>_<arch>.tar.gz and

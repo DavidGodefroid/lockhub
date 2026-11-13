@@ -5,6 +5,28 @@ digest).
 
 ## Unreleased
 
+## v0.11.0 (2026-11-13)
+
+Supported locks: lockssh joins `lox run` (lockssh v0.1.0 or later).
+`lox run` upgrades older images to locksql v0.18.1, lockmq v0.9.0,
+lockfile v0.9.1, lockhttp v0.9.1, locklog v0.3.0 and lockssh v0.2.0
+(`family.ShippedLocks`; v0.10.1 still pinned lockhttp v0.8.1 and the
+others' previous releases, DavidGodefroid/lockhttp#44); `lox add` still
+pins each lock's latest signed release. The release workflow now fails
+before publishing a lox whose `ShippedLocks` is not each lock's latest
+release. lockkit v0.19.1. Upgrade lox, then start `lox run`: it upgrades
+the hub image to v0.11.0.
+
+### Breaking
+
+- `lox add` (every type, both forms) and `lox run` (`--no-start` too)
+  refuse a workspace that is not the user's or that group or others can
+  write: the workspace directory, `.lockfamily/` and each lock's
+  `.<type>/`, with one message for every type and its fix, `chmod go-w
+  <directory>` (#178). Only locklog refused it before; a workspace made
+  under umask 002 (0775) let a member of the group replace a lock's
+  reviewed configuration between two `lox run`s.
+
 - `lox run` applies the company's managed configuration (#179, lockkit
   v0.19.1 `managed`): it reads `/etc/lockfamily/managed.toml` on the host
   (a file refused stops everything, exit 3), mounts it read-only at
@@ -16,82 +38,27 @@ digest).
   `egress` keep a lock from starting. A change of the file alone asks
   nothing. New `lox managed show`; `lox doctor` has a `managed` line.
 
-- `lox run` asks the values a ticket wants typed (#187, lockkit v0.18.0
-  `Subject.Inputs`): the card lists their names and a warning, `y` prompts
-  for each without echo, and the values go to the lock sealed to its
-  one-use key (`ticket.SealInputs`), never to the feed, the scrollback or
-  the hub. An empty answer or `Esc` denies (`no value typed`). Such a
-  ticket is never decided by an auto rule, and the hub denies another
-  facade's approval of it (`typed values: decide in lox run`). First
-  consumer: lockfile#9. lockkit v0.18.0 also drops the auto-mode
-  identifiers and `auto_approve` from its status (lockkit#120).
+- `lox attach NAME` shows the question the console actually waits for,
+  read in the lock's container from the question file its console keeps
+  next to its socket (DavidGodefroid/lockkit#127,
+  DavidGodefroid/locksql#182): only when the console does not listen on
+  its socket, only that console's own file (its name, owner and mode
+  0600), at most 200 characters, escaped for the terminal (#119): `lock
+  NAME waits for: Passphrase for ...: (typed, not shown)`. A console that
+  listens says `lock NAME is serving: nothing to answer`; neither gives
+  the container's state (starting, or stopped with its exit status). The
+  list of what a console may ask is gone: it was taken for the question,
+  and a policy answer was typed as an SSH passphrase. A console that ends
+  under the attach makes lox attach print its next question once it
+  restarted (#143).
 
-- `lox run` no longer exhausts Docker's default address pools (#175): each
-  network of a workspace gets a small subnet of its own (`lockhub` a /24, the
-  others a /28), set in the compose file, from the workspace's pool
-  (`10.123.0.0/16`, or `network.pool` in lockfamily.yaml, reviewed). lox run
-  reads the engine's networks first: a network keeps its subnet while it is
-  free, new ones take the first free block, and two workspaces never
-  overlap. A network the engine refuses for its addresses stops lox run with
-  a clear message; the networks compose made before it are removed and
-  nothing is applied. `lox doctor` warns when the pool cannot hold the next
-  run's networks, or when the engine's default address pools (lea's and other
-  projects') have fewer than 4 subnets free, with the `default-address-pools`
-  fix for `/etc/docker/daemon.json`. See `docs/networks.md`.
-
-- A console's card in `lox run` shows the context lines the lock
-  recorded with its question (#166): lockconsoles reads the question
-  file with lockkit's `console.ParseQuestion` (lockkit v0.17.0), takes
-  its first line as the prompt and the lines printed above it as the
-  context, cleaned for a terminal and capped at 16. A lock built on an
-  older lockkit records none: its context is still read from its screen.
-  Before, a question file with context became the card's whole prompt.
-  lockkit v0.17.0 also raises the defaults `lox doctor` shows: 30 plans
-  pending per lock and 30 new tickets per 5m0s.
-
-- `lox run`'s `w` overlay no longer shows again, for a moment, the
-  tickets just withdrawn (#171): the hub's list read after the
-  withdrawals could be one it made before them, and `x` then picked a
-  ticket already withdrawn instead of the selected one.
-
-- `lox add` (every type, both forms) and `lox run` (`--no-start` too)
-  refuse a workspace that is not the user's or that group or others can
-  write: the workspace directory, `.lockfamily/` and each lock's
-  `.<type>/`, with one message for every type and its fix, `chmod go-w
-  <directory>` (#178). Only locklog refused it before; a workspace made
-  under umask 002 (0775) let a member of the group replace a lock's
-  reviewed configuration between two `lox run`s.
-
-- A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
-  plan lox run refuses is not started, with its reason (`lock <name>: not
-  started: <reason>`, in lox run's header and as a `lox doctor` failure,
-  kept in the state's `not-started.json`); the other locks start and are
-  served. A locklog lock's `log_roots` (reviewed, passed to its console as
-  `LOCKLOG_EXTRA_ROOTS`) allows log directories outside `/var/log` and
-  `/run/log/journal`: `lox add locklog --only` writes it for a directory
-  `LOCKLOG_EXTRA_ROOTS` lets in, and refuses any other with lox run's
-  message, so it never declares a lock lox run refuses.
+### Security
 
 - `lox run`'s short review lists a changed profile line's new value (#173):
   under `Other changes since the last lox run:` it showed only the old (`-`)
   lines of a profile, never the new (`+`) ones, so a loosening
   (`tier = "write"`, a new host) was approved unseen. A changed line now
   shows `-` and `+`, an added one `+`, a removed one `-`.
-- `lox add lockfile --source sftp --known-hosts FILE` no longer writes a host
-  path the console cannot open (#174): it copies FILE to
-  `.lockfile/known_hosts` and the profile names
-  `~/.config/lockfile/known_hosts`, where the console sees its profile's
-  reviewed copy. `lox run` checks a lockfile sftp profile's `known_hosts` and
-  `key` before the start: in the reviewed copy, or in the console's
-  container; a path into the workspace's `.lockfile` is said with the path to
-  write instead. e2e: `ci/e2e/lockfile-sftp.sh`.
-
-- `lox run` upgrades an image signed in the sigstore bundle format (#176):
-  cosign's output names no release for it (no certificate subject), so a
-  lockfile v0.8.x lock stayed on its first pin (`its signature names no
-  lockfile release`). Its release is now the newest whose image in ghcr.io
-  has the pinned digest (GitHub's release list, then one registry lookup per
-  release), once cosign verified the pinned image for that very tag.
 
 - Two workspaces on one host (#172): their hubs share the facade socket,
   and a second workspace's `lox run` used to serve the first one's hub,
@@ -104,10 +71,22 @@ digest).
   reports it, and the hub's own `another hub is serving it` error points at
   the shared runtime directory. e2e: `ci/e2e/two-workspaces.sh`.
 
+- `lox run` asks the values a ticket wants typed (#187, lockkit v0.18.0
+  `Subject.Inputs`): the card lists their names and a warning, `y` prompts
+  for each without echo, and the values go to the lock sealed to its
+  one-use key (`ticket.SealInputs`), never to the feed, the scrollback or
+  the hub. An empty answer or `Esc` denies (`no value typed`). Such a
+  ticket is never decided by an auto rule, and the hub denies another
+  facade's approval of it (`typed values: decide in lox run`). First
+  consumer: lockfile#9. lockkit v0.18.0 also drops the auto-mode
+  identifiers and `auto_approve` from its status (lockkit#120).
+
+### Behaviour
+
 - lockssh is a lock type (#133): `lox add lockssh` (host, port, login, key
   or password, the key and known_hosts files in the lock's home, the allow
   rules, `--exec`), `lox add lockssh NAME`, and `lox run`, digest-pinned to
-  `ghcr.io/davidgodefroid/lockssh` (v0.1.0 or later; shipped: v0.1.0). The
+  `ghcr.io/davidgodefroid/lockssh` (v0.1.0 or later). The
   console runs as `10041`, its clients group `10040`, with its launcher's
   limits; its egress reaches the profile's `host`:`port` only (an IP address
   refused); the review shows `ssh user@host:port`, the login and the trusted
@@ -121,22 +100,18 @@ digest).
   lists the lockssh launcher and proposes the plain hosts of
   `~/.ssh/config`. e2e: `ci/e2e/lockssh-agent.sh`, a host agent's `lockssh
   mcp` against an SSH server in a container. Supported locks: lockssh joins
-  `lox run` (lockssh v0.1.0 or later; `lox run` upgrades an older image to
-  v0.1.0).
+  `lox run` (lockssh v0.1.0 or later).
 
-- `lox run` keeps a session password per profile and endpoint (#165): a
-  profile with two `credentials = "ask"` legs (an SSH bastion, then its
-  database) asks each leg its own password once, the prompt names the
-  endpoint, the database leg right after the bastion's is no longer
-  taken for a failed reconnect, and an idle reconnect reuses each leg's
-  own password without asking.
-
-- `lox add` / `lox run` home-file checks (#167): a path into the
-  profile's directory (such as `tls_ca = ".locksql/ca.pem"`) is checked
-  in the copy the review applies, so a first run or a profile change no
-  longer reports it "not found"; a key in an inline table
-  (`ssh = { auth = "key", key = "…" }`) is checked, and an `ssh` value
-  the review cannot read is listed as not checked instead of skipped.
+- `lox run` reuses the host's Vault CLI token (#124): a `vault: true` lock
+  may set `vault_token: cli` (default `ask`), a change the review shows.
+  lox run then reads the token with `vault print token` (or from
+  `~/.vault-token`: the user's, 0600 or stricter), checks it at the
+  reviewed Vault before each use (TTL, read capability on the lock's
+  `vault_path`, the reviewed CA, no proxy, no redirect) and answers the
+  console's `Vault token for <address>:` with it, without a card. An
+  unusable token, or the console asking again within 30 s, falls back to
+  the human with the reason. The session journal records `vault token:
+  cli|typed`, never the value.
 
 - `lox run` has a tab per lock (`1`…`9`, `Tab`; `0` the global feed, the
   default) with what the lock decides on its own side, read at its
@@ -154,6 +129,7 @@ digest).
   (idle time, time left before `idle_timeout` and `max_session`, the limits
   in force from the console's `:status`, typed once per attach and on `i`).
   A badge marks a tab that wants you (#146).
+
 - Withdraw pending or stuck tickets (#148). In `lox run`, `w` lists every
   ticket pending at the hub, oldest first, with its age, per lock with
   how many lox run cannot verify; `x` withdraws the selected one, `X` all
@@ -172,6 +148,53 @@ digest).
   #148 part end the plan as soon as the denial arrives and give reads a
   1 h TTL; older ones end it on the agent's next run of the ticket.
 
+- `lox run` no longer exhausts Docker's default address pools (#175): each
+  network of a workspace gets a small subnet of its own (`lockhub` a /24, the
+  others a /28), set in the compose file, from the workspace's pool
+  (`10.123.0.0/16`, or `network.pool` in lockfamily.yaml, reviewed). lox run
+  reads the engine's networks first: a network keeps its subnet while it is
+  free, new ones take the first free block, and two workspaces never
+  overlap. A network the engine refuses for its addresses stops lox run with
+  a clear message; the networks compose made before it are removed and
+  nothing is applied. `lox doctor` warns when the pool cannot hold the next
+  run's networks, or when the engine's default address pools (lea's and other
+  projects') have fewer than 4 subnets free, with the `default-address-pools`
+  fix for `/etc/docker/daemon.json`. See `docs/networks.md`.
+
+- A bad locklog lock no longer stops `lox run` (#177). A lock whose mount
+  plan lox run refuses is not started, with its reason (`lock <name>: not
+  started: <reason>`, in lox run's header and as a `lox doctor` failure,
+  kept in the state's `not-started.json`); the other locks start and are
+  served. A locklog lock's `log_roots` (reviewed, passed to its console as
+  `LOCKLOG_EXTRA_ROOTS`) allows log directories outside `/var/log` and
+  `/run/log/journal`: `lox add locklog --only` writes it for a directory
+  `LOCKLOG_EXTRA_ROOTS` lets in, and refuses any other with lox run's
+  message, so it never declares a lock lox run refuses.
+
+- `lox run` keeps a session password per profile and endpoint (#165): a
+  profile with two `credentials = "ask"` legs (an SSH bastion, then its
+  database) asks each leg its own password once, the prompt names the
+  endpoint, the database leg right after the bastion's is no longer
+  taken for a failed reconnect, and an idle reconnect reuses each leg's
+  own password without asking.
+
+- A console's card in `lox run` shows the context lines the lock
+  recorded with its question (#166): lockconsoles reads the question
+  file with lockkit's `console.ParseQuestion` (lockkit v0.17.0), takes
+  its first line as the prompt and the lines printed above it as the
+  context, cleaned for a terminal and capped at 16. A lock built on an
+  older lockkit records none: its context is still read from its screen.
+  Before, a question file with context became the card's whole prompt.
+  lockkit v0.17.0 also raises the defaults `lox doctor` shows: 30 plans
+  pending per lock and 30 new tickets per 5m0s.
+
+- `lox add` / `lox run` home-file checks (#167): a path into the
+  profile's directory (such as `tls_ca = ".locksql/ca.pem"`) is checked
+  in the copy the review applies, so a first run or a profile change no
+  longer reports it "not found"; a key in an inline table
+  (`ssh = { auth = "key", key = "…" }`) is checked, and an `ssh` value
+  the review cannot read is listed as not checked instead of skipped.
+
 - The `lox add` and `lox run` review checks the files a locksql profile
   names (`tls_ca`, `tls_cert`, `tls_key`, `ssh.key`) in the lock's home
   volume, as the console account, with locksql's `~/` rule (one rule,
@@ -181,19 +204,26 @@ digest).
   add` offers to copy a missing file from a host path, once you answer
   `y` (#158, follow-up of DavidGodefroid/locksql#194).
 
-- `lox attach NAME` shows the question the console actually waits for,
-  read in the lock's container from the question file its console keeps
-  next to its socket (DavidGodefroid/lockkit#127,
-  DavidGodefroid/locksql#182): only when the console does not listen on
-  its socket, only that console's own file (its name, owner and mode
-  0600), at most 200 characters, escaped for the terminal (#119): `lock
-  NAME waits for: Passphrase for ...: (typed, not shown)`. A console that
-  listens says `lock NAME is serving: nothing to answer`; neither gives
-  the container's state (starting, or stopped with its exit status). The
-  list of what a console may ask is gone: it was taken for the question,
-  and a policy answer was typed as an SSH passphrase. A console that ends
-  under the attach makes lox attach print its next question once it
-  restarted (#143).
+- `lox add lockfile --source sftp --known-hosts FILE` no longer writes a host
+  path the console cannot open (#174): it copies FILE to
+  `.lockfile/known_hosts` and the profile names
+  `~/.config/lockfile/known_hosts`, where the console sees its profile's
+  reviewed copy. `lox run` checks a lockfile sftp profile's `known_hosts` and
+  `key` before the start: in the reviewed copy, or in the console's
+  container; a path into the workspace's `.lockfile` is said with the path to
+  write instead. e2e: `ci/e2e/lockfile-sftp.sh`.
+
+- `lox run` upgrades an image signed in the sigstore bundle format (#176):
+  cosign's output names no release for it (no certificate subject), so a
+  lockfile v0.8.x lock stayed on its first pin (`its signature names no
+  lockfile release`). Its release is now the newest whose image in ghcr.io
+  has the pinned digest (GitHub's release list, then one registry lookup per
+  release), once cosign verified the pinned image for that very tag.
+
+- `lox run`'s `w` overlay no longer shows again, for a moment, the
+  tickets just withdrawn (#171): the hub's list read after the
+  withdrawals could be one it made before them, and `x` then picked a
+  ticket already withdrawn instead of the selected one.
 
 ## v0.10.1 (2026-11-07)
 
