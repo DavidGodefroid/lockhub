@@ -145,6 +145,9 @@ type Up struct {
 	// releases this lox ships with, once verified (upgrade.go); nil: the
 	// pins are applied as they are.
 	Upgrade *Upgrade
+	// Resolve finds the release of an image whose signature names none,
+	// for [lox] image_min (nil: Upgrade's, else unknown).
+	Resolve *Upgrade
 }
 
 // Project is the compose project of a workspace: one per workspace.
@@ -157,6 +160,10 @@ func Project(workspace string) string {
 type Applied struct {
 	Fingerprint string   `json:"fingerprint"`
 	Summary     []string `json:"summary"`
+	// ManagedFingerprint names the managed file applied with it (none:
+	// empty). It is not part of Fingerprint: the company's admin decided
+	// it, so a change of it alone is applied without a question.
+	ManagedFingerprint string `json:"managed_fingerprint,omitempty"`
 }
 
 // Summary is the reviewable form of a configuration and its keys: every
@@ -288,10 +295,17 @@ func (u *Up) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The company's managed file, read on the host: one refused stops
+	// everything (fail closed).
+	m, err := LoadManaged(ctx)
+	if err != nil {
+		return err
+	}
 	c, err := decode(raw, u.File)
 	if err != nil {
 		return err
 	}
+	m.applyVault(c)
 	// --pin: the configuration reviewed and applied is the file with the
 	// pinned hub image, written back once applied.
 	pinned := false
@@ -310,6 +324,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if c, err = decode(raw, u.File); err != nil {
 				return err
 			}
+			m.applyVault(c)
 			pinned = true
 			fmt.Fprintf(u.Out, "--pin: the hub image becomes %s (was %s); %s takes it once applied\n", ref, old, u.File)
 		}
@@ -347,6 +362,25 @@ func (u *Up) Do(ctx context.Context) error {
 	egresses, err := Egresses(c, profiles)
 	if err != nil {
 		return err
+	}
+	// A lock lox run cannot start (a mount plan it refuses, the managed
+	// file's bounds) is not started: the others are (lockhub#177). lox add
+	// of that very lock, or a lock whose key is rotated, still stops on it.
+	notStarted := map[string]string{}
+	skip := func(n, why string) error {
+		if n == u.Focus || slices.Contains(rot.locks, n) {
+			return fmt.Errorf("lock %s: %s", n, why)
+		}
+		notStarted[n] = why
+		fmt.Fprintf(u.Out, "lock %s: not started: %s (the other locks are)\n", n, why)
+		return nil
+	}
+	for _, n := range c.Instances() {
+		if why := m.egressRefusal(n, egresses[n]); why != "" {
+			if err := skip(n, why); err != nil {
+				return err
+			}
+		}
 	}
 	hubData := filepath.Join(u.State, "hub")
 	facadeDir := filepath.Join(u.Runtime, "lockhub")
@@ -473,6 +507,7 @@ func (u *Up) Do(ctx context.Context) error {
 			if c, err = decode(nraw, u.File); err != nil {
 				return err
 			}
+			m.applyVault(c)
 			raw, ups = nraw, done
 			composeYAML = []byte(Compose(c, paths))
 		}
@@ -493,6 +528,31 @@ func (u *Up) Do(ctx context.Context) error {
 			paths.Subnets[k] = s.String()
 		}
 		composeYAML = []byte(Compose(c, paths))
+	}
+	if m != nil {
+		if err := u.checkManaged(ctx, m, c, project, &paths, profiles, tags, notStarted, skip); err != nil {
+			return err
+		}
+		composeYAML = []byte(Compose(c, paths))
+	}
+	// drop takes the locks not started out of everything applied: no key
+	// at the hub, no route, no container (compose up removes one left from
+	// before).
+	drop := func(lockPubs map[string]string) {
+		c = c.without(notStarted)
+		for n := range notStarted {
+			delete(lockPubs, n)
+			delete(egresses, n)
+		}
+		for t := range profiles {
+			if !slices.Contains(types(c), t) {
+				delete(profiles, t)
+			}
+		}
+		composeYAML = []byte(Compose(c, paths))
+	}
+	if len(notStarted) > 0 {
+		drop(nil)
 	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
@@ -618,7 +678,7 @@ func (u *Up) Do(ctx context.Context) error {
 	plans := map[string]*LogPlan{}
 	// A lock whose mount plan is refused is not started: the others are
 	// (lockhub#177). lox add of that very lock still stops on it.
-	notStarted := map[string]string{}
+	logSkipped := false
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
 		if !Kinds[l.Type].Mounts {
@@ -641,8 +701,10 @@ func (u *Up) Do(ctx context.Context) error {
 			if n == u.Focus || slices.Contains(rot.locks, n) {
 				return err
 			}
-			notStarted[n] = strings.TrimPrefix(err.Error(), "lock "+n+": ")
-			fmt.Fprintf(u.Out, "lock %s: not started: %s (the other locks are)\n", n, notStarted[n])
+			if err := skip(n, strings.TrimPrefix(err.Error(), "lock "+n+": ")); err != nil {
+				return err
+			}
+			logSkipped = true
 			continue
 		}
 		// Its auto rules, from the same copy: rules lox run cannot read
@@ -669,20 +731,8 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 		plans[n] = pl
 	}
-	if len(notStarted) > 0 {
-		// Out of everything applied: no key at the hub, no route, no
-		// container (compose up removes one left from before).
-		c = c.without(notStarted)
-		for n := range notStarted {
-			delete(lockPubs, n)
-			delete(egresses, n)
-		}
-		for t := range profiles {
-			if !slices.Contains(types(c), t) {
-				delete(profiles, t)
-			}
-		}
-		composeYAML = []byte(Compose(c, paths))
+	if logSkipped {
+		drop(lockPubs)
 	}
 	// The auto rules of the lockssh locks, read the same way from their
 	// reviewed copy: rules lox run cannot read leave every ticket asked.
@@ -750,6 +800,9 @@ func (u *Up) Do(ctx context.Context) error {
 	// 3. Review with the human: everything on the first run, the change
 	// afterwards. Nothing is applied without a yes.
 	sum := append(Summary(c, hp, lockPubs, facadePubs), chatTokens(c, hubData)...)
+	if l := m.vaultLine(); l != "" {
+		sum = append(sum, l)
+	}
 	for _, n := range c.Instances() {
 		if pl := plans[n]; pl != nil {
 			sum = append(sum, pl.Review(n)...)
@@ -809,8 +862,16 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	if u.Probe {
-		u.Same = prev.Fingerprint == fp
+		u.Same = prev.Fingerprint == fp && prev.ManagedFingerprint == m.Fingerprint()
 		return nil
+	}
+	// The managed file is the admin's: shown, never asked about. A change
+	// of it alone recreates the locks (their label) without a question.
+	if m != nil {
+		fmt.Fprintln(u.Out, m.Line())
+	}
+	if old, cur := prev.ManagedFingerprint, m.Fingerprint(); !first && old != cur {
+		fmt.Fprintf(u.Out, "managed: changed %s → %s\n", shortFP(old), shortFP(cur))
 	}
 	if u.Focus != "" {
 		// A lock applied before and taken out since (lox remove) may be the
@@ -1094,7 +1155,7 @@ func (u *Up) Do(ctx context.Context) error {
 			}
 		}
 	}
-	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum}, "", "  ")
+	ab, _ := json.MarshalIndent(Applied{Fingerprint: fp, Summary: sum, ManagedFingerprint: m.Fingerprint()}, "", "  ")
 	if err := os.WriteFile(appliedPath, append(ab, '\n'), 0o600); err != nil {
 		return err
 	}

@@ -78,6 +78,23 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		}
 		return nil, errors.New("refused")
 	}
+	// lox run's managed check: keys["check/<instance>"] is its output,
+	// keys["checkexit/<instance>"] its exit status (none: 0).
+	if i := strings.Index(line, " --no-deps managedcheck-"); i >= 0 {
+		n, _, _ := strings.Cut(line[i+len(" --no-deps managedcheck-"):], " ")
+		if code := f.keys["checkexit/"+n]; code != "" && code != "0" {
+			return []byte(f.keys["check/"+n]), &RunError{Cmd: line, Err: exitStatus(code), Stderr: []byte(f.keys["checkerr/"+n])}
+		}
+		return []byte(f.keys["check/"+n]), nil
+	}
+	// cosign: keys["tag/<ref>"] is the release its signature names.
+	if name == "cosign" && len(args) > 0 {
+		ref := args[len(args)-1]
+		if tag := f.keys["tag/"+ref]; tag != "" {
+			repo := strings.TrimPrefix(strings.Split(ref, "@")[0], "ghcr.io/davidgodefroid/")
+			return []byte(`[{"optional":{"Subject":"https://github.com/` + Owner + `/` + repo + `/.github/workflows/release.yml@refs/tags/` + tag + `"}}]`), nil
+		}
+	}
 	// The Docker host's CPUs: keys["ncpu"], or 8.
 	if line == "docker info --format {{.NCPU}}" {
 		if n, ok := f.keys["ncpu"]; ok {
@@ -153,6 +170,18 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		return []byte(f.keys[line[i+len("hub-key --instance "):]] + "\n"), nil
 	}
 	return nil, nil
+}
+
+// exitStatus is a command's exit status, as exec.ExitError tells it.
+type exitStatus string
+
+func (e exitStatus) Error() string { return "exit status " + string(e) }
+func (e exitStatus) ExitCode() int {
+	n := 0
+	for _, c := range e {
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // rulesJSON is locklog profile rules --json for profiles, each with the

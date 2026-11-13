@@ -173,6 +173,10 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 				return nil, nil, err
 			}
 		}
+		if cur != "" {
+			// Kept for [lox] image_min.
+			tags[w.ref] = cur
+		}
 		if cur == "" {
 			fmt.Fprintf(out, "%s: not upgraded: its signature names no %s release, so it cannot be compared with %s\n", what, w.repo, pin)
 			continue
@@ -197,6 +201,7 @@ func (u *Upgrade) upgrade(ctx context.Context, out io.Writer, raw []byte, c *Con
 		if err != nil {
 			return nil, nil, fmt.Errorf("upgrading the %s: %w", what, err)
 		}
+		tags[r.ref] = pin
 		g := upgraded{lock: w.lock, repo: w.repo, variant: w.variant, from: cur, to: pin, oldRef: w.ref, newRef: r.ref}
 		done = append(done, g)
 	}
@@ -289,4 +294,21 @@ func setLockImage(raw []byte, name, ref string) ([]byte, error) {
 	}
 	out, _, err := encodeValid(&doc)
 	return out, err
+}
+
+// releaseOf is the release of repo whose image (variant) is ref, for an
+// image whose signature names none (release): "" when u cannot tell.
+func (u *Upgrade) releaseOf(ctx context.Context, repo, variant, ref string) string {
+	if u == nil || u.Image == nil || u.Tags == nil || u.Digest == nil {
+		return ""
+	}
+	image := func(repo, tag, variant string) resolved {
+		var r resolved
+		r.ref, r.err = u.Image(ctx, repo, tag, variant)
+		if r.err == nil && digestRef.FindStringSubmatch(r.ref) == nil {
+			r.err = fmt.Errorf("not an image by digest: %q", r.ref)
+		}
+		return r
+	}
+	return u.release(ctx, repo, variant, ref, map[string][]string{}, image)
 }

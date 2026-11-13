@@ -5,6 +5,17 @@ digest).
 
 ## Unreleased
 
+- `lox run` applies the company's managed configuration (#179, lockkit
+  v0.19.1 `managed`): it reads `/etc/lockfamily/managed.toml` on the host
+  (a file refused stops everything, exit 3), mounts it read-only at
+  `/etc/lockfamily` in every lock (with the verified signature stamp when
+  signed), runs each lock's `<tool> managed check` before starting it (a
+  lock beyond the bounds is not started, the others are), and applies
+  `[lox]`: `auto_max` / `production_auto_max` cap the auto mode,
+  `allow_no_upgrade = false` refuses `--no-upgrade`, `image_min` and
+  `egress` keep a lock from starting. A change of the file alone asks
+  nothing. New `lox managed show`; `lox doctor` has a `managed` line.
+
 - `lox run` asks the values a ticket wants typed (#187, lockkit v0.18.0
   `Subject.Inputs`): the card lists their names and a warning, `y` prompts
   for each without echo, and the values go to the lock sealed to its

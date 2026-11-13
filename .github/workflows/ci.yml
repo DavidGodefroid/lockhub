@@ -35,6 +35,10 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      # The managed file's tests move it with lockkit's test path, only in
+      # a build with this tag.
+      - name: go test (managed)
+        run: go test -tags lockfamily_managed_test ./internal/family/ ./cmd/lox/
 
   # Compatibility with lockkit (plan H0): lockhub, built on the pinned
   # lockkit and on the release before it, checked against the signed

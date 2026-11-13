@@ -43,6 +43,16 @@ func (d *Doctor) Do(ctx context.Context) int {
 	warn := func(f string, a ...any) { fmt.Fprintf(d.Out, "warn "+f+"\n", a...) }
 	fail := func(f string, a ...any) { fails++; fmt.Fprintf(d.Out, "FAIL "+f+"\n", a...) }
 
+	// The company's managed file, as lox run reads it.
+	switch m, err := LoadManaged(ctx); {
+	case err != nil:
+		fail("managed: %v (lox run refuses to start: ask your administrator to fix it)", err)
+	case m == nil:
+		ok("managed: no managed configuration")
+	default:
+		ok("managed: %s", m.File.Describe())
+	}
+
 	c, err := Load(d.File)
 	if err != nil {
 		fail("lockfamily.yaml: %v", err)

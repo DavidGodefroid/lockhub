@@ -58,6 +58,15 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox run: --theme is light or dark")
 		return 2
 	}
+	// The company's managed file, before anything else: refused, nothing
+	// runs (exit 3); its [lox] section caps the auto mode.
+	mf, err := family.LoadManaged(context.Background())
+	if err == nil && *noUpgrade && !*noStart {
+		err = mf.CheckNoUpgrade()
+	}
+	if err != nil {
+		return failed(context.Background(), stderr, "run", err)
+	}
 	// Decisions are taken by a human at a terminal, never piped.
 	if !term.IsTerminal(int(stdin.Fd())) {
 		fmt.Fprintln(stderr, "lox run: answers are typed at a terminal; stdin is not one (run it in a terminal of its own, outside the agent)")
@@ -75,6 +84,9 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if mf != nil {
+		fmt.Fprintln(stdout, mf.File.Describe())
+	}
 	ownState := stateDir(family.Project(family.Workspace(abs)))
 	hubc := approve.Dial(*sock)
 	if !*noStart {
@@ -89,8 +101,9 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		u := &family.Up{File: abs, State: stateDir(family.Project(family.Workspace(abs))), Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: r, In: bufio.NewReader(stdin), Out: stdout,
 			Pin: *pin, Rotate: rotate, Review: *review}
+		u.Resolve = upgrader(r)
 		if !*noUpgrade {
-			u.Upgrade = upgrader(r)
+			u.Upgrade = u.Resolve
 		}
 		if err := u.Do(ctx); err != nil {
 			return failed(ctx, stderr, "run", err)
@@ -147,7 +160,11 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		mode = loxrun.Manual
 	}
 	s := &loxrun.Session{Hub: hubc, Keys: tm.Keys, Resize: tm.Resize, Out: out, Style: st,
-		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules, NotStarted: notStarted, Vault: vault}
+		Workspace: tildeHome(family.Workspace(abs)), Locks: locks, LockKeys: lockKeys, Display: os.Getenv("USER"), Mode: mode, Rules: rules, NotStarted: notStarted, Vault: vault,
+		Caps: managedCaps(mf)}
+	if mf != nil {
+		s.Managed = mf.File.Describe()
+	}
 	// Only this workspace's hub's tickets are shown (#172).
 	s.CheckHub = func(ctx context.Context) error { return checkHub(ctx, hubc, *sock, ownState) }
 	// A question plays a sound of its own (not lea's), again while it waits.
@@ -256,6 +273,22 @@ func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*f
 		}
 		return nil
 	}
+}
+
+// managedCaps are the engine's ceilings from the managed file's [lox]
+// auto_max and production_auto_max (nil: none).
+func managedCaps(m *family.Managed) *loxrun.Caps {
+	if m == nil || (len(m.Lox.AutoMax) == 0 && len(m.Lox.ProductionAutoMax) == 0) {
+		return nil
+	}
+	conv := func(in map[string]string) loxrun.ProfileRules {
+		out := loxrun.ProfileRules{}
+		for a, v := range in {
+			out[loxrun.Action(a)] = loxrun.Value(v)
+		}
+		return out
+	}
+	return &loxrun.Caps{Auto: conv(m.Lox.AutoMax), Production: conv(m.Lox.ProductionAutoMax)}
 }
 
 // vaultCLI serves vault_token: cli (lockhub#124) to the locks the last

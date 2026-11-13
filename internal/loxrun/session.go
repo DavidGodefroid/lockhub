@@ -124,6 +124,10 @@ type Session struct {
 	// NotStarted are the locks lox run did not start (Err: why): the
 	// header says so, next to the consoles.
 	NotStarted []LockConsole
+	// Caps are the company's ceilings on the auto mode (nil: none);
+	// Managed is the header's "Managed by <organisation> (…)" ("": none).
+	Caps    *Caps
+	Managed string
 	// Vault, if set, gives the locks with vault_token: cli the host's
 	// Vault CLI token (vault.go).
 	Vault *VaultCLI
@@ -272,6 +276,7 @@ func newState(s *Session) *state {
 		ran: map[string]ranAt{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
 		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, vaultCLIAt: map[string]time.Time{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
+	st.eng.Caps = s.Caps
 	st.muted = s.Sound != nil && s.Sound.Off
 	return st
 }

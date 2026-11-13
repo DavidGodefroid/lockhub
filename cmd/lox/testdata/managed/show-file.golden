@@ -1,0 +1,13 @@
+Managed by Acme (sha256:ba6bbbdd75c4)
+path: DIR/managed.toml
+organisation: Acme
+fingerprint: sha256:ba6bbbdd75c41c97366dee64ecd11e223d498bf704bddaa1228a1fcc3b70f504
+signed: no
+lox:
+  auto_max.ddl = deny
+  auto_max.write = ask
+  production_auto_max.read = ask
+  image_min.locksql = v0.18.0
+  allow_no_upgrade = false
+  egress = *.allowed.internal:5432
+sections: locksql
