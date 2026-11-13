@@ -404,7 +404,10 @@ lea's checks, in POSIX sh:
   line; in `.mcp.json`, `"args": ["mcp", "--instance", "NAME"]`). With
   several and no `--instance`, the error names them.
 - `socket_volume` is `<project>_<instance>-run`, `client_gid` the image's
-  clients group.
+  clients group. `lox run` always writes the image's clients group; a
+  launcher given an empty `client_gid` skips only that comparison, and every
+  other check still applies (the volume is proved by Docker's labels, not by
+  the gid).
 - Docker confirms the volume: `docker volume inspect` prints its labels
   `com.docker.compose.project`, `com.docker.compose.volume`
   (`<instance>-run`), `dev.lockfamily.role` (`socket`),
@@ -422,8 +425,9 @@ lea's checks, in POSIX sh:
 
 Without up.json, or with a lock or volume it cannot trust, the launcher
 says why and what to do (`lox run`), exits 2 (as a client that finds no
-console) and runs nothing: it never falls back to the fixed `<type>-run`
-volume of the consoles the launchers used to start. up.json only names the
+console) and runs nothing, except `<lock> doctor`, which still runs and
+reports why the lock cannot be used. It never falls back to the fixed
+`<type>-run` volume of the consoles the launchers used to start. up.json only names the
 lock: what is mounted is what Docker's labels prove. `.mcp.json` stays
 `<lock> mcp`.
 
@@ -436,7 +440,8 @@ workspace, whose profile directory lox run's console serves.
 
 lockhub's end-to-end test (`ci/e2e/phase2.sh`, run by the e2e workflow's
 phase 2 on every pull request) drives both launchers as `.mcp.json` starts
-them, over MCP on stdio, against the images `lox add` pins: `locksql mcp`
+them (`<lock> init claude` writes it; the test runs the command and args
+it reads there), over MCP on stdio, against the images `lox add` pins: `locksql mcp`
 plans and runs a query and, once the ticket is approved at `lox approve`,
 gets its rows; `lockmq mcp` reads a stream (RabbitMQ) and, once approved,
 gets its message. `ci/e2e/locklog-agent.sh` does the same for locklog:

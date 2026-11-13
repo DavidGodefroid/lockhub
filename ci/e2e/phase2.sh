@@ -95,6 +95,33 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# mcp_server NAME LAUNCHER IMAGEVAR=IMAGE: `NAME init claude` writes the
+# agent's .mcp.json (merging its entry into the file); then mcp_cmd and
+# mcp_args are the command and args .mcp.json gives the server NAME, read
+# with jq: what the agent's harness runs. LAUNCHER is on PATH as
+# $bin/NAME; a command naming another path is replaced by $bin/NAME, its
+# args kept. HOME is a directory of this run's: init also writes the
+# agents' files there.
+bin=$(dirname "$ws")/bin
+mcp_server() {
+	mkdir -p "$bin" "$(dirname "$ws")/home"
+	cp "$2" "$bin/$1"
+	chmod 0755 "$bin/$1"
+	case ":$PATH:" in *":$bin:"*) ;; *) PATH="$bin:$PATH" && export PATH ;; esac
+	env "$3" HOME="$(dirname "$ws")/home" "$1" init claude </dev/null || die "$1 init claude failed"
+	[ -f .mcp.json ] || die "$1 init claude wrote no .mcp.json"
+	cat .mcp.json
+	mcp_cmd=$(jq -r --arg s "$1" '.mcpServers[$s].command // empty' .mcp.json)
+	[ -n "$mcp_cmd" ] || die ".mcp.json has no $1 server"
+	jq -e --arg s "$1" '.mcpServers[$s].args | type == "array" and length > 0 and all(type == "string" and test("^[^[:space:]]+$"))' .mcp.json >/dev/null ||
+		die ".mcp.json: the $1 server's args are not plain words"
+	mcp_args=$(jq -r --arg s "$1" '.mcpServers[$s].args | join(" ")' .mcp.json)
+	case $mcp_cmd in
+	/*) mcp_cmd=$bin/$1 ;;
+	esac
+	echo "host agent: .mcp.json (jq) starts $1 as: $mcp_cmd $mcp_args"
+}
+
 say "lox add: each lock pinned to its latest signed release"
 for l in $LOCKS; do
 	"$lox" add "${l#*:}" "${l%%:*}"
@@ -435,12 +462,16 @@ if [ -n "$sql" ]; then
 	decisions=$((decisions + 1))
 
 	if [ -n "${LOCKSQL_LAUNCHER:-}" ]; then
-		say "a host agent: locksql's launcher, as .mcp.json starts it (locksql mcp), reaches lox up's lock through up.json"
-		# Claude Code on the host runs `locksql mcp` from the workspace
-		# (lockhub#78): the launcher finds .lockfamily/up.json, checks it
-		# and the socket volume with Docker, and mounts it read-only. The
-		# image is the lock's own (the release lox add pinned).
-		hostmcp() { LOCKSQL_IMAGE="$sqlimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKSQL_LAUNCHER" mcp; }
+		say "a host agent: locksql's launcher, as .mcp.json starts it (locksql mcp), reaches lox run's lock through up.json"
+		# Claude Code on the host runs what `locksql init claude` wrote in
+		# .mcp.json (`locksql mcp`) from the workspace (lockhub#78, #90):
+		# the launcher finds .lockfamily/up.json, checks it and the socket
+		# volume with Docker, and mounts it read-only. The image is the
+		# lock's own (the release lox add pinned).
+		mcp_server locksql "$LOCKSQL_LAUNCHER" LOCKSQL_IMAGE="$sqlimg"
+		sqlcmd=$mcp_cmd sqlargs=$mcp_args
+		# shellcheck disable=SC2086 # the args: plain words, checked by mcp_server
+		hostmcp() { LOCKSQL_IMAGE="$sqlimg" python3 "$here/mcp.py" 120 "$@" -- "$sqlcmd" $sqlargs; }
 		hostmcp locksql_plan '{"profile":"e2e","db":"app","sql":"SELECT id, label FROM people ORDER BY id LIMIT 10","intent":"e2e host agent"}' >hplan.json ||
 			{ cat hplan.json; die "host locksql_plan failed"; }
 		cat hplan.json
@@ -498,17 +529,23 @@ if [ -n "$sql" ]; then
 		docker rm "$E2E_ID-squat-rw" >/dev/null
 		[ "$rc" = 2 ] && grep -q "is mounted read-write by container" tamper4.err || die "the launcher took a socket volume another container mounts read-write (exit $rc)"
 		cmp up.json.orig .lockfamily/up.json || die "up.json not restored"
+		# Restored: the exit trap has nothing to put back.
+		rm -f up.json.orig
 		hostsql restored.err
 		[ "$rc" = 0 ] || die "the launcher refuses lox up's own state once restored (exit $rc)"
 	fi
 fi
 if [ -n "$mq" ] && [ -n "${LOCKMQ_LAUNCHER:-}" ]; then
-	say "a host agent: lockmq's launcher, as .mcp.json starts it (lockmq mcp), reads a stream through lox up's lock"
-	# As for locksql: `lockmq mcp` from the workspace finds up.json and
-	# mounts the socket volume of the lock mq read-only; the image is the
-	# lock's own (the release lox add pinned).
+	say "a host agent: lockmq's launcher, as .mcp.json starts it (lockmq mcp), reads a stream through lox run's lock"
+	# As for locksql: what `lockmq init claude` wrote in .mcp.json
+	# (`lockmq mcp`), from the workspace, finds up.json and mounts the
+	# socket volume of the lock mq read-only; the image is the lock's own
+	# (the release lox add pinned).
 	mqimg=$(sed -n '/^  mq:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
-	hostmq() { LOCKMQ_IMAGE="$mqimg" python3 "$here/mcp.py" 120 "$@" -- sh "$LOCKMQ_LAUNCHER" mcp; }
+	mcp_server lockmq "$LOCKMQ_LAUNCHER" LOCKMQ_IMAGE="$mqimg"
+	mqcmd=$mcp_cmd mqargs=$mcp_args
+	# shellcheck disable=SC2086 # the args: plain words, checked by mcp_server
+	hostmq() { LOCKMQ_IMAGE="$mqimg" python3 "$here/mcp.py" 120 "$@" -- "$mqcmd" $mqargs; }
 	mqread='"profile":"e2e","vhost":"e2e","name":"orders","from":"first","count":1'
 	# lockmq v0.8.0 opens its broker connection on the agent's first
 	# request (a connect ticket, auto.connect=ask), and that request waits
