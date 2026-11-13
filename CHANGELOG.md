@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+- A console's card in `lox run` shows the context lines the lock
+  recorded with its question (#166): lockconsoles reads the question
+  file with lockkit's `console.ParseQuestion` (lockkit v0.17.0), takes
+  its first line as the prompt and the lines printed above it as the
+  context, cleaned for a terminal and capped at 16. A lock built on an
+  older lockkit records none: its context is still read from its screen.
+  Before, a question file with context became the card's whole prompt.
+  lockkit v0.17.0 also raises the defaults `lox doctor` shows: 30 plans
+  pending per lock and 30 new tickets per 5m0s.
+
 - `lox run`'s `w` overlay no longer shows again, for a moment, the
   tickets just withdrawn (#171): the hub's list read after the
   withdrawals could be one it made before them, and `x` then picked a

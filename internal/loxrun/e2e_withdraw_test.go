@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ func TestRunE2EWithdrawStuckQueue(t *testing.T) {
 	}
 
 	w.press(loxrun.R('w'), loxrun.R('U'))
-	waitOut(t, w, "withdraw all 20 unverifiable tickets of shop? [y/N]")
+	waitOut(t, w, fmt.Sprintf("withdraw all %d unverifiable tickets of shop? [y/N]", hubclient.MaxPending))
 	w.press(loxrun.R('y'))
 	// Withdrawn concurrently: in any order.
 	left := map[string]bool{}
@@ -59,7 +60,7 @@ func TestRunE2EWithdrawStuckQueue(t *testing.T) {
 		}
 		delete(left, e.ID)
 	}
-	waitOut(t, w, "withdrew 20 tickets")
+	waitOut(t, w, fmt.Sprintf("withdrew %d tickets", hubclient.MaxPending))
 	for _, id := range stuck {
 		if s := w.ticketState(id); s != state.Withdrawn {
 			t.Errorf("%s is %s at the hub", id, s)
