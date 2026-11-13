@@ -419,23 +419,25 @@ if [ "$vault" = 1 ]; then
 	restart_inventory
 	# lox run with its output piped: plain lines, keys still read at the
 	# terminal. The review asks the loosening; the Vault token prompt is
-	# answered by lox run alone, the console's next question by the human.
+	# answered by lox run alone, then Ctrl-C quits. The other consoles'
+	# cards (orders asks its password again after its idle end) may be on
+	# top: the console's next question is answered with lox attach.
 	python3 "$here/expect.py" 600 \
 		'Apply? [y/N]' 'y\n' \
-		'vault token: from CLI' '' \
-		'Type "continue" to proceed' '<pause>continue\n' \
-		'+ you' '<pause>qq' \
+		'vault token: from CLI' '<pause>\x03' \
 		-- sh -c '"$1" run 2>&1 | cat' sh "$lox" >"$out/run-cli.raw" 2>&1 ||
 		{ tr -d '\r' <"$out/run-cli.raw"; die "lox run (vault_token: cli) failed"; }
 	tr -d '\r' <"$out/run-cli.raw" >"$out/run-cli.out"
 	cat "$out/run-cli.out"
 	grep -qF "vault token  from the host's Vault CLI" "$out/run-cli.out" || die "the review does not show vault_token: cli"
-	# One card only: the console's "continue", not its Vault token prompt.
-	[ "$(grep -c 'answer: type it, then Enter' "$out/run-cli.out")" = 1 ] || die "lox run asked the human more than the console's continue"
-	python3 "$here/expect.py" 60 \
-		'lock inventory is serving: nothing to answer' '<detach>' \
+	# No card for the Vault token prompt: no prompt line to type it into.
+	grep -qF 'Vault token for http://host.docker.internal:58200: ▏' "$out/run-cli.out" && die "lox run asked the human the Vault token"
+	python3 "$here/expect.py" 120 \
+		'Type "continue" to proceed' '<pause>continue\n' \
+		'lock inventory serves: detached' '' \
 		-- "$lox" attach inventory >"$out/attach-cli.out" 2>&1 ||
-		{ cat "$out/attach-cli.out"; die "inventory is not serving with the Vault CLI's token"; }
+		{ cat "$out/attach-cli.out"; die "inventory did not start on the Vault CLI's token"; }
+	cat "$out/attach-cli.out"
 	say "a host agent's locksql query on inventory, its console on the Vault CLI's token"
 	sql_query inventory inventory stock sku sku-1
 
@@ -443,21 +445,25 @@ if [ "$vault" = 1 ]; then
 	docker exec -e VAULT_ADDR=http://127.0.0.1:8200 -e VAULT_TOKEN="$E2E_VAULT_TOKEN" \
 		"$E2E_VAULT_CONTAINER" vault token revoke "$cli_tok" >/dev/null || die "the child token was not revoked"
 	restart_inventory
+	# lox run reads the revoked token, Vault refuses it: the card asks the
+	# human, saying why. The token is then typed (lox attach, as above).
 	python3 "$here/expect.py" 600 \
-		"the Vault CLI's token cannot be used" "<pause>$E2E_VAULT_TOKEN\\n" \
-		'Type "continue" to proceed' '<pause>continue\n' \
-		'+ you' '<pause>qq' \
+		"the Vault CLI's token cannot be used" '<pause>\x03' \
 		-- sh -c '"$1" run 2>&1 | cat' sh "$lox" >"$out/run-revoked.raw" 2>&1 ||
-		{ tr -d '\r' <"$out/run-revoked.raw"; die "lox run (revoked CLI token) failed"; }
+		{ tr -d '\r' <"$out/run-revoked.raw"; die "lox run (revoked CLI token) did not fall back to asking"; }
 	tr -d '\r' <"$out/run-revoked.raw" >"$out/run-revoked.out"
 	cat "$out/run-revoked.out"
-	python3 "$here/expect.py" 60 \
-		'lock inventory is serving: nothing to answer' '<detach>' \
+	grep -qF 'vault token: from CLI' "$out/run-revoked.out" && die "lox run gave the revoked token to the lock"
+	python3 "$here/expect.py" 120 \
+		'lock inventory waits for: Vault token for http://host.docker.internal:58200: (typed, not shown)' "<pause>$E2E_VAULT_TOKEN\\n" \
+		'Type "continue" to proceed' 'continue\n' \
+		'lock inventory serves: detached' '' \
 		-- "$lox" attach inventory >"$out/attach-typed.out" 2>&1 ||
-		{ cat "$out/attach-typed.out"; die "inventory is not serving with the typed token"; }
-	# The journal says how each token went, never the token.
+		{ cat "$out/attach-typed.out"; die "inventory did not start on the typed token"; }
+	cat "$out/attach-typed.out"
+	# The journal says how the token went, never the token.
 	how=$(jq -r 'select(.event == "vault-token" and .instance == "inventory") | .vault' "$state/runs.jsonl" | tr '\n' ' ')
-	[ "$how" = "cli typed " ] || { cat "$state/runs.jsonl"; die "the journal says '$how', want 'cli typed '"; }
+	[ "$how" = "cli " ] || { cat "$state/runs.jsonl"; die "the journal says '$how', want 'cli '"; }
 	rm "$bin/vault"
 
 	say "lockhub#123: the Vault address is an endpoint of the vault: true lock only"
