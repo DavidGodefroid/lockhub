@@ -8,9 +8,13 @@ import (
 	"encoding/hex"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	lockconsole "github.com/DavidGodefroid/lockkit/console"
 
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 )
@@ -99,5 +103,65 @@ func TestDockerAttach(t *testing.T) {
 	b.Close()
 	if st, _ := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", name).Output(); strings.TrimSpace(string(st)) != "true" {
 		t.Error("stopping lox run stopped the console")
+	}
+}
+
+// A console built on lockkit's Terminal records its question with the
+// lines it printed above it as context: the card's context is the lines
+// of its question file, not its screen. LOCKCONSOLES_DOCKER=1 runs it.
+func TestDockerRecordedContext(t *testing.T) {
+	if os.Getenv("LOCKCONSOLES_DOCKER") != "1" {
+		t.Skip("LOCKCONSOLES_DOCKER=1 runs it")
+	}
+	bin := filepath.Join(t.TempDir(), "qconsole")
+	build := exec.Command("go", "build", "-o", bin, "./testdata/qconsole")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, out)
+	}
+	rnd := make([]byte, 4)
+	rand.Read(rnd)
+	name := "lockconsoles-e2e-" + hex.EncodeToString(rnd)
+	out, err := exec.Command("docker", "create", "-t", "-i", "--name", name, "--log-driver", "none",
+		"docker.io/library/alpine:3.22", "/qconsole").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker create: %v: %s", err, out)
+	}
+	t.Cleanup(func() { exec.Command("docker", "rm", "-f", name).Run() })
+	for _, args := range [][]string{{"cp", bin, name + ":/qconsole"}, {"start", name}} {
+		if out, err := exec.Command("docker", args...).CombinedOutput(); err != nil {
+			t.Fatalf("docker %s: %v: %s", args[0], err, out)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b := Start(ctx, containerDocker{id: name}, []Lock{{Instance: "shop-prod", Type: "locksql"}})
+	defer b.Close()
+	e := next(t, b, loxrun.ConsoleWaiting)
+	file, err := exec.Command("docker", "exec", name, "cat", "/run/locksql/k-prod.question").Output()
+	if err != nil {
+		t.Fatalf("question file: %v", err)
+	}
+	prompt, above := lockconsole.ParseQuestion(string(file))
+	if above == nil {
+		t.Fatalf("no context in the question file: %q", file)
+	}
+	if e.Question.Prompt != prompt || !slices.Equal(e.Question.Context, above) {
+		t.Fatalf("card %q %q, question file %q %q", e.Question.Prompt, e.Question.Context, prompt, above)
+	}
+	if want := []string{"PRODUCTION profile shop-prod", "  + allow write orders"}; !slices.Equal(above, want) {
+		t.Errorf("context %q, want %q", above, want)
+	}
+	if err := b.Answer("shop-prod", e.Question.Seq, []byte("y")); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for i := 0; i < 50 && len(got) == 0; i++ {
+		got, _ = exec.Command("docker", "exec", name, "cat", "/tmp/a1").Output()
+		time.Sleep(100 * time.Millisecond)
+	}
+	if string(got) != "y" {
+		t.Errorf("answer typed: %q", got)
 	}
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/DavidGodefroid/lockkit/hubclient"
 )
 
 // answers is a Runner that answers by substring of the command line.
@@ -137,7 +139,7 @@ func TestDoctorHealthy(t *testing.T) {
 		t.Fatalf("%d problems:\n%s", n, out)
 	}
 	for _, want := range []string{"lockfamily.yaml", "engine", "hub key", "facade socket", "lock-events running", "internal",
-		"the hub on the facade socket is this workspace's", "hub answers on the facade socket: 0 ticket(s) pending", "at most 20 plans pending", "10 new tickets per 5m0s", "at most 50 per lock", "one agent can use it up", "pending crm-prod on the hub: 0 of 20"} {
+		"the hub on the facade socket is this workspace's", "hub answers on the facade socket: 0 ticket(s) pending", fmt.Sprintf("at most %d plans pending", hubclient.MaxPending), fmt.Sprintf("%d new tickets per %s", hubclient.RateN, hubclient.RateWindow), "at most 50 per lock", "one agent can use it up", fmt.Sprintf("pending crm-prod on the hub: 0 of %d", hubclient.MaxPending)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q:\n%s", want, out)
 		}
@@ -241,11 +243,12 @@ func TestDoctorWritesNothing(t *testing.T) {
 
 func TestDoctorHubAnswersAndCaps(t *testing.T) {
 	t.Cleanup(func() { queueAnswer.Store(`{"tickets":[],"version":1}`) })
-	tickets := `{"tickets":[` + strings.Repeat(`{"instance":"crm-prod"},`, 16) + `{"instance":"events"}],"version":3}`
+	near := hubclient.MaxPending * 4 / 5 // the warning's threshold
+	tickets := `{"tickets":[` + strings.Repeat(`{"instance":"crm-prod"},`, near) + `{"instance":"events"}],"version":3}`
 	queueAnswer.Store(tickets)
 	d, _ := healthy(t)
 	out, n := doc(t, d)
-	if n != 0 || !strings.Contains(out, "17 ticket(s) pending") || !strings.Contains(out, "warn pending crm-prod on the hub: 16 of 20") || !strings.Contains(out, "near the cap") || !strings.Contains(out, "ok   pending events on the hub: 1 of 20") {
+	if n != 0 || !strings.Contains(out, fmt.Sprintf("%d ticket(s) pending", near+1)) || !strings.Contains(out, fmt.Sprintf("warn pending crm-prod on the hub: %d of %d", near, hubclient.MaxPending)) || !strings.Contains(out, "near the cap") || !strings.Contains(out, fmt.Sprintf("ok   pending events on the hub: 1 of %d", hubclient.MaxPending)) {
 		t.Errorf("%d:\n%s", n, out)
 	}
 	queueAnswer.Store("down")

@@ -2,7 +2,8 @@
 // lox run: it attaches to each lock's container through a pseudo-terminal
 // of its own, reads the question the console waits for (the file lockkit
 // records next to its socket, lockkit v0.12.1 or later) and the lines it
-// printed above it, and types the human's answer there.
+// printed above it (recorded in that file since lockkit v0.16.0, read
+// from its screen before), and types the human's answer there.
 //
 // An answer goes from lox run's memory to the console's terminal through
 // Docker only: never through the hub, never to a log (the consoles have
@@ -23,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	lockconsole "github.com/DavidGodefroid/lockkit/console"
+	"github.com/DavidGodefroid/lockkit/sanitize"
 	"github.com/creack/pty"
 
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
@@ -41,8 +44,10 @@ type Docker interface {
 	// Container is the container of the compose service, "" when it has
 	// none; running whether it runs.
 	Container(ctx context.Context, service string) (id string, running bool, err error)
-	// Question is the console's pending question in its socket directory
-	// (dir), "" when it asks nothing.
+	// Question is the question file of the console's pending question in
+	// its socket directory (dir), "" when it asks nothing: its prompt and
+	// the context lines lockkit v0.16.0 or later records with it
+	// (console.ParseQuestion reads it).
 	Question(ctx context.Context, id, dir string) (string, error)
 	// Attach is the command that attaches to the container's terminal.
 	Attach(ctx context.Context, id string) *exec.Cmd
@@ -84,12 +89,12 @@ func (d Exec) Container(ctx context.Context, service string) (string, bool, erro
 
 func (d Exec) Question(ctx context.Context, id, dir string) (string, error) {
 	// As the container's own user, the console account that owns the file.
-	out, err := exec.CommandContext(ctx, "docker", "exec", id, "sh", "-c", `cat "$1"/*.question 2>/dev/null; exit 0`, "q", dir).Output()
+	// One file only: two files' lines must not read as one's context.
+	out, err := exec.CommandContext(ctx, "docker", "exec", id, "sh", "-c", `for f in "$1"/*.question; do cat "$f" 2>/dev/null; break; done; exit 0`, "q", dir).Output()
 	if err != nil {
 		return "", cmdErr(err)
 	}
-	q, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-	return strings.TrimSpace(q), nil
+	return string(out), nil
 }
 
 func (d Exec) Logs(ctx context.Context, id string, since time.Time, tail int) ([]byte, error) {
@@ -260,7 +265,7 @@ func (b *Bridge) Command(instance, line string) error {
 	if err != nil {
 		return err
 	}
-	if q != "" {
+	if strings.TrimSpace(q) != "" {
 		return errors.New("the console asks something: answer it first")
 	}
 	return b.typeLine(c, line, printed)
@@ -520,9 +525,15 @@ func (b *Bridge) look(ctx context.Context, c *console, id string) {
 	if skip {
 		return // the answered question's file may still be there
 	}
-	q, err := b.d.Question(ctx, id, "/run/"+c.Type)
+	file, err := b.d.Question(ctx, id, "/run/"+c.Type)
 	if err != nil || ctx.Err() != nil {
 		return
+	}
+	var q string
+	var above []string
+	if file = strings.TrimSpace(file); file != "" {
+		q, above = lockconsole.ParseQuestion(file)
+		q = strings.TrimSpace(q)
 	}
 	b.mu.Lock()
 	if c.answered || c.master == nil {
@@ -537,8 +548,14 @@ func (b *Bridge) look(ctx context.Context, c *console, id string) {
 			changed = true
 		}
 	case c.question == nil || c.question.Prompt != q:
+		// The context the console recorded wins over its screen (an older
+		// lockkit records none).
+		ctxLines := contextOf(c.scr.Last(maxLines), q)
+		if above != nil {
+			ctxLines = recorded(above)
+		}
 		c.seq++
-		c.question = &loxrun.ConsoleQuestion{Seq: c.seq, Prompt: q, Context: contextOf(c.scr.Last(maxLines), q)}
+		c.question = &loxrun.ConsoleQuestion{Seq: c.seq, Prompt: q, Context: ctxLines}
 		c.state, c.err = loxrun.ConsoleWaiting, ""
 		changed = true
 	}
@@ -549,16 +566,34 @@ func (b *Bridge) look(ctx context.Context, c *console, id string) {
 	}
 }
 
-// contextOf is the lines above a question: at most the last 16 since
-// the previous answer, the prompt itself left out when it ends them.
+// maxContext is how many lines above a question its card shows.
+const maxContext = 16
+
+// contextOf is the lines above a question read from the screen: at most
+// the last 16 since the previous answer, the prompt itself left out when
+// it ends them.
 func contextOf(lines []string, prompt string) []string {
 	if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1]) == prompt {
 		lines = lines[:n-1]
 	}
-	if len(lines) > 16 {
-		lines = lines[len(lines)-16:]
+	if len(lines) > maxContext {
+		lines = lines[len(lines)-maxContext:]
 	}
 	return lines
+}
+
+// recorded is the context lines of a question file, the last 16, each one
+// cleaned for a terminal as the screen's are: they are the lock's output,
+// untrusted.
+func recorded(above []string) []string {
+	if len(above) > maxContext {
+		above = above[len(above)-maxContext:]
+	}
+	out := make([]string, 0, len(above))
+	for _, l := range above {
+		out = append(out, strings.TrimRight(sanitize.Terminal(l, false), " "))
+	}
+	return out
 }
 
 var _ io.Writer = (*screen)(nil)
