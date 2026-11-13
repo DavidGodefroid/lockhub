@@ -356,17 +356,8 @@ func TestSessionRetype(t *testing.T) {
 func TestSessionFoldsAutoReads(t *testing.T) {
 	lk := newLockKey()
 	hub := newFakeHub()
-	var frames []string
-	var mu sync.Mutex
-	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
-		s.Size = func() (int, int) { return 100, 20 }
-		s.Style = Style{Unicode: true}
-		s.Out = writerFunc(func(p []byte) {
-			mu.Lock()
-			frames = append(frames, string(p))
-			mu.Unlock()
-		})
-	})
+	var sc *screen
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) { sc = newScreen(t, s, 100, 20) })
 	for i := 0; i < 5; i++ {
 		it := lk.item(t, ticket.KindRead, ticket.RiskRead, "dev", "SELECT id FROM orders WHERE id = 1", func(tk *ticket.Ticket) {
 			tk.Subject.Target = "orders"
@@ -374,12 +365,7 @@ func TestSessionFoldsAutoReads(t *testing.T) {
 		hub.push(it)
 		h.wait(EvDecided, it.ID)
 	}
-	time.Sleep(50 * time.Millisecond)
-	h.keys <- Key{Code: KeyEsc} // one more frame
-	time.Sleep(50 * time.Millisecond)
-	mu.Lock()
-	last := frames[len(frames)-1]
-	mu.Unlock()
+	last := sc.now()
 	if !strings.Contains(last, "× 5") {
 		t.Errorf("no folded line in the last frame:\n%s", last)
 	}
@@ -392,17 +378,8 @@ func TestSessionFoldsAutoReads(t *testing.T) {
 func TestSessionRefusesUnreadable(t *testing.T) {
 	lk := newLockKey()
 	hub := newFakeHub()
-	var frames []string
-	var mu sync.Mutex
-	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
-		s.Size = func() (int, int) { return 100, 20 }
-		s.Style = Style{Unicode: true}
-		s.Out = writerFunc(func(p []byte) {
-			mu.Lock()
-			frames = append(frames, string(p))
-			mu.Unlock()
-		})
-	})
+	var sc *screen
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) { sc = newScreen(t, s, 100, 20) })
 	escaped := func(it api.QueueItem) api.QueueItem {
 		it.Ticket = json.RawMessage(strings.ReplaceAll(string(it.Ticket), "<", "\\u003c"))
 		return it
@@ -425,18 +402,71 @@ func TestSessionRefusesUnreadable(t *testing.T) {
 	if _, ok := hub.decision(elsewhere.ID); ok {
 		t.Error("lox run answered a ticket not routed to it")
 	}
-	h.keys <- Key{Code: KeyEsc} // one more frame
-	time.Sleep(50 * time.Millisecond)
-	mu.Lock()
-	var last string
-	for i := len(frames) - 1; i >= 0 && last == ""; i-- {
-		if strings.Contains(frames[i], "unreadable ticket") {
-			last = frames[i]
-		}
-	}
-	mu.Unlock()
+	last := sc.now()
 	if n := strings.Count(last, "unreadable ticket"); n != 2 || !strings.Contains(last, "× 3") {
 		t.Errorf("want one folded line (× 3) and the elsewhere one, got %d lines:\n%s", n, last)
+	}
+}
+
+// screen is the terminal of a session under test. Its keys and resizes
+// are unbuffered, so a send returns once the loop has read it, and the
+// loop draws (at the top of each turn) before it reads the next one:
+// now needs no clock to know which frame shows what came before.
+type screen struct {
+	t      *testing.T
+	keys   chan Key
+	resize chan struct{}
+	mu     sync.Mutex
+	frames []string
+}
+
+// newScreen gives s a w×h Unicode terminal; s's keys are the screen's.
+func newScreen(t *testing.T, s *Session, w, h int) *screen {
+	sc := &screen{t: t, keys: make(chan Key), resize: make(chan struct{})}
+	s.Size = func() (int, int) { return w, h }
+	s.Style = Style{Unicode: true}
+	s.Keys, s.Resize = sc.keys, sc.resize
+	s.Out = writerFunc(func(p []byte) {
+		sc.mu.Lock()
+		sc.frames = append(sc.frames, string(p))
+		sc.mu.Unlock()
+	})
+	return sc
+}
+
+// now is a frame of the session once it has handled every key sent and
+// every event observed so far: the first resize redraws, and the loop
+// has drawn that frame when it reads the second.
+func (sc *screen) now() string {
+	sc.t.Helper()
+	for i := 0; i < 2; i++ {
+		select {
+		case sc.resize <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			sc.t.Fatal("the session does not read its resizes")
+		}
+	}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.frames[len(sc.frames)-1]
+}
+
+// press types k and returns the frame that follows it.
+func (sc *screen) press(k Key) string {
+	sc.t.Helper()
+	select {
+	case sc.keys <- k:
+	case <-time.After(5 * time.Second):
+		sc.t.Fatalf("the session does not read its keys")
+	}
+	return sc.now()
+}
+
+// want fails unless frame f shows s.
+func (sc *screen) want(f, s string) {
+	sc.t.Helper()
+	if !strings.Contains(f, s) {
+		sc.t.Fatalf("no %q in the frame:\n%s", s, f)
 	}
 }
 

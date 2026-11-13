@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+- `lox run`'s `w` overlay no longer shows again, for a moment, the
+  tickets just withdrawn (#171): the hub's list read after the
+  withdrawals could be one it made before them, and `x` then picked a
+  ticket already withdrawn instead of the selected one.
+
 - `lox add` (every type, both forms) and `lox run` (`--no-start` too)
   refuse a workspace that is not the user's or that group or others can
   write: the workspace directory, `.lockfamily/` and each lock's
