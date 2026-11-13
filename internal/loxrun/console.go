@@ -81,6 +81,7 @@ type consoleQ struct {
 	prompt         string
 	kind           string
 	yes            string // the yes answer of a yes/no question
+	context        []string
 }
 
 var yesNo = regexp.MustCompile(`\[(y|yes)/N\]\s*$`)
@@ -170,11 +171,13 @@ func (st *state) onConsole(e ConsoleEvent) {
 	}
 }
 
-// askConsole puts a console's question up as a card.
+// askConsole puts a console's question up as a card, or, for a Vault
+// token prompt of a lock with vault_token: cli, reads the host's Vault
+// CLI token for it first (vaultConsole).
 func (st *state) askConsole(e ConsoleEvent) {
 	q := *e.Question
 	kind, yes := classify(q.Prompt)
-	cq := &consoleQ{instance: e.Instance, lock: e.Lock, seq: q.Seq, prompt: q.Prompt, kind: kind, yes: yes}
+	cq := &consoleQ{instance: e.Instance, lock: e.Lock, seq: q.Seq, prompt: q.Prompt, kind: kind, yes: yes, context: q.Context}
 	k := answerKey(e.Instance, q.Prompt)
 	if a, ok := st.consoleAnswers[k]; ok && kind != cqYesNo && st.s.now().Sub(a.at) < rejectedWithin {
 		// Asked again right after the session's answer: refused.
@@ -185,18 +188,43 @@ func (st *state) askConsole(e ConsoleEvent) {
 	t := &tracked{instance: e.Instance, cq: cq, profileKey: e.Instance}
 	t.entry = &Entry{At: st.s.now(), Instance: clean(e.Instance), Lock: clean(e.Lock), Kind: KindPrompt, Production: prod,
 		Summary: clean(q.Prompt)}
-	c := &Card{Instance: clean(e.Instance), Lock: clean(e.Lock), Kind: KindPrompt, Production: prod, Console: true,
-		Header: clean(q.Prompt), Why: "the lock's console asks at its terminal; your answer goes there only, never through the hub"}
-	for _, l := range q.Context {
-		c.Body = append(c.Body, clean(l))
-	}
-	t.card = c
-	if kind != cqYesNo {
-		c.Prompt = st.consolePrompt(t)
-	}
 	st.consoleCards[e.Instance] = t
 	t.entry.Status = Waiting
 	st.pushEntry(t, false)
+	why := ""
+	if st.vaultPrompt(e.Instance, q.Prompt) {
+		if at, ok := st.vaultCLIAt[k]; ok && st.s.now().Sub(at) < rejectedWithin {
+			// Asked again right after the CLI's token: the lock refused it.
+			delete(st.vaultCLIAt, k)
+			why = "the lock refused it"
+		} else {
+			t.vaultFetching = true
+			t.entry.Tag = "vault:cli"
+			st.vaultFetches = append(st.vaultFetches, t)
+			return
+		}
+	}
+	st.showConsoleCard(t, why)
+}
+
+// showConsoleCard puts t's console question up as a card; vaultWhy, when
+// set, is why the host's Vault CLI token did not answer it.
+func (st *state) showConsoleCard(t *tracked, vaultWhy string) {
+	cq := t.cq
+	prod := t.entry.Production
+	c := &Card{Instance: clean(t.instance), Lock: clean(cq.lock), Kind: KindPrompt, Production: prod, Console: true,
+		Header: clean(cq.prompt), Why: "the lock's console asks at its terminal; your answer goes there only, never through the hub"}
+	if vaultWhy != "" {
+		c.Why = "the Vault CLI's token cannot be used: " + clean(vaultWhy) + "; type a token, it goes to the lock's console only"
+		t.entry.Asked = clean(vaultWhy)
+	}
+	for _, l := range cq.context {
+		c.Body = append(c.Body, clean(l))
+	}
+	t.card = c
+	if cq.kind != cqYesNo {
+		c.Prompt = st.consolePrompt(t)
+	}
 	st.cards = append(st.cards, t)
 	st.call(t)
 	if st.s.Size == nil {
@@ -205,7 +233,7 @@ func (st *state) askConsole(e ConsoleEvent) {
 		}
 		st.logf("answer: type it, then Enter (the question on top first)")
 	}
-	st.s.observe(Event{Kind: EvQuestion, Instance: e.Instance})
+	st.s.observe(Event{Kind: EvQuestion, Instance: t.instance})
 }
 
 // consolePrompt is the line a console's question is typed into.
@@ -231,11 +259,21 @@ func (st *state) answerConsole(t *tracked, answer []byte, approved bool) {
 		return
 	}
 	t.entry.Status = Denied
-	if approved {
+	switch {
+	case approved && t.entry.Rule != "":
+		t.entry.Status = AutoApproved
+	case approved:
 		t.entry.Status = Approved
 	}
 	st.printEntry(t.entry)
-	st.s.observe(Event{Kind: EvDecided, Instance: t.instance, Approved: approved})
+	st.s.observe(Event{Kind: EvDecided, Instance: t.instance, Approved: approved, Rule: t.entry.Rule})
+	if approved && st.vaultPrompt(t.instance, t.cq.prompt) {
+		how := VaultTyped
+		if t.entry.Rule == vaultCLIRule {
+			how = VaultFromCLI
+		}
+		st.s.observe(Event{Kind: EvVaultToken, Instance: t.instance, VaultToken: how})
+	}
 }
 
 // consoleKey is y or n on a console's card.

@@ -64,7 +64,12 @@ profile's session connection, endpoints and password by hand (the profile of
 the question on top; with no question up, every profile). `y` on a connect
 always shows the password prompt: Enter alone keeps the session's password,
 anything typed replaces it. A Vault token is asked
-each time the lock asks. The header lists the connected profiles (a connect
+each time the lock asks. For a lock with `vault_token: cli` the card keeps
+its y/n, but `y` reads the host's Vault CLI token again (a new `vault login`
+since is picked up), checks it, and seals it in place of the prompt; the
+prompt comes only when that token is unusable, with the reason in it
+(`Vault token for … (its token expired; the Vault CLI's token is expired or
+revoked …):`). See [Consoles under compose](#consoles-under-compose). The header lists the connected profiles (a connect
 ticket the lock acted on) with their age, until they have been idle for the
 locks' idle timeout.
 
@@ -499,7 +504,8 @@ lock shop-db (locksql)
 ```
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
-`credentials` then reads `vault, <path>`. A profile that changed since the last
+`credentials` then reads `vault, <path>`; with `vault_token: cli`, a `vault
+token   from the host's Vault CLI` row follows the environment. A profile that changed since the last
 `lox run` says so, and its changed lines are listed under `Other changes since
 the last lox run:`, each with its old value (`-`) and its new one (`+`); an
 added line shows `+`, a removed one `-`. Every summary line that no block
@@ -721,8 +727,49 @@ Vault is per lock. A lock with `vault: true` in lockfamily.yaml runs the
 names a `ca_file`) from the workspace's one `vault:` block; its profile names
 its own Vault path. The review shows the environment and the path of each such
 lock. The token is typed at the console's start (`lox attach`), never
-written anywhere. See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
+written anywhere, or, with `vault_token: cli`, taken from the host's Vault
+CLI (below). See [lox-add.md](lox-add.md#vault-per-lock) and `lox vault
 set`.
+
+**The host's Vault CLI token (`vault_token: cli`).** For such a lock, lox run
+answers its console's `Vault token for <vault.address>:` prompt itself, when
+the address is the reviewed one exactly; any other prompt is still yours. The
+feed line says `vault token: from CLI` and no card waits. Everything comes
+from the last confirmed review (`applied.json`), never from the workspace's
+`lockfamily.yaml`, which agents can write: the lock must be `vault_token: cli`
+there and still in the file, and the token is checked at the reviewed address
+and namespace, on the lock's reviewed `vault_path`, with the reviewed
+`ca_file` (its digest checked again).
+
+- **Sources, in this order.** (a) `vault print token`, run by lox run with
+  `VAULT_ADDR` and `VAULT_NAMESPACE` set from the `vault:` block, which
+  honours your token helper; 5 s at most, its output and errors never shown or
+  logged. (b) Without a `vault` binary on `PATH`, `~/.vault-token`, only if it
+  is a regular file (a symbolic link is refused) owned by you, mode 0600 or
+  stricter, at most 4 KiB. `VAULT_TOKEN` in lox's own environment is never
+  used (it is removed from the CLI's environment too): too easy to inherit by
+  accident.
+- **Checks, before each use.** `GET /v1/auth/token/lookup-self` with
+  `X-Vault-Token` (and `X-Vault-Namespace`): its `ttl` is 0 (no expiry) or at
+  least 60 s. Then `POST /v1/sys/capabilities-self` on the lock's reviewed
+  `vault_path`: `read` (or `root`), no `deny`. No proxy carries the request,
+  redirects are not followed, and `host.docker.internal` (the consoles' name
+  for this machine) is dialled as `127.0.0.1`.
+- **Fallback.** A missing or unusable token, a Vault that refuses it (403) or
+  does not answer within 5 s, or the console asking again within 30 s (the
+  lock refused it): the card comes as for `ask`, and says why ("the Vault
+  CLI's token cannot be used: the Vault CLI's token lacks read on <path>"),
+  never with the token in it. You type a token as before.
+- **Leaks.** The token lives in lox run's memory only, wiped once handed to
+  the console's terminal or sealed to the lock's one-use key. It never
+  reaches the hub (but inside the sealed box), the feed, the screen,
+  `up.json`, the compose file or any path an agent sees. lox run's session
+  journal (the `a` view, `lox audit`) records `vault token: cli for <lock>`
+  or `vault token: typed for <lock>` per answer, never the value.
+- **Out of scope.** No AppRole, Kubernetes or JWT login for the lock, no
+  `renew-self`: the lock keeps its token across reconnects and asks again on
+  expiry, and lox run then reads the CLI's token again. A production profile
+  still needs its typed name and the y/n connect.
 
 A lockfile lock runs under the seccomp profile lockfile ships
 (`seccomp.json`, beside its launcher in each release), as lockfile's own

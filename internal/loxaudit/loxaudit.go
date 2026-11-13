@@ -374,13 +374,18 @@ func ReadRuns(path string, since time.Time) ([]loxrun.RunEvent, error) {
 		}
 		switch e.Event {
 		case loxrun.RunStart, loxrun.RunMode, loxrun.RunStop:
+			e.Instance, e.Vault = "", ""
+		case loxrun.RunVaultToken:
+			if e.Vault != loxrun.VaultFromCLI && e.Vault != loxrun.VaultTyped {
+				continue
+			}
 		default:
 			continue
 		}
 		if !since.IsZero() && e.At.Before(since) {
 			continue
 		}
-		e.User, e.Mode, e.Workspace = clean(e.User), clean(e.Mode), clean(e.Workspace)
+		e.User, e.Mode, e.Workspace, e.Instance = clean(e.User), clean(e.Mode), clean(e.Workspace), clean(e.Instance)
 		out = append(out, e)
 	}
 	return out, nil

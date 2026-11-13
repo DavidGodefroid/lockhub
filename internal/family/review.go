@@ -54,6 +54,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 			}
 		}
 		row("environment", env)
+		if l.Vault && c.Vault != nil && l.VaultToken == VaultTokenCLI {
+			row("vault token", "from the host's Vault CLI")
+		}
 		creds := f.Credentials
 		if creds == "" {
 			creds = "ask"
@@ -131,6 +134,9 @@ func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 			cov[fmt.Sprintf("lock %s vault VAULT_ADDR=%s", n, c.Vault.Address)] = true
 			if c.Vault.Namespace != "" {
 				cov[fmt.Sprintf("lock %s vault VAULT_NAMESPACE=%s", n, c.Vault.Namespace)] = true
+			}
+			if l.VaultToken == VaultTokenCLI {
+				cov[fmt.Sprintf(vaultCLILine, n)] = true
 			}
 		}
 	}
