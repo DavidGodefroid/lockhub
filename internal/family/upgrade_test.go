@@ -537,6 +537,27 @@ func TestShippedPins(t *testing.T) {
 	}
 }
 
+// ShippedLocks are each lock's latest release on GitHub (lockhttp#44: a
+// stale pin left lox run upgrading nothing). It asks GitHub, so it runs
+// only when LOX_CHECK_SHIPPED is set: in the release workflow, before a
+// lox is published.
+func TestShippedLocksAreLatest(t *testing.T) {
+	if os.Getenv("LOX_CHECK_SHIPPED") == "" {
+		t.Skip("LOX_CHECK_SHIPPED not set")
+	}
+	rel := DefaultReleases(nil)
+	rel.Token = os.Getenv("GITHUB_TOKEN")
+	for repo, tag := range ShippedLocks {
+		latest, pre, err := rel.Latest(context.Background(), repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pre || latest != tag {
+			t.Errorf("ShippedLocks[%q] = %s, its latest release is %s (pre-release %v)", repo, tag, latest, pre)
+		}
+	}
+}
+
 // An upgraded lockfile lock (#118) still runs under lockfile's shipped
 // seccomp profile (#45): the upgrade's recreate keeps the security_opt and
 // the lockfamily.seccomp label, and the unchanged profile line asks nothing.
