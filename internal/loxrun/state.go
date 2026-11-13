@@ -213,7 +213,7 @@ func (st *state) onQueue(res api.QueueResult, err error) {
 		st.hubOK, st.hubErr = true, ""
 		st.observeHub(nil)
 	}
-	st.withdraw.queue = res.Tickets
+	st.withdraw.listed(res.Tickets)
 	inQueue := map[string]bool{}
 	for _, it := range res.Tickets {
 		k := key(it.Instance, it.ID)

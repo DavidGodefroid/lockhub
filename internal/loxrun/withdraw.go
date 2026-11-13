@@ -35,6 +35,10 @@ type withdrawState struct {
 	// tickets whose lock the hub could not tell.
 	done, failed, untold int
 	lastErr              string
+	// gone are the tickets withdrawn here the hub has not listed
+	// without yet: a queue listed before their withdrawal, read after
+	// it, does not bring them back.
+	gone map[string]bool
 }
 
 type withdrawAsk struct {
@@ -212,6 +216,27 @@ func (st *state) startWithdraw(refs []withdrawEffect) {
 	st.dirty = true
 }
 
+// listed takes the hub's pending tickets as the overlay's queue, but
+// the ones withdrawn here: the hub may have listed them before their
+// withdrawal. A list without one ends its watch (the lists come in
+// order).
+func (w *withdrawState) listed(tickets []api.QueueItem) {
+	in := map[string]bool{}
+	w.queue = nil
+	for _, it := range tickets {
+		k := key(it.Instance, it.ID)
+		in[k] = true
+		if !w.gone[k] {
+			w.queue = append(w.queue, it)
+		}
+	}
+	for k := range w.gone {
+		if !in[k] {
+			delete(w.gone, k)
+		}
+	}
+}
+
 // withdrawReq is lox run's withdrawal request.
 func (st *state) withdrawReq() api.WithdrawRequest {
 	return api.WithdrawRequest{Facade: route.TTY, Display: st.s.Display, Via: "lox run"}
@@ -232,6 +257,10 @@ func (st *state) onWithdrawn(ef withdrawEffect, res api.WithdrawResult, err erro
 			w.untold++
 		}
 		w.queue = slices.DeleteFunc(w.queue, func(it api.QueueItem) bool { return it.Instance == ef.instance && it.ID == ef.id })
+		if w.gone == nil {
+			w.gone = map[string]bool{}
+		}
+		w.gone[k] = true
 		if t, ok := st.seen[k]; ok {
 			st.removeCard(t)
 			st.detach(t)
