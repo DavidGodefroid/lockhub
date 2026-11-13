@@ -210,7 +210,8 @@ func TestMobilePushComposeAndReview(t *testing.T) {
 	for _, want := range []string{
 		`"--mobile-origin", "https://hub.example.net", "--mobile-push"]`,
 		`networks: [lockhub, "egress-hub", "mobile-hub"]`,
-		"  \"egress-hub\": {}\n",
+		"  \"egress-hub\":\n    ipam:\n",
+		"  \"mobile-hub\":\n    ipam:\n",
 	} {
 		if !strings.Contains(string(cy), want) {
 			t.Errorf("compose lacks %q:\n%s", want, cy)

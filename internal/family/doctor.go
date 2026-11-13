@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,7 @@ func (d *Doctor) Do(ctx context.Context) int {
 				ok("image %s", img)
 			}
 		}
+		d.networks(ctx, c, ok, warn)
 	}
 
 	upRan := true
@@ -313,6 +315,57 @@ func (d *Doctor) applied(c *Config, warn func(string, ...any)) {
 	}
 	if len(ch) > 0 {
 		warn("a chat token changed since the last lox run (run lox run to apply it): %s", strings.Join(ch, "; "))
+	}
+}
+
+// lowDefaultPools is how few free subnets of the engine's default address
+// pools lox doctor warns at: lea and other compose projects take theirs
+// there, a few networks each.
+const lowDefaultPools = 4
+
+// networks checks the addresses the networks need (lockhub#175): the
+// workspace's pool holds a subnet for each network the next lox run
+// makes, and the engine's default address pools, which lea and other
+// compose projects take theirs from, are not nearly full.
+func (d *Doctor) networks(ctx context.Context, c *Config, ok, warn func(string, ...any)) {
+	nets, err := ReadEngineNets(ctx, d.Run)
+	if err != nil {
+		warn("networks: %v", err)
+		return
+	}
+	ws, _ := filepath.Abs(Workspace(d.File))
+	project := Project(ws)
+	keys := NetKeys(c)
+	if _, err := AllocSubnets(c.Pool(), project, keys, nets); err != nil {
+		warn("networks: the next lox run cannot place its networks: %v", err)
+	} else {
+		ok("networks: pool %s holds a subnet for each network the workspace may need (%d)", c.Pool(), len(keys))
+	}
+	// The pools daemon.json sets; none: Docker's own. No answer: not
+	// Docker (Podman has its own pools), nothing to count.
+	out, err := d.Run.Run(ctx, nil, "docker", "info", "--format", "{{json .DefaultAddressPools}}")
+	if err != nil {
+		return
+	}
+	pools := DockerDefaultPools
+	switch s := strings.TrimSpace(string(out)); s {
+	case "":
+		return
+	case "null", "[]":
+	default:
+		if json.Unmarshal(out, &pools) != nil || len(pools) == 0 {
+			return
+		}
+	}
+	var used []netip.Prefix
+	for _, n := range nets {
+		used = append(used, n.Prefixes()...)
+	}
+	free, total := FreeInPools(pools, used)
+	if free < lowDefaultPools {
+		warn("networks: the engine's default address pools have %d of %d subnets free: lea and other compose projects soon fail with \"all predefined address pools have been fully subnetted\": set default-address-pools in /etc/docker/daemon.json, e.g. {\"default-address-pools\": [{\"base\": \"10.200.0.0/16\", \"size\": 24}]}, then restart Docker (docs/networks.md)", free, total)
+	} else {
+		ok("networks: the engine's default address pools have %d of %d subnets free", free, total)
 	}
 }
 

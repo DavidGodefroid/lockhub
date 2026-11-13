@@ -51,7 +51,7 @@ func TestSlackUpReviewsAllowlistAndOpensEgress(t *testing.T) {
 		t.Fatalf("chat.json %+v %v", s, err)
 	}
 	cy, _ := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
-	if !strings.Contains(string(cy), "    networks: [lockhub, \"egress-hub\"]") || !strings.Contains(string(cy), "  \"egress-hub\": {}") {
+	if !strings.Contains(string(cy), "    networks: [lockhub, \"egress-hub\"]") || !strings.Contains(string(cy), "  \"egress-hub\":\n    ipam:\n      config:\n        - subnet: \"10.123.1.0/28\"\n") {
 		t.Errorf("hub without egress:\n%s", cy)
 	}
 	// A narrower allowlist is a change to review.

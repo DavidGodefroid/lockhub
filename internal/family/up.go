@@ -44,12 +44,55 @@ func (e Exec) Run(ctx context.Context, stdin []byte, name string, args ...string
 	if stdin != nil {
 		cmd.Stdin = strings.NewReader(string(stdin))
 	}
-	cmd.Stderr = e.Stderr
+	// The engine's own message stays on the terminal; its tail is kept
+	// too, for the refusals lox explains (IsPoolError).
+	tail := &tailBuffer{max: 8 << 10}
+	if e.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(e.Stderr, tail)
+	} else {
+		cmd.Stderr = tail
+	}
 	out, err := cmd.Output()
 	if err != nil {
-		return out, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return out, &RunError{Cmd: name + " " + strings.Join(args, " "), Err: err, Stderr: tail.b}
 	}
 	return out, nil
+}
+
+// netErr explains the engine refusing a network of the workspace for its
+// addresses, and removes the networks of the project that compose made
+// before it stopped and no container uses: the project is left as it
+// was. Any other error is returned as it is.
+func (u *Up) netErr(ctx context.Context, project string, err error) error {
+	if !IsPoolError(err) {
+		return err
+	}
+	u.Run.Run(ctx, nil, "docker", "network", "prune", "-f", "--filter", "label=com.docker.compose.project="+project)
+	return fmt.Errorf("the engine refused a network of this workspace for its addresses (another network took its subnet meanwhile, or the engine's address pools are full): nothing new was started; lox run again picks free subnets, lox doctor counts what is left, docs/networks.md explains default-address-pools (%w)", err)
+}
+
+// RunError is a command that failed, with the tail of its stderr.
+type RunError struct {
+	Cmd    string
+	Err    error
+	Stderr []byte
+}
+
+func (e *RunError) Error() string { return e.Cmd + ": " + e.Err.Error() }
+func (e *RunError) Unwrap() error { return e.Err }
+
+// tailBuffer keeps the last max bytes written to it.
+type tailBuffer struct {
+	b   []byte
+	max int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > t.max {
+		t.b = t.b[len(t.b)-t.max:]
+	}
+	return len(p), nil
 }
 
 // Up is one `lox up`.
@@ -142,6 +185,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		if m.Push {
 			s = append(s, "hub mobile push on: the hub gets a route out (egress-hub) and POSTs payload-less pushes to "+PushServices)
 		}
+	}
+	if c.Network != nil && c.Network.Pool != "" {
+		s = append(s, "network pool "+c.Network.Pool)
 	}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
@@ -431,13 +477,30 @@ func (u *Up) Do(ctx context.Context) error {
 			composeYAML = []byte(Compose(c, paths))
 		}
 	}
+	// Each network's subnet, from the workspace's pool: none from the
+	// engine's default address pools, which a few projects exhaust.
+	if !u.Probe {
+		nets, err := ReadEngineNets(ctx, u.Run)
+		if err != nil {
+			return err
+		}
+		subs, err := AllocSubnets(c.Pool(), project, NetKeys(c), nets)
+		if err != nil {
+			return err
+		}
+		paths.Subnets = map[string]string{}
+		for k, s := range subs {
+			paths.Subnets[k] = s.String()
+		}
+		composeYAML = []byte(Compose(c, paths))
+	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
 	hubPub, err := os.ReadFile(hubPubPath)
 	if errors.Is(err, os.ErrNotExist) {
 		out, err := u.Run.Run(ctx, composeYAML, "docker", compose("run", "--rm", "-T", "--no-deps", "lockhub", "keygen", "--data", "/var/lib/lockhub")...)
 		if err != nil {
-			return fmt.Errorf("hub key: %w", err)
+			return fmt.Errorf("hub key: %w", u.netErr(ctx, project, err))
 		}
 		hubPub = out
 		if err := os.WriteFile(hubPubPath, []byte(strings.TrimSpace(string(out))+"\n"), 0o644); err != nil {
@@ -970,7 +1033,7 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintf(u.Out, "lock %s: %s copied to %s\n", cp.lock, cp.key, cp.dst)
 	}
 	if _, err := u.Run.Run(ctx, composeYAML, "docker", compose("up", "-d", "--remove-orphans")...); err != nil {
-		return err
+		return u.netErr(ctx, project, err)
 	}
 	// The networks the locks had before their egress was restricted
 	// (lockhub#123), left without a container by the up above.

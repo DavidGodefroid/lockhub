@@ -43,6 +43,8 @@ type fake struct {
 	calls     []string
 	keys      map[string]string
 	failing   string
+	// failErr is what the failing command returns (nil: "refused").
+	failErr error
 	// missing collects the bind sources of the device snapshots that did
 	// not exist when a compose file was run (docker refuses those).
 	missing []string
@@ -71,6 +73,9 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		f.upCompose = string(stdin)
 	}
 	if f.failing != "" && strings.Contains(line, f.failing) {
+		if f.failErr != nil {
+			return nil, f.failErr
+		}
 		return nil, errors.New("refused")
 	}
 	// The Docker host's CPUs: keys["ncpu"], or 8.
