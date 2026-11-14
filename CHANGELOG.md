@@ -5,6 +5,20 @@ digest).
 
 ## Unreleased
 
+### Fixed
+
+- Docs and `lox` help texts say what the code does (lockhub#220): a host
+  agent running as the user can approve tickets through the facade socket
+  (except `require_device` classes); quitting `lox run` leaves the stack
+  serving other facades; `lox run` has no `--dry-run` and reads
+  `lockfamily.yaml` at the workspace's root only; `lox add` lists all six
+  lock types and says what a failure rolls back; `lox add TYPE INSTANCE
+  --image/--hub-image` skips cosign until the next `lox run`; `lox audit
+  verify` shows `--lock` and `--anchors`; `lox withdraw` says when a lock
+  is not told; `lox init` ends with `keep lox run open` and documents its
+  legacy `./lockfamily.yaml` fallback; stale versions and extension points
+  removed.
+
 ## v0.12.1 (2026-11-14)
 
 `lox run` upgrades older lockhttp images to lockhttp v0.12.0; the other

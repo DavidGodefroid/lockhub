@@ -14,7 +14,7 @@ import (
 )
 
 // EndLine is lox init's last line.
-const EndLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`."
+const EndLine = "Ready. Run `lea` (or your agent) and keep `lox run` open. Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`."
 
 // Declared is a lock lockfamily.yaml declares already.
 type Declared struct {

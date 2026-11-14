@@ -10,4 +10,4 @@ lockfamily.yaml declares locks, kept as they are: orders (locksql)
 
 [lox up]
 
-Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.
+Ready. Run `lea` (or your agent) and keep `lox run` open. Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.

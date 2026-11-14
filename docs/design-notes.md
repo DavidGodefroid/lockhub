@@ -47,10 +47,9 @@ the unanchored window.
 lockkit N-1} × the signed ticket fixtures of `lockkit/ticket/testdata`.
 
 **Code.** The `compat` job of `.github/workflows/ci.yml` is the plan's full
-grid: lockhub built on the pinned lockkit (go.mod: v0.8.1) and on the
-release before it (v0.8.0), its codec checked against the fixtures of three
-lockkit releases: the pinned one, the release before it, and the newest one
-(v0.8.1 as of 2026-10-31). Together these stand for the tickets of locks
+grid: lockhub built on the pinned lockkit (the version in go.mod) and on
+the release before it, its codec checked against the fixtures of three
+lockkit releases: the pinned one, the release before it, and the newest one. Together these stand for the tickets of locks
 built on an older, the same, or a newer lockkit (`scripts/compat.sh
 pinned|prev pinned|prev|latest`).
 
