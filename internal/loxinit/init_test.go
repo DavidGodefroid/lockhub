@@ -69,7 +69,8 @@ func newHarness(root string) *harness {
 				}
 				return "", errors.New("not found")
 			},
-			DockerVersion: func(context.Context) (string, error) { return "29.0.0", nil }},
+			DockerVersion: func(context.Context) (string, error) { return "29.0.0", nil },
+			CosignVersion: func(context.Context) (string, error) { return "v2.6.1", nil }},
 		Declared: func() ([]Declared, error) { return h.decl, nil },
 		Hub:      func(context.Context) (bool, error) { h.hubs++; return h.created, nil },
 		// The marker shows where lox up's own lines go.
@@ -264,6 +265,20 @@ func TestInitPrereqsMissing(t *testing.T) {
 		t.Errorf("hub %d, up %d: want nothing done", h.hubs, h.ups)
 	}
 	golden(t, "prereqs-missing-darwin.golden", root, h.out.String())
+}
+
+// A cosign too old to verify the bundle format stops lox init before
+// anything, with how to upgrade it (lockhub#197).
+func TestInitCosignTooOld(t *testing.T) {
+	h := newHarness(shopProject(t))
+	h.in.Env.CosignVersion = func(context.Context) (string, error) { return "v2.4.3", nil }
+	err := h.in.Do(context.Background())
+	if err == nil || err.Error() != "prerequisites missing (above): nothing done" || h.hubs != 0 || h.ups != 0 {
+		t.Fatalf("err %v, hub %d, up %d", err, h.hubs, h.ups)
+	}
+	if want := "  !!  cosign v2.4.3: lox needs cosign v2.5.0 or later: brew upgrade cosign, or https://docs.sigstore.dev/cosign/system_config/installation/\n"; !strings.Contains(h.out.String(), want) {
+		t.Errorf("no %q:\n%s", want, h.out.String())
+	}
 }
 
 // A hub or lox up that fails ends lox init with its error, not the end

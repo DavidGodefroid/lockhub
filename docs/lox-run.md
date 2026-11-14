@@ -599,8 +599,8 @@ waiting`).
   Enter types it at the console's terminal; Esc closes the line, **y**
   opens it again, **n** answers an empty line.
 - A value typed this session is kept in lox run's memory, for that lock and
-  that prompt: when the console asks the same again (it restarted at the
-  end of an idle session, Docker starting it again), **Enter alone** gives
+  that prompt: when the console asks the same again (it ended at the end
+  of an idle session and lox run started it again), **Enter alone** gives
   it. A policy review is never answered for you. The same question asked
   again within 30 seconds of the session's answer means the console refused
   it (a changed password): the value is dropped and typed again. **x** on
@@ -608,7 +608,9 @@ waiting`).
 
 The header's `locks` line shows each console's state, the waiting ones
 first: `waiting for you: <question>`, `serving`, `stopped: <its last line>`
-(the container does not run; Docker restarts it), `starting`, or `not
+(the container does not run; lox run starts it again, after 1s, then
+less and less often, up to once a minute, while it keeps stopping),
+`starting`, or `not
 reached here (…): lox attach NAME` when lox run cannot reach its terminal
 (no pseudo-terminal on this system, no docker).
 
@@ -643,8 +645,8 @@ for the terminal) and prints one of:
 
 It never lists what a console may ask. Each following question shows on
 the attached terminal as the console asks it. A console that ends under the
-attach (a wrong answer) makes lox attach fail; it then waits a few seconds
-for the restarted console and prints its next question (`the console of
+attach (a wrong answer) makes lox attach fail; it then starts the console
+again, waits a few seconds and prints its next question (`the console of
 lock NAME ended; now lock NAME waits for: ...`). A console that
 printed its policy review before lox run attached to it (the first start,
 during lox run's own start) shows the question without the lines above it;
@@ -1176,6 +1178,43 @@ when the new version loosens it (`lox attach`).
 `--no-upgrade` keeps the pinned images; `--pin` leaves the hub as pinned
 for that run. `lox up` (deprecated) never upgrades. A development build of
 lox (`lox version` says `dev`) upgrades only the locks.
+
+## Upgrading over a running stack, lox down
+
+Quitting `lox run` leaves the stack up (the hub, the locks, their
+gateways), but nothing brings it back by itself: every service runs with
+`restart: "no"`. A lock is of no use without `lox run` (fail closed), and
+the hub cannot come back alone after a reboot (its facade directory is on
+the `$XDG_RUNTIME_DIR` tmpfs). After a Docker daemon restart or a reboot,
+no container of the workspace runs until the next `lox run`. While `lox
+run` runs, it starts again a console that stopped (an idle session's end,
+a wrong answer); `lox attach` starts a stopped console before it attaches.
+
+An upgraded lox may declare the workspace's networks differently (lox
+v0.11.0 gives each one a subnet of its own). Before its first compose
+call, `lox run` compares the networks in place with the file it is about
+to apply (their subnet and `internal`); when one differs and containers of
+the workspace are there (left up, or the locks running without their hub
+after a reboot), it takes the previous stack down, containers and
+networks, and goes on, with one line and no question:
+
+```
+previous stack stopped (lockhub v0.10.1 → v0.11.0)
+```
+
+The volumes (the hub key, the profiles, the consoles' homes and sockets)
+and the state directory (the hub's database and keys, the tickets) are
+kept: the hub key is not made again. A dry run takes nothing down: it
+says the stack in place must be stopped first. Should a compose call
+still be refused on a network in use (`has active endpoints`), lox run
+takes the stack down and tries once more; refused again, it names the
+network and the container in the way (one this stack does not own) and
+how to clear it (`docker stop`, `docker network disconnect`).
+
+`lox down` stops the workspace's stack: its containers and networks, the
+volumes and the state directory kept; `lox run` starts it again. With
+nothing running it does nothing (`lox down: nothing runs for this
+workspace`).
 
 ## Restoring a hub version, rotating keys
 

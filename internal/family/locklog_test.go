@@ -96,7 +96,7 @@ func TestComposeLocklog(t *testing.T) {
       - "profile-locklog:/w/.locklog:ro"
     networks: [lockhub]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
 `
 	if got := block(out, "lock-logs"); got != want {
 		t.Errorf("lock-logs:\n%s\nwant:\n%s", got, want)

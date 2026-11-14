@@ -182,9 +182,14 @@ func TestEnsureDirRefusesLink(t *testing.T) {
 	}
 }
 
+// cosignFake is a cosign v2.6.1 that verifies every image; calls are
+// its verifications.
 type cosignFake struct{ calls []string }
 
 func (c *cosignFake) Run(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "version" {
+		return []byte(`{"gitVersion":"v2.6.1"}`), nil
+	}
 	c.calls = append(c.calls, name+" "+strings.Join(args, " "))
 	return nil, nil
 }
@@ -242,6 +247,60 @@ func TestReleasesLatestSignedDigest(t *testing.T) {
 	r.Run = &fake{failing: "cosign"}
 	if _, err := r.Image(ctx, "locksql", "v0.11.0"); err == nil || !strings.Contains(err.Error(), "not signed") {
 		t.Errorf("unsigned digest pinned: %v", err)
+	}
+}
+
+// A release exists on GitHub before its release workflow pushed its
+// image (lockhub#213): LatestImage skips it for the previous release, and
+// no release with an image is an error naming the lock.
+func TestLatestImageSkipsUnpublished(t *testing.T) {
+	const dg = "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/DavidGodefroid/locksql/releases":
+			w.Write([]byte(`[{"tag_name":"v0.19.0"},{"tag_name":"v0.18.3"},{"tag_name":"v0.18.2"},{"tag_name":"v0.20.0-rc.1","prerelease":true}]`))
+		case r.URL.Path == "/repos/DavidGodefroid/lockmq/releases":
+			w.Write([]byte(`[{"tag_name":"v0.5.0"},{"tag_name":"v0.4.0"},{"tag_name":"v0.2.0"}]`))
+		case r.URL.Path == "/repos/DavidGodefroid/lockfile/releases":
+			w.Write([]byte(`[{"tag_name":"v0.1.0"}]`))
+		case r.URL.Path == "/token":
+			w.Write([]byte(`{"token":"t"}`))
+		case r.URL.Path == "/v2/davidgodefroid/locksql/manifests/0.18.2":
+			w.Header().Set("Docker-Content-Digest", dg)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	cf := &cosignFake{}
+	r := &Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: cf}
+	ctx := context.Background()
+	p, err := r.LatestImage(ctx, "locksql", "")
+	if err != nil || p.Tag != "v0.18.2" || p.Ref != "ghcr.io/davidgodefroid/locksql@"+dg || p.Pre || !slices.Equal(p.Skipped, []string{"v0.19.0", "v0.18.3"}) {
+		t.Fatalf("latest image: %+v %v", p, err)
+	}
+	if len(cf.calls) != 1 || !strings.Contains(cf.calls[0], `refs/tags/v0\.18\.2$`) {
+		t.Errorf("cosign: %v", cf.calls)
+	}
+	// An explicit release without an image is an error saying so.
+	if _, err := r.Image(ctx, "locksql", "v0.19.0"); !errors.Is(err, ErrNoImage) || !strings.Contains(err.Error(), "locksql v0.19.0: no published image") {
+		t.Errorf("explicit release without an image: %v", err)
+	}
+	// No release with an image: an error naming the lock and the releases
+	// it tried (not those older than MinRelease).
+	if _, err := r.LatestImage(ctx, "lockmq", ""); err == nil || !strings.Contains(err.Error(), "lockmq: no release publishes an image yet (tried v0.5.0, v0.4.0)") {
+		t.Errorf("no image at all: %v", err)
+	}
+	if _, err := r.LatestImage(ctx, "lockfile", ""); err == nil || !strings.Contains(err.Error(), "v0.4.0 or later") {
+		t.Errorf("only releases without hub mode: %v", err)
+	}
+	if _, err := r.LatestImage(ctx, "locksql", "vault"); err == nil || !strings.Contains(err.Error(), "no release publishes a -vault image") {
+		t.Errorf("no vault image: %v", err)
+	}
+	// An image that does not verify is an error, not skipped.
+	r.Run = &fake{failing: "cosign"}
+	if _, err := r.LatestImage(ctx, "locksql", ""); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Errorf("unsigned image: %v", err)
 	}
 }
 

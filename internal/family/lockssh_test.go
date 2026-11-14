@@ -118,7 +118,7 @@ func TestComposeLockssh(t *testing.T) {
       - "profile-lockssh:/w/.lockssh:ro"
     networks: [lockhub, "locknet-web"]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
 `
 	if got := block(out, "lock-web"); got != want {
 		t.Errorf("lock-web:\n%s\nwant:\n%s", got, want)

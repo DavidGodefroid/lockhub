@@ -20,7 +20,7 @@ services:
         bind:
           create_host_path: false
     networks: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   hubkey:
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     profiles: [setup]
@@ -60,7 +60,7 @@ services:
       - "profile-locksql:/w/one/.locksql:ro"
     networks: [lockhub, "locknet-db-a"]
     depends_on: [lockhub, "gw-db-a"]
-    restart: unless-stopped
+    restart: "no"
   "gw-db-a":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -71,7 +71,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "5432=gwout-db-a:20000"]
     networks:
       "locknet-db-a":
@@ -87,7 +87,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=db.example.com:5432"]
     networks: ["gwlink-db-a", "out-db-a"]
   lock-db-b:
@@ -115,7 +115,7 @@ services:
       - "profile-locksql:/w/one/.locksql:ro"
     networks: [lockhub, "locknet-db-b"]
     depends_on: [lockhub, "gw-db-b"]
-    restart: unless-stopped
+    restart: "no"
   "gw-db-b":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -126,7 +126,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "5432=gwout-db-b:20000"]
     networks:
       "locknet-db-b":
@@ -142,7 +142,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=db.example.com:5432"]
     networks: ["gwlink-db-b", "out-db-b"]
   lock-db-c:
@@ -170,7 +170,7 @@ services:
       - "profile-locksql:/w/one/.locksql:ro"
     networks: [lockhub, "locknet-db-c"]
     depends_on: [lockhub, "gw-db-c"]
-    restart: unless-stopped
+    restart: "no"
   "gw-db-c":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -181,7 +181,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "5432=gwout-db-c:20000"]
     networks:
       "locknet-db-c":
@@ -197,7 +197,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=db.example.com:5432"]
     networks: ["gwlink-db-c", "out-db-c"]
   lock-files-a:
@@ -223,7 +223,7 @@ services:
       - "profile-lockfile:/home/lockfile/.config/lockfile:ro"
     networks: [lockhub, "locknet-files-a"]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   lock-files-b:
     image: "ghcr.io/davidgodefroid/lockfile@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     user: "10031:10030"
@@ -247,7 +247,7 @@ services:
       - "profile-lockfile:/home/lockfile/.config/lockfile:ro"
     networks: [lockhub, "locknet-files-b"]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   lock-files-c:
     image: "ghcr.io/davidgodefroid/lockfile@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     user: "10031:10030"
@@ -271,7 +271,7 @@ services:
       - "profile-lockfile:/home/lockfile/.config/lockfile:ro"
     networks: [lockhub, "locknet-files-c"]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   lock-mq-a:
     image: "ghcr.io/davidgodefroid/lockmq@sha256:3333333333333333333333333333333333333333333333333333333333333333"
     user: "10011:10010"
@@ -296,7 +296,7 @@ services:
       - "profile-lockmq:/w/one/.lockmq:ro"
     networks: [lockhub, "locknet-mq-a"]
     depends_on: [lockhub, "gw-mq-a"]
-    restart: unless-stopped
+    restart: "no"
   "gw-mq-a":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -307,7 +307,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "443=gwout-mq-a:20000"]
     networks:
       "locknet-mq-a":
@@ -323,7 +323,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=mgmt.example.com:443"]
     networks: ["gwlink-mq-a", "out-mq-a"]
   lock-mq-b:
@@ -350,7 +350,7 @@ services:
       - "profile-lockmq:/w/one/.lockmq:ro"
     networks: [lockhub, "locknet-mq-b"]
     depends_on: [lockhub, "gw-mq-b"]
-    restart: unless-stopped
+    restart: "no"
   "gw-mq-b":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -361,7 +361,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "443=gwout-mq-b:20000"]
     networks:
       "locknet-mq-b":
@@ -377,7 +377,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=mgmt.example.com:443"]
     networks: ["gwlink-mq-b", "out-mq-b"]
   lock-web-a:
@@ -402,7 +402,7 @@ services:
       - hubkey:/run/lockfamily:ro
       - "profile-lockhttp:/home/lockhttp/.config/lockhttp:ro"
     networks: ["egress-web-a"]
-    restart: unless-stopped
+    restart: "no"
   gatehome-web-a:
     image: "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     profiles: [setup]
@@ -454,7 +454,7 @@ services:
       - hubkey:/run/lockfamily:ro
       - "profile-lockhttp:/home/lockhttp/.config/lockhttp:ro"
     networks: ["egress-web-b"]
-    restart: unless-stopped
+    restart: "no"
   gatehome-web-b:
     image: "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     profiles: [setup]

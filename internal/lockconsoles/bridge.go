@@ -62,6 +62,14 @@ type Logger interface {
 	Logs(ctx context.Context, id string, since time.Time, tail int) ([]byte, error)
 }
 
+// Starter is a Docker that starts a stopped container. The engine never
+// restarts a console by itself (restart: "no", lockhub#199): a console
+// that ended (an idle session, a wrong answer, an error) is started again
+// by lox run while it follows it, never after.
+type Starter interface {
+	Start(ctx context.Context, id string) error
+}
+
 // Exec is Docker through the docker CLI, on the compose project lox run
 // applied.
 type Exec struct {
@@ -85,6 +93,13 @@ func (d Exec) Container(ctx context.Context, service string) (string, bool, erro
 		return id, false, cmdErr(err)
 	}
 	return id, strings.TrimSpace(string(st)) == "true", nil
+}
+
+func (d Exec) Start(ctx context.Context, id string) error {
+	if _, err := exec.CommandContext(ctx, "docker", "start", id).Output(); err != nil {
+		return cmdErr(err)
+	}
+	return nil
 }
 
 func (d Exec) Question(ctx context.Context, id, dir string) (string, error) {
@@ -142,9 +157,15 @@ var (
 	// stopped before it is read after the console printed something.
 	poll   = 2 * time.Second
 	settle = 200 * time.Millisecond
-	// retry is how long a stopped console is waited for before lox run
-	// looks again (Docker restarts it: unless-stopped).
+	// retry is how long lox run waits before it looks again at a console
+	// that stopped or could not be reached.
 	retry = time.Second
+	// A stopped console is started again (Starter) after startBackoff,
+	// doubled at each start up to maxBackoff, as an engine's restart
+	// policy would: back to startBackoff once it ran for steady.
+	startBackoff = time.Second
+	maxBackoff   = time.Minute
+	steady       = 10 * time.Second
 )
 
 // Bridge follows the consoles of a workspace (loxrun.Consoles).
@@ -325,6 +346,10 @@ func (b *Bridge) set(ctx context.Context, c *console, s loxrun.ConsoleState, msg
 // ends.
 func (b *Bridge) follow(ctx context.Context, c *console) {
 	b.set(ctx, c, loxrun.ConsoleStarting, "")
+	// The next start of the stopped console: not before startAt, then
+	// after backoff.
+	var startAt time.Time
+	backoff := startBackoff
 	for ctx.Err() == nil {
 		id, running, err := b.d.Container(ctx, "lock-"+c.Instance)
 		switch {
@@ -334,8 +359,20 @@ func (b *Bridge) follow(ctx context.Context, c *console) {
 			b.set(ctx, c, loxrun.ConsoleUnreachable, err.Error())
 		case !running:
 			b.set(ctx, c, loxrun.ConsoleStopped, b.lastLine(c))
+			if s, ok := b.d.(Starter); ok && id != "" && !time.Now().Before(startAt) {
+				if err := s.Start(ctx, id); err != nil && ctx.Err() == nil {
+					b.set(ctx, c, loxrun.ConsoleStopped, err.Error())
+				}
+				startAt = time.Now().Add(backoff)
+				backoff = min(2*backoff, maxBackoff)
+			}
 		default:
-			if err := b.attach(ctx, c, id); errors.Is(err, ErrUnsupported) {
+			t0 := time.Now()
+			err := b.attach(ctx, c, id)
+			if time.Since(t0) >= steady {
+				startAt, backoff = time.Time{}, startBackoff
+			}
+			if errors.Is(err, ErrUnsupported) {
 				b.set(ctx, c, loxrun.ConsoleUnreachable, err.Error())
 				return
 			} else if err != nil && ctx.Err() == nil {

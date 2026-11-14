@@ -44,7 +44,7 @@ At a terminal, `lox add TYPE` runs these steps in order:
    lock that takes its credentials from Vault), and, for locksql, lockmq,
    lockfile, locklog and lockssh when lea is on `PATH`, your uid in `allowed_uids`
    (lea's agents run as it). A `lockfamily.yaml` that does not exist yet is created with the
-   hub alone.
+   hub alone. See [Which release is pinned](#which-release-is-pinned).
 4. **The start (what `lox run` does before it serves decisions), with the short review of this lock**: one block with its
    image, target, environment, credentials, production flag and profile
    sha256, then `Apply? [y/N]`. Other locks are not shown, and a change the
@@ -294,7 +294,7 @@ others:
 | `--non-interactive` | ask nothing (above) |
 | `--review` | the review of `lox run` shows this lock's whole profile and asks |
 | `-v` | show cosign's and docker's own output (default: only when a step fails) |
-| `--version vX.Y.Z` | the lock's release to pin (default: the latest) |
+| `--version vX.Y.Z` | the lock's release to pin (default: the newest with a published image) |
 | `--file PATH` | the workspace's `lockfamily.yaml` |
 
 `--instance` is not a `lox add` flag: it belongs to the locks' launchers. When
@@ -366,6 +366,29 @@ stays in its `config.toml`; `--purge` removes it once the lock is gone (refused
 before anything changes when the lock names no profile or another lock serves
 the same one).
 
+## Which release is pinned
+
+Without `--version`, `lox add` (and `lox init`, for the hub) pins the
+lock's newest release that is not a pre-release (a repository with only
+pre-releases yet: its newest pre-release, saying `<lock> has only
+pre-releases: pinning vX.Y.Z`) **whose image is published**. A release
+appears on GitHub before its release workflow has pushed and signed its
+image; while the registry serves no image for it, `lox add` skips it for
+the previous release and says so:
+
+```
+locksql v0.19.0: no published image yet (its release workflow may still be running): skipped
+locksql: pinning v0.18.3, the newest release with a published image
+```
+
+Only a missing image is skipped: a published image whose cosign signature
+does not verify stops `lox add`. No release with a published image (at or
+after the first release that runs under `lox run`) is an error naming the
+lock. With `--version vX.Y.Z`, that release is pinned or nothing is: a
+release without an image yet fails with `locksql vX.Y.Z: no published
+image (…): its release workflow may still be running; retry later, or
+choose another --version`.
+
 ## Declaring only
 
 ```sh
@@ -373,7 +396,7 @@ lox add locksql shop-db [--version vX.Y.Z | --image ghcr.io/davidgodefroid/locks
 ```
 
 It writes the lock into `lockfamily.yaml` (pinned by digest to its latest
-signed release, or the one given), and prints `<file>: lock shop-db (locksql)
+signed release with a published image, or the one given), and prints `<file>: lock shop-db (locksql)
 declared; run lox run to review and start it`. No profile is written and
 nothing is started. `--image`, `--hub-image` and `--profile` belong to this
 form only, the question flags to the guided one.

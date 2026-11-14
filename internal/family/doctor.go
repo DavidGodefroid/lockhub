@@ -82,6 +82,18 @@ func (d *Doctor) Do(ctx context.Context) int {
 		ok("engine: %s", strings.TrimSpace(string(out)))
 	}
 
+	// The cosign lox add and lox run verify every image with.
+	switch v, err := CosignVersion(ctx, d.Run); {
+	case err != nil:
+		fail("cosign: %v (lox add and lox run verify every image's signature with it)", err)
+	case !CosignSupported(v):
+		fail("cosign %s: lox needs cosign %s or later: %s", v, CosignMin, CosignUpgradeHint)
+	case v == "":
+		warn("cosign: version unknown (lox needs cosign %s or later)", CosignMin)
+	default:
+		ok("cosign %s", v)
+	}
+
 	if c != nil && engine {
 		for _, img := range images(c) {
 			if _, err := d.Run.Run(ctx, nil, "docker", "image", "inspect", "--format", "{{.Id}}", img); err != nil {

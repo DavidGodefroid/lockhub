@@ -9,8 +9,10 @@ is seen in the output (after where the previous rule matched), ANSWER is
 typed. An ANSWER starting with <pause> waits 3 seconds first (a console
 attached does not replay its pending question: what is typed before the
 attach is connected is lost); <detach> types Ctrl-P Ctrl-Q (detaches
-from a console). Answers take \\n escapes. Once every rule matched, the
-command's exit status is ours. Exit 1 when a pattern is not seen within
+from a console). A PATTERN starting with <opt> is optional: it is
+skipped once the next rule's pattern shows first (lox run's review, asked
+only when the configuration changed). Answers take \\n escapes. Once
+every rule matched, the command's exit status is ours. Exit 1 when a pattern is not seen within
 TIMEOUT seconds (the pattern is named; answers are never printed). The
 output is copied to stdout.
 """
@@ -50,7 +52,13 @@ def main():
                 out += s
         while rules:
             pat, ans = rules[0]
+            opt = pat.startswith("<opt>")
+            if opt:
+                pat = pat[len("<opt>"):]
             j = out.find(pat, pos)
+            if j < 0 and opt and len(rules) > 1 and out.find(rules[1][0], pos) >= 0:
+                rules.pop(0)
+                continue
             if j < 0:
                 break
             pos = j + len(pat)
