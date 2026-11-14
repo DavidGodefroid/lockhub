@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/DavidGodefroid/lockkit/confine"
+
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/route"
@@ -148,6 +150,9 @@ type Up struct {
 	// Resolve finds the release of an image whose signature names none,
 	// for [lox] image_min (nil: Upgrade's, else unknown).
 	Resolve *Upgrade
+	// RuntimeGIDs are the gids owning this host's container runtime
+	// sockets with group write (nil: confine.RuntimeGIDs).
+	RuntimeGIDs func() []int
 }
 
 // Project is the compose project of a workspace: one per workspace.
@@ -517,6 +522,17 @@ func (u *Up) Do(ctx context.Context) error {
 			raw, ups = nraw, done
 			composeYAML = []byte(Compose(c, paths))
 		}
+	}
+	// A containerized console cannot see the host's runtime sockets: lox
+	// run tells it their gids, which its runtime_group check refuses.
+	if gids := u.runtimeGIDs(); gids != "" {
+		paths.RuntimeGIDs = map[string]string{}
+		for _, n := range c.Instances() {
+			if l := c.Locks[n]; takesRuntimeGIDs(l.Type, tags[l.Image]) {
+				paths.RuntimeGIDs[n] = gids
+			}
+		}
+		composeYAML = []byte(Compose(c, paths))
 	}
 	// Each network's subnet, from the workspace's pool: none from the
 	// engine's default address pools, which a few projects exhaust. A
@@ -1549,4 +1565,18 @@ func hostNCPU(ctx context.Context, run Runner) (int, error) {
 		return 0, fmt.Errorf("the Docker host's CPUs: docker info says %q, want a count", strings.TrimSpace(string(out)))
 	}
 	return n, nil
+}
+
+// runtimeGIDs is u's RuntimeGIDs as --runtime-gids takes them
+// (comma-separated, "" when none).
+func (u *Up) runtimeGIDs() string {
+	get := u.RuntimeGIDs
+	if get == nil {
+		get = confine.RuntimeGIDs
+	}
+	var s []string
+	for _, g := range get() {
+		s = append(s, strconv.Itoa(g))
+	}
+	return strings.Join(s, ",")
 }

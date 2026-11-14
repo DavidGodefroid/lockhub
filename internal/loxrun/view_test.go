@@ -279,3 +279,20 @@ func TestHeaderNotStarted(t *testing.T) {
 		t.Errorf("lockConsoles: %+v", cs)
 	}
 }
+
+// An unconfined agent's ticket (lockkit#133): the card says so, whole on
+// 80 columns.
+func TestCardUnconfined(t *testing.T) {
+	v := sampleView()
+	v.Cards[0].Unconfined = true
+	got := strings.Join(Frame(v, 80, 30, Style{Unicode: true}), "\n")
+	for _, want := range []string{"! unconfined: the agent does not run confined", "  this lock protects against mistakes, not against a compromised agent"} {
+		if !strings.Contains(visible(got), want) {
+			t.Errorf("lacks %q:\n%s", want, visible(got))
+		}
+	}
+	v.Cards[0].Unconfined = false
+	if got := strings.Join(Frame(v, 80, 30, Style{Unicode: true}), "\n"); strings.Contains(got, "unconfined") {
+		t.Errorf("confined card:\n%s", visible(got))
+	}
+}

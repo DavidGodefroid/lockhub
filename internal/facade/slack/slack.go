@@ -118,6 +118,9 @@ func Blocks(c chat.Card, outcome string) []map[string]any {
 	if c.Production {
 		head += " · *PRODUCTION*"
 	}
+	if c.Unconfined {
+		head += " · *UNCONFINED*"
+	}
 	if c.Red {
 		head = ":red_circle: " + head
 	}

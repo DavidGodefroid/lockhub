@@ -33,6 +33,11 @@ session, expiry); a revoke sent from the hub is not there yet. A production tick
 flagged on every facade (`PRODUCTION` in `lox approve`, red and `· production`
 on the phone, `flags.production` in the queue's ticket). `y` approves it: no current Lock sets
 lockkit's `flags.retype`, so approving a production ticket needs no typed name.
+A ticket of an agent that does not run confined (lockkit#133: let in by a
+non-production profile's `unconfined = true`) is flagged too: `UNCONFINED` in
+`lox approve`, Slack and Telegram, `· unconfined` on the phone, the console's
+banner on `lox run`'s card, `flags.unconfined` in the queue's ticket (omitted
+when false).
 The hub would ask for the instance name only on a ticket whose lock sets that
 flag, in the terminal, the deck and on the phone alike (the hub checks it). The
 queue's `retype` field gives the name to type, empty when none is needed, so

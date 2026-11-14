@@ -16,7 +16,9 @@ import (
 type Facts struct {
 	Target, Credentials, VaultPath string
 	Production                     bool
-	Odd                            map[string]string
+	// Unconfined: the profile lets unconfined agents in (lockkit#133).
+	Unconfined bool
+	Odd        map[string]string
 	// Profile is the profile directory, its table and its sha256 as the
 	// review shows them, ".locksql/ [profiles.orders] sha256:…".
 	Profile string
@@ -157,6 +159,16 @@ func ProfileFacts(p *Profile, typ, profile string) Facts {
 			f.Odd = map[string]string{}
 		}
 		f.Odd["production"] = "production = " + pv
+	}
+	switch uv := use("unconfined", 'b'); uv {
+	case "true":
+		f.Unconfined = true
+	case "false", "":
+	default:
+		if f.Odd == nil {
+			f.Odd = map[string]string{}
+		}
+		f.Odd["unconfined"] = "unconfined = " + uv
 	}
 	for _, k := range factKeys[typ] {
 		if o, ok := f.Odd[k]; ok {

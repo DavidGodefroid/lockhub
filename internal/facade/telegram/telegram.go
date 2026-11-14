@@ -110,6 +110,9 @@ func Text(c chat.Card, outcome string) string {
 	if c.Production {
 		b.WriteString(" · <b>PRODUCTION</b>")
 	}
+	if c.Unconfined {
+		b.WriteString(" · <b>UNCONFINED</b>")
+	}
 	fmt.Fprintf(&b, "\nticket %s · workspace %s\nrequester (unverified): %s", code(c.ID), code(c.Workspace), code(c.Requester))
 	if c.Header != "" {
 		b.WriteString("\n" + code(c.Header))

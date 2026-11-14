@@ -259,7 +259,7 @@ async function render(items) {
     const li = $("ticket-tpl").content.firstElementChild.cloneNode(true);
     const q = (c) => li.querySelector(c);
     if (t.screen.red || t.flags.production) li.classList.add("red");
-    q(".risk").textContent = t.risk + (t.flags.production ? " · production" : "");
+    q(".risk").textContent = t.risk + (t.flags.production ? " · production" : "") + (t.flags.unconfined ? " · unconfined" : "");
     q(".where").textContent = t.source.lock + " / " + t.source.instance;
     q(".header").textContent = t.screen.header;
     q(".requester").textContent = "requested by unverified: " + t.requester.agent;

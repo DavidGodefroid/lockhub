@@ -230,7 +230,8 @@ func newWS(t *testing.T, conf string) ws {
 	state, run := filepath.Join(dir, "state"), filepath.Join(dir, "run")
 	return ws{dir, file, func(input string, f *fake) (string, error) {
 		var out strings.Builder
-		u := &Up{File: file, State: state, Runtime: run, User: "1000:1000", Run: f, In: bufio.NewReader(strings.NewReader(input)), Out: &out}
+		u := &Up{File: file, State: state, Runtime: run, User: "1000:1000", Run: f, In: bufio.NewReader(strings.NewReader(input)), Out: &out,
+			RuntimeGIDs: func() []int { return nil }} // hermetic: not this host's sockets
 		err := u.Do(context.Background())
 		return out.String(), err
 	}}
@@ -661,4 +662,55 @@ func TestFacadeKeys(t *testing.T) {
 func piiSet(ws string) {
 	os.MkdirAll(filepath.Join(ws, ".locksql", "pii"), 0o755)
 	os.WriteFile(filepath.Join(ws, ".locksql", "pii", "default.toml"), []byte("# rules\n"), 0o644)
+}
+
+// lox run passes the host's runtime gids to every console whose image
+// takes --runtime-gids (lockkit#133): a containerized console cannot see
+// the host's sockets. None when the host has none, nor to an older image.
+func TestRuntimeGIDs(t *testing.T) {
+	old := RuntimeGIDsSince
+	t.Cleanup(func() { RuntimeGIDsSince = old })
+	RuntimeGIDsSince = map[string]string{"lockmq": "v0.10.0", "locksql": "v0.20.0"}
+	for _, c := range []struct {
+		name    string
+		gids    []int
+		sql, mq string
+		wantSQL string
+		wantMQ  string
+	}{
+		{"both take it", []int{999, 4242}, "v0.20.0", "v0.10.1", `"--runtime-gids", "999,4242"`, `"--runtime-gids", "999,4242"`},
+		{"older locksql", []int{999}, "v0.19.0", "v0.10.0", "", `"--runtime-gids", "999"`},
+		{"no tag", []int{999}, "", "", "", ""},
+		{"host has none", nil, "v0.20.0", "v0.10.0", "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWS(t, yamlConf(""))
+			f := newFake()
+			if c.sql != "" {
+				f.keys["tag/"+sqlImg] = c.sql
+			}
+			if c.mq != "" {
+				f.keys["tag/"+mqImg] = c.mq
+			}
+			var out strings.Builder
+			u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: f,
+				In: bufio.NewReader(strings.NewReader("y\n")), Out: &out, RuntimeGIDs: func() []int { return c.gids }}
+			if err := u.Do(context.Background()); err != nil {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+			b, _ := os.ReadFile(filepath.Join(w.dir, "state", "compose.yaml"))
+			compose := string(b)
+			sql := compose[strings.Index(compose, "  lock-crm-prod:"):]
+			sql = sql[:strings.Index(sql, "\n  lock-events:")]
+			mq := compose[strings.Index(compose, "  lock-events:"):]
+			if i := strings.Index(mq[1:], "\n  lock"); i >= 0 {
+				mq = mq[:i+1]
+			}
+			for _, x := range []struct{ svc, block, want string }{{"crm-prod", sql, c.wantSQL}, {"events", mq, c.wantMQ}} {
+				if x.want == "" && strings.Contains(x.block, "--runtime-gids") || x.want != "" && !strings.Contains(x.block, x.want) {
+					t.Errorf("lock-%s: want %q:\n%s", x.svc, x.want, x.block)
+				}
+			}
+		})
+	}
 }

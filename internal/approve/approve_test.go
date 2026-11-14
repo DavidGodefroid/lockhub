@@ -82,7 +82,7 @@ func (e env) pushFlags(t *testing.T, risk ticket.Risk, f ticket.Flags, body stri
 		"sha256:"+strings.Repeat("1", 64), "sha256:"+strings.Repeat("2", 64), created, 0)
 	tk.Workspace, tk.Requester = "ws", ticket.Requester{Agent: "dev-1\x1b[31m", Session: "s"}
 	tk.Screen = ticket.Screen{Header: "query on crm", Body: []string{body}, Warnings: []string{"touches 3 rows"}}
-	tk.Flags.Production, tk.Flags.Retype = f.Production, f.Retype
+	tk.Flags.Production, tk.Flags.Retype, tk.Flags.Unconfined = f.Production, f.Retype, f.Unconfined
 	if err := tk.Sign(e.lock); err != nil {
 		t.Fatal(err)
 	}
@@ -347,5 +347,25 @@ func TestWithdraw(t *testing.T) {
 	}
 	if _, err := c.Withdraw(ctx, "crm", "nope", api.WithdrawRequest{Facade: "slack", Via: "lox run"}); err == nil {
 		t.Error("a chat facade withdrew on the facade socket")
+	}
+}
+
+// An unconfined agent's ticket (lockkit#133): the hub takes it (the
+// flags member), the queue relays it, the screen says so.
+func TestUnconfinedShown(t *testing.T) {
+	e := setup(t)
+	id := e.pushFlags(t, ticket.RiskRead, ticket.Flags{Unconfined: true}, "SELECT 1")
+	items, _, err := approve.Dial(e.sock).Queue(context.Background(), 0, 0)
+	if err != nil || len(items) != 1 || items[0].ID != id || !bytes.Contains(items[0].Ticket, []byte(`"unconfined":true`)) {
+		t.Fatalf("queue %v %v", items, err)
+	}
+	scr, _, err := approve.Screen(items[0], time.Now())
+	if err != nil || !strings.Contains(strings.SplitN(scr, "\n", 3)[1], "  UNCONFINED") {
+		t.Errorf("screen %v:\n%s", err, scr)
+	}
+	e.pushFlags(t, ticket.RiskRead, ticket.Flags{}, "SELECT 2")
+	items, _, _ = approve.Dial(e.sock).Queue(context.Background(), 0, 0)
+	if scr, _, _ := approve.Screen(items[1], time.Now()); strings.Contains(scr, "UNCONFINED") || bytes.Contains(items[1].Ticket, []byte("unconfined")) {
+		t.Errorf("confined ticket:\n%s", scr)
 	}
 }

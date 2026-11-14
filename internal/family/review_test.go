@@ -202,6 +202,7 @@ func TestShortReviewFocus(t *testing.T) {
 		"  environment  VAULT_ADDR=https://vault.example.com:8200\n",
 		"  credentials  vault, database/creds/orders\n",
 		"  production   no\n",
+		"  unconfined   no (an unconfined agent is refused)\n",
 		"  profile      .locksql/ sha256:abc  (lox run --review prints it in full)\n",
 		"Other changes since the last lox run:\n  + lock events routed only to tty\n",
 	} {
@@ -461,5 +462,27 @@ func TestFocusOnARemovedLock(t *testing.T) {
 	}
 	if _, other, ok := strings.Cut(out.String(), "Other changes since the last lox run:"); !ok || !strings.Contains(other, "+ lock events type lockmq") {
 		t.Errorf("the other change is not listed:\n%s", out.String())
+	}
+}
+
+// unconfined = true in a profile (lockkit#133) is a row of the review,
+// with the console's banner; on a production profile, the console does
+// not start; a value the review cannot read is shown as written.
+func TestShortReviewUnconfined(t *testing.T) {
+	c := &Config{Locks: map[string]Lock{"o": {Type: "locksql", Image: sqlImg}}}
+	for _, x := range []struct {
+		lines []string
+		want  string
+	}{
+		{[]string{`[profiles.p]`, `unconfined = true`}, "  unconfined   WARNING: unconfined: this lock protects against mistakes, not against a compromised agent\n"},
+		{[]string{`[profiles.p]`, `unconfined = true`, `production = true`}, "  unconfined   yes: the console refuses to start (a production profile)\n"},
+		{[]string{`[profiles.p]`, `unconfined = "yes"`}, `  unconfined   ? (unconfined = "yes" in the profile)` + "\n"},
+		{[]string{`[profiles.p]`, `unconfined = false`}, "  unconfined   no (an unconfined agent is refused)\n"},
+	} {
+		var out strings.Builder
+		renderShort(&out, c, "", map[string]Facts{"o": ProfileFacts(tomlProfile(x.lines...), "locksql", "p")}, true, nil)
+		if !strings.Contains(out.String(), x.want) {
+			t.Errorf("%v: lacks %q:\n%s", x.lines, x.want, out.String())
+		}
 	}
 }
