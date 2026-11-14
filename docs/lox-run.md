@@ -723,7 +723,7 @@ The review shows the allowlist (the `egress` row of each lock; `lox run
 profile change that changes it is reviewed again. Fail closed: what the
 allowlist cannot name exactly is reached by nothing, and the review says why
 in an `unreachable` row of its own (`egress unreachable: …` in the lines): a
-`proxy_command`, a value it cannot read. An IP address (a `host`, an
+value it cannot read. An IP address (a `host`, an
 `ssh.host`, a URL's host or the Vault address; loopback aside) is refused
 outright: the gateway answers by host name only, so the lock could never reach
 it. `lox add` refuses it as an answer, and `lox run` stops before the review,
@@ -738,6 +738,40 @@ what the last `lox run` reviewed. A hub image older than the gateway (pinned
 with `--pin`) cannot run it: the lock then reaches nothing until `lox run`
 upgrades the hub. The bridge a lock had before (`egress-<name>`, with a route
 out) is removed by the first `lox run` that moves the lock off it.
+
+**`proxy_command` is not supported under `lox run`.** A locksql profile's
+`proxy_command` (`ssh … socat`, `docker exec -i … socat`, `kubectl exec …`)
+runs a program whose real destination the gateway cannot follow, with a client
+(`ssh`, `docker`, `kubectl`) the signed lock image does not ship; `docker exec`
+would also need the container runtime, which is root on the host. `lox run`
+stops before the review on a lock whose profile (the one it names, or any of
+`config.toml` when it names none) has one:
+
+```
+egress of lock shop: profile prod: proxy_command is not supported under lox run; reach the database through the built-in ssh bastion ([profiles.prod.ssh]) or publish its port (see docs/lox-run.md)
+```
+
+Reach the database through the built-in ssh bastion instead: the lock then
+reaches the bastion only, and the database is dialled from its far side. In
+place of `proxy_command = ["ssh", "deploy@bastion.example.com", "socat", "-",
+"TCP:db.internal:5432"]`:
+
+```toml
+[profiles.prod]
+engine = "postgres"
+host = "db.internal"        # as the bastion resolves it
+port = 5432
+
+[profiles.prod.ssh]
+host = "bastion.example.com"
+user = "deploy"
+auth = "key"
+key = "~/.ssh/bastion_key"  # in the lock's home volume
+```
+
+Or publish the database's port (a container's `ports:`, a Kubernetes
+`Service`) and name it by `host` and `port`, `host.docker.internal` for this
+machine.
 
 Every network takes a small subnet of its own (a /28; the hub's a /24) from
 the workspace's pool, `10.123.0.0/16` unless `network.pool` in lockfamily.yaml
