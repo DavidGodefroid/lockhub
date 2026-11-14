@@ -5,6 +5,8 @@ import (
 	"io"
 	"slices"
 	"strings"
+
+	"github.com/DavidGodefroid/lockhub/internal/family"
 )
 
 // The screens are pure: inputs to text, golden-tested.
@@ -17,9 +19,14 @@ func RenderPrereqs(w io.Writer, p Prereqs, goos string) {
 	} else {
 		fmt.Fprintf(w, "  !!  Docker does not answer: %s\n", DockerHint(goos, p.DockerCLI))
 	}
-	if p.Cosign != "" {
+	switch {
+	case p.Cosign != "" && !family.CosignSupported(p.CosignVersion):
+		fmt.Fprintf(w, "  !!  cosign %s: lox needs cosign %s or later: %s\n", p.CosignVersion, family.CosignMin, family.CosignUpgradeHint)
+	case p.Cosign != "" && p.CosignVersion != "":
+		fmt.Fprintf(w, "  ok  cosign %s (lox add and lox run verify every image's signature)\n", p.CosignVersion)
+	case p.Cosign != "":
 		fmt.Fprintln(w, "  ok  cosign (lox add and lox run verify every image's signature)")
-	} else {
+	default:
 		fmt.Fprintf(w, "  !!  cosign not found: %s\n", CosignHint(goos))
 	}
 	if p.Lea != "" {

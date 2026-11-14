@@ -490,8 +490,7 @@ func (u *Up) Do(ctx context.Context) error {
 	// The release each image was signed for, from its certificate.
 	tags := map[string]string{}
 	for _, im := range images {
-		out, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref)
+		out, err := verifyImage(ctx, u.Run, im.ref, "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"))
 		if err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}

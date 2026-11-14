@@ -34,10 +34,15 @@ Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|l
 
 ## Steps
 
-1. **Prerequisites.** Docker must answer and cosign must be installed
-   (`lox add` and `lox run` verify every image's signature); otherwise
-   `lox init` prints the install command for your system and stops with
-   nothing done. lea and each lock's launcher (`locksql`, `lockmq`,
+1. **Prerequisites.** Docker must answer and cosign v2.5.0 or later must
+   be installed (`lox add` and `lox run` verify every image's signature);
+   otherwise `lox init` prints the install (or upgrade) command for your
+   system and stops with nothing done. The screen shows cosign's version;
+   `lox doctor` checks it too. Signatures are checked in both formats:
+   the legacy one and the sigstore bundle format, in which cosign v3
+   signs (lockfile's images). cosign v3 reads both; with cosign v2, lox
+   retries a verify that finds no signature with `--new-bundle-format`
+   (same identity and issuer), which cosign has since v2.5.0. lea and each lock's launcher (`locksql`, `lockmq`,
    `lockfile`, `lockhttp`, `locklog`, `lockssh`) are looked up on `PATH`: the locks run without
    lea, lockhttp needs it, and a missing launcher is listed with where to
    install it.

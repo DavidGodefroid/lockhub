@@ -22,6 +22,9 @@ import (
 type okRunner struct{ calls []string }
 
 func (o *okRunner) Run(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+	if name == "cosign" && len(args) > 0 && args[0] == "version" {
+		return []byte(`{"gitVersion":"v2.6.1"}`), nil
+	}
 	o.calls = append(o.calls, name+" "+strings.Join(args, " "))
 	return nil, nil
 }

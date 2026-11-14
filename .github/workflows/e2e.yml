@@ -211,12 +211,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.x"
-      # cosign v3: lockfile's releases sign their images in its bundle
-      # format, which cosign v2 does not find (exit 10); v3 also verifies
-      # the hub's v2-format signatures.
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # cosign v2, as distributions ship it: lockfile's releases sign their
+      # images in the bundle format (cosign v3), which lox then verifies
+      # with --new-bundle-format (lockhub#197); the jobs below keep v3.
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
         with:
-          cosign-release: v3.1.3
+          cosign-release: v2.6.1
       - run: go build -o "$RUNNER_TEMP/bin/lox" ./cmd/lox
       - name: this commit's hub image (containerd image store, cosign shim)
         run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
@@ -416,9 +416,10 @@ jobs:
           ref=$(go run ./ci/e2e/shipped lockfile)
           echo "$ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "not a release tag: $ref" >&2; exit 1; }
           GOBIN="$RUNNER_TEMP/lockfile-bin" go install "github.com/DavidGodefroid/lockfile/cmd/lockfile@$ref"
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # cosign v2, as lockfile-seccomp (lockhub#197).
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
         with:
-          cosign-release: v3.1.3
+          cosign-release: v2.6.1
       - run: go build -o "$RUNNER_TEMP/bin/lox" ./cmd/lox
       - name: this commit's hub image (containerd image store, cosign shim)
         run: sh ci/e2e/ci-hub.sh "$RUNNER_TEMP/shim"
