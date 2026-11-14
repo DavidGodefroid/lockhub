@@ -15,6 +15,15 @@ digest).
   the gateway cannot follow the program's destination, and the signed
   image has no `ssh`, `docker` or `kubectl` client to run it.
 
+### Added
+
+- `GET /v1/decided` (facade socket) items carry `request`: the decided
+  ticket as its lock signed it, as `GET /v1/queue` serves it (#200). Its
+  requester names the agent that waits on the decision: an auto rule of
+  `lox run` decides a ticket in milliseconds, before any queue a facade
+  reads shows it, so lea can tell that agent of every decision, auto
+  included, as of a human's.
+
 ## v0.11.0 (2026-11-13)
 
 Supported locks: lockssh joins `lox run` (lockssh v0.1.0 or later).
