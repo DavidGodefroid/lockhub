@@ -299,11 +299,17 @@ img=$(sed -n '/^  web:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
 srcdir=$(dirname "$ws")/gate-sources
 mkdir -p "$srcdir/web" "$srcdir/api"
 chmod 0755 "$srcdir" "$srcdir/web" "$srcdir/api"
+# Until the gates have their address: a valid file naming no one (the
+# gate refuses every request meanwhile).
+for d in web api; do
+	echo '{"version":1,"networks":[]}' >"$srcdir/$d/sources.json"
+	chmod 0644 "$srcdir/$d/sources.json"
+done
 # sources NAME CONTAINER: NAME's sources.json, CONTAINER's address on the
 # agents' network.
 sources() {
 	ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$agents\").IPAddress}}" "$2")
-	[ -n "$ip" ] || die "$2 has no address on $agents"
+	[ -n "$ip" ] || { docker ps -a --filter "name=$2" >&2; docker logs "$2" 2>&1 | tail -20; die "$2 has no address on $agents"; }
 	printf '{"version":1,"networks":[{"local_ip":"%s","container":"e2e-agent","project":"e2e"}]}\n' "$ip" >"$srcdir/$1/sources.json"
 	chmod 0644 "$srcdir/$1/sources.json"
 }
