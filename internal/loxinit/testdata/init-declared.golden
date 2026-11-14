@@ -2,7 +2,7 @@ lox init: /project
 
 Prerequisites
   ok  Docker 29.0.0
-  ok  cosign (lox add and lox run verify every image's signature)
+  ok  cosign v2.6.1 (lox add and lox run verify every image's signature)
   ok  lea
   ok  launchers: locksql, lockmq, lockfile, lockhttp, locklog, lockssh
 

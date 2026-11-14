@@ -217,6 +217,14 @@ const HubKeyDir = "/run/lockfamily"
 
 func q(s string) string { return fmt.Sprintf("%q", s) }
 
+// restartPolicy is the hub's, the locks' and the gateways': none. A lock
+// is of no use without lox run (fail closed), and the hub cannot come
+// back by itself after a reboot (its facade directory is on a tmpfs): the
+// engine never starts the stack on its own, at its start or a host's
+// boot. lox run starts a console that stopped while it runs
+// (lockconsoles).
+const restartPolicy = `"no"`
+
 // Compose renders the compose file. Output is deterministic.
 func Compose(c *Config, p Paths) string {
 	var b strings.Builder
@@ -277,7 +285,7 @@ func Compose(c *Config, p Paths) string {
 		w("    labels:")
 		w("      lockfamily.config: %s", q(p.Config))
 	}
-	w("    restart: unless-stopped")
+	w("    restart: %s", restartPolicy)
 	// hubkey writes the hub's public key into the volume the locks mount
 	// read-only (lox up runs it; never started by up). As root, so that
 	// the key is root's: a lock refuses a key file its own or another
@@ -494,7 +502,7 @@ func Compose(c *Config, p Paths) string {
 				w("    depends_on: [lockhub]")
 			}
 		}
-		w("    restart: unless-stopped")
+		w("    restart: %s", restartPolicy)
 		if eg := p.Egress[name]; lockNet(l, lp) && len(eg.Endpoints) > 0 {
 			gateway(w, c.Hub.Image, name, eg)
 		}
@@ -811,7 +819,7 @@ func gateway(w func(string, ...any), image, name string, eg Egress) {
 		// Ports below 1024 (https) for its own account, as Docker sets it.
 		w("    sysctls:")
 		w("      net.ipv4.ip_unprivileged_port_start: \"0\"")
-		w("    restart: unless-stopped")
+		w("    restart: %s", restartPolicy)
 	}
 	w("  %s:", q("gw-"+name))
 	common()
