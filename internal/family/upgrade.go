@@ -23,12 +23,12 @@ import (
 // upgrades an older pinned lock image to. Bumped when lox is released
 // (the release notes say so); the hub's is lox's own version.
 var ShippedLocks = map[string]string{
-	"locksql":  "v0.18.1",
-	"lockmq":   "v0.9.0",
-	"lockfile": "v0.9.1",
-	"lockhttp": "v0.9.1",
-	"locklog":  "v0.3.0",
-	"lockssh":  "v0.2.0",
+	"locksql":  "v0.20.0",
+	"lockmq":   "v0.10.0",
+	"lockfile": "v0.10.0",
+	"lockhttp": "v0.10.0",
+	"locklog":  "v0.3.1",
+	"lockssh":  "v0.3.0",
 }
 
 // ShippedPins are the releases a lox of version (X.Y.Z, without the v)

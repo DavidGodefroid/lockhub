@@ -5,6 +5,18 @@ digest).
 
 ## Unreleased
 
+## v0.12.0 (2026-11-14)
+
+Supported locks: lockkit v0.20.0 (confined agents). `lox run` upgrades
+older images to locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0,
+lockhttp v0.10.0, locklog v0.3.1 and lockssh v0.3.0 (`family.ShippedLocks`;
+v0.11.0 pinned locksql v0.18.1, lockmq v0.9.0, lockfile v0.9.1, lockhttp
+v0.9.1, locklog v0.3.0 and lockssh v0.2.0); `lox add` still pins each
+lock's latest signed release. A local cosign must be v2.5.0 or later
+(#197). Upgrade lox, then start `lox run`: it upgrades the hub image to
+v0.12.0, taking the previous stack down first when its networks changed
+(#199).
+
 ### Breaking
 
 - `lox run` refuses a lock whose profile has a `proxy_command` (the one it
@@ -63,6 +75,26 @@ digest).
   asked for with `--version` that has no image yet fails, saying its
   release workflow may still be running. A published image whose
   signature does not verify still stops `lox add`.
+
+### Behaviour
+
+- Nothing restarts the stack by itself (#199): the hub, the locks and their
+  gateways run with `restart: "no"` (was `unless-stopped`). A lock is of no
+  use without `lox run`, and the hub cannot come back alone after a reboot
+  (its facade directory is on the `$XDG_RUNTIME_DIR` tmpfs). While `lox run`
+  runs, it starts again a console that stopped (after 1 s, then less and
+  less often, up to once a minute); `lox attach` starts a stopped console
+  before it attaches.
+- `lox run` upgrades over a running stack (#199): when a network in place
+  differs from the file it applies (subnet, `internal`) and containers of
+  the workspace are there, it takes the previous stack down, containers and
+  networks, with one line (`previous stack stopped (lockhub v0.11.0 →
+  v0.12.0)`); the volumes and the state directory (the hub key, the
+  tickets) are kept. A dry run takes nothing down. A network still used by
+  a container the stack does not own is named, with how to clear it.
+- `lox down [--file lockfamily.yaml]` (#199): stops the workspace's stack,
+  its containers and networks, keeping volumes, keys and tickets; `lox run`
+  starts it again.
 
 ## v0.11.0 (2026-11-13)
 
