@@ -125,17 +125,7 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
           export LOCKSQL_LAUNCHER="$GITHUB_WORKSPACE/locksql-launcher/scripts/locksql"
           export LOCKMQ_LAUNCHER="$GITHUB_WORKSPACE/lockmq-launcher/scripts/lockmq"
-          set -o pipefail
-          sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lox" 2>&1 | tee "$RUNNER_TEMP/phase2.log"
-      # TEMPORARY (#218 debug, GitHub's log store answers 502): the tail of
-      # phase 2 as annotations.
-      - name: phase 2 tail (debug)
-        if: failure()
-        run: |
-          tail -n 120 "$RUNNER_TEMP/phase2.log" | cut -c1-300 | split -l 12 - "$RUNNER_TEMP/tail."
-          for f in "$RUNNER_TEMP"/tail.*; do
-            printf '::error::%s\n' "$(sed -e 's/%/%25/g' "$f" | sed -e ':a;N;$!ba;s/\n/%0A/g')"
-          done
+          sh ci/e2e/phase2.sh "$RUNNER_TEMP/bin/lox"
 
   first-run:
     name: e2e first run (lox init, lox add locksql ask and vault, lox remove)
