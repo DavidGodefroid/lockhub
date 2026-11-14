@@ -17,6 +17,12 @@ digest).
 
 ### Added
 
+- `GET /v1/decided` (facade socket) items carry `request`: the decided
+  ticket as its lock signed it, as `GET /v1/queue` serves it (#200). Its
+  requester names the agent that waits on the decision: an auto rule of
+  `lox run` decides a ticket in milliseconds, before any queue a facade
+  reads shows it, so lea can tell that agent of every decision, auto
+  included, as of a human's.
 - `locks.<name>.networks` in lockfamily.yaml: existing Docker networks a
   lock's gateway joins, to reach a database or broker by container name
   (`host = "db"` on a dev stack's network `shop`, no published port) (#194).
