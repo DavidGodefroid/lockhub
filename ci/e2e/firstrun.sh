@@ -65,9 +65,14 @@ cd "$ws"
 # E2E_VAULT=1 it is also the login the Vault dev server holds).
 inv_pw="inv-$E2E_ID-$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n')"
 cproject="$E2E_ID-shop"
+# cleanup never changes the exit status: under set -e a failing command
+# here (ws_project on a half-written up.json) would fail a passed run.
 cleanup() {
+	p=
 	if [ -f "$ws/.lockfamily/up.json" ]; then
-		p=$(ws_project "$ws")
+		p=$(ws_project "$ws" 2>/dev/null) || p=
+	fi
+	if [ -n "$p" ]; then
 		docker compose -p "$p" --project-directory "$XDG_STATE_HOME/lockfamily/$p" -f "$XDG_STATE_HOME/lockfamily/$p/compose.yaml" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
 	(cd "$ws" && docker compose -p "$cproject" down -v --remove-orphans >/dev/null 2>&1) || true
