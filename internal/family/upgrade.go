@@ -26,7 +26,7 @@ var ShippedLocks = map[string]string{
 	"locksql":  "v0.20.0",
 	"lockmq":   "v0.10.0",
 	"lockfile": "v0.10.0",
-	"lockhttp": "v0.10.0",
+	"lockhttp": "v0.11.0",
 	"locklog":  "v0.4.0",
 	"lockssh":  "v0.3.0",
 }
