@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DavidGodefroid/lockkit/plans"
 	"github.com/DavidGodefroid/lockkit/ticket"
 
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
@@ -38,9 +37,9 @@ func TestRunE2EInputs(t *testing.T) {
 	if d := w.decision(id); d.Auto() || d.Secret == nil {
 		t.Fatalf("signed decision %+v: want the human's, with the sealed value", d)
 	}
-	p, _, err := w.lock.Begin(w.plans, id, caller, func(p *plans.Plan) (string, string, error) {
-		return p.Binding.PolicyFP, p.Binding.PlanHash, nil
-	})
+	// The lock learns the decision from its watch of the hub, not from
+	// lox run: wait for it.
+	p, err := w.begin(id)
 	if err != nil {
 		t.Fatalf("the lock cannot run it: %v", err)
 	}
