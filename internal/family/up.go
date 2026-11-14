@@ -224,6 +224,9 @@ func Summary(c *Config, hubPub string, lockPubs map[string]string, facadePubs ma
 		if len(l.LogRoots) > 0 {
 			s = append(s, fmt.Sprintf("lock %s log roots %s besides %s (log_roots)", n, strings.Join(l.LogRoots, " "), strings.Join(DefaultLogRoots, " ")))
 		}
+		if len(l.Networks) > 0 {
+			s = append(s, networksLine(n, l))
+		}
 		if m := c.Hub.Mobile; m != nil {
 			if !l.Devices {
 				s = append(s, fmt.Sprintf("lock %s pins no device: not answered on mobile", n))
@@ -517,6 +520,9 @@ func (u *Up) Do(ctx context.Context) error {
 	if !u.Probe {
 		nets, err := ReadEngineNets(ctx, u.Run)
 		if err != nil {
+			return err
+		}
+		if err := CheckJoinNets(c, nets); err != nil {
 			return err
 		}
 		subs, err := AllocSubnets(c.Pool(), project, NetKeys(c), nets)
@@ -922,6 +928,7 @@ func (u *Up) Do(ctx context.Context) error {
 				f := ProfileFacts(profiles[l.Type], l.Type, LockProfile(l))
 				f.Changed = !first && !slices.Contains(prev.Summary, fmt.Sprintf("profile %s %s %s", l.Type, profileDir(ws, l.Type), profiles[l.Type].Fingerprint))
 				f.Egress = egresses[n].Short()
+				f.Networks = strings.Join(l.Networks, ", ")
 				f.Unreachable = egresses[n].None
 				f.Files = homeWarn[n]
 				facts[n] = f

@@ -436,10 +436,20 @@ func (d *Doctor) egress(ctx context.Context, c *Config, project string, state ma
 			continue
 		}
 		var want []string
+		// The gateway's halves: the front, and the back of each route the
+		// allowlist takes (out-<n>, the joined networks).
+		halves := []string{"gw-" + n}
 		for _, l := range applied.Summary {
 			if rest, found := strings.CutPrefix(l, "lock "+n+" egress "); found {
 				if addr, _, found := strings.Cut(rest, " ("); found && !strings.HasPrefix(rest, "unreachable:") && !strings.HasPrefix(rest, "none:") {
 					want = append(want, addr)
+					half := "gwout-" + n
+					if strings.Contains(rest, ") via network") {
+						half = "gwnet-" + n
+					}
+					if !slices.Contains(halves, half) {
+						halves = append(halves, half)
+					}
 				}
 			}
 		}
@@ -473,7 +483,7 @@ func (d *Doctor) egress(ctx context.Context, c *Config, project string, state ma
 			continue
 		}
 		bad := false
-		for _, s := range []string{"gw-" + n, "gwout-" + n} {
+		for _, s := range halves {
 			if st := state[s]; st != "running" {
 				fail("lock %s egress: its gateway %s is %s, the lock reaches nothing: docker compose -p %s logs %s (a hub image without lockhub egress-gateway? lox run upgrades it)", n, s, orNone(st), project, s)
 				bad = true
@@ -482,10 +492,17 @@ func (d *Doctor) egress(ctx context.Context, c *Config, project string, state ma
 		if bad {
 			continue
 		}
-		out, err = d.Run.Run(ctx, nil, "docker", "inspect", "-f", "{{json .Config.Cmd}}", project+"-gwout-"+n+"-1")
 		var cmd []string
-		if err == nil {
-			err = json.Unmarshal(out, &cmd)
+		for _, s := range halves[1:] {
+			var c []string
+			out, err = d.Run.Run(ctx, nil, "docker", "inspect", "-f", "{{json .Config.Cmd}}", project+"-"+s+"-1")
+			if err == nil {
+				err = json.Unmarshal(out, &c)
+			}
+			if err != nil {
+				break
+			}
+			cmd = append(cmd, c...)
 		}
 		if err != nil {
 			fail("lock %s egress: the gateway's forwards cannot be read: %v", n, err)

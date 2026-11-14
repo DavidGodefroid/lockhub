@@ -9,9 +9,14 @@ needs one (`egress-hub`), the mobile listener's (`mobile-hub`), and per lock:
 | with an allowlist (a database, a broker, a remote file store, …) | `locknet-<name>` (internal), `gwlink-<name>` (internal, between its gateway's two halves), `out-<name>` (the gateway's route out) |
 | with no endpoint (lockfile local, locklog with local sources) | `locknet-<name>` (internal), or the hub's alone |
 | lockhttp | `egress-<name>` (its own policy's route out) |
+| with `networks: [shop]` (lockhub#194) | besides the above, its gateway's third half `gwnet-<name>` joins the existing network `shop` (declared `external`, never created nor removed); `out-<name>` only when an endpoint is reached through it |
 
 [lox-run.md](lox-run.md#egress-each-lock-reaches-its-reviewed-endpoints-only)
-says why each one exists.
+says why each one exists, and
+[lox-run.md](lox-run.md#a-database-on-a-docker-network-networks) what
+`networks` joins, which endpoints go through it (dotless host names) and its
+limits. A joined network keeps its own subnet: the pool below is not used
+for it.
 
 ## Each network's own small subnet
 

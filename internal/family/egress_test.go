@@ -161,7 +161,7 @@ func TestEgressPortCollisions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			front, back := es["x"].forwards("x")
+			front, back, _ := es["x"].forwards("x")
 			sni := false
 			for _, f := range front {
 				sni = sni || f.SNI != ""

@@ -15,6 +15,19 @@ digest).
   the gateway cannot follow the program's destination, and the signed
   image has no `ssh`, `docker` or `kubectl` client to run it.
 
+### Added
+
+- `locks.<name>.networks` in lockfamily.yaml: existing Docker networks a
+  lock's gateway joins, to reach a database or broker by container name
+  (`host = "db"` on a dev stack's network `shop`, no published port) (#194).
+  A third half of the gateway, `gwnet-<name>`, joins them, never the console
+  nor `gwout-<name>` (the half with the route out): dotless host names go
+  through the joined networks, dotted ones through `out-<name>` as before.
+  The review shows a `networks` row and `egress … via network shop`. `host`,
+  `none`, `bridge`, lox's own networks and any lox workspace's are refused,
+  as is a network the engine does not have. `lox doctor` checks `gwnet-<name>`
+  too.
+
 ## v0.11.0 (2026-11-13)
 
 Supported locks: lockssh joins `lox run` (lockssh v0.1.0 or later).

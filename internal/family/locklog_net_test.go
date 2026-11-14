@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -143,7 +144,7 @@ url = "https://other.example.net"
 		t.Fatal(err)
 	}
 	want := []Endpoint{{Host: "loki.example.net", Port: 3101, TLS: true, What: "loki source loki"}, {Host: "search.example.net", Port: 80, What: "elastic source search"}}
-	if !slices.Equal(e.Endpoints, want) {
+	if !reflect.DeepEqual(e.Endpoints, want) {
 		t.Errorf("endpoints %+v", e.Endpoints)
 	}
 	if len(e.None) != 1 || !strings.Contains(e.None[0], "sources.bad.url") {

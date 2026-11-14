@@ -29,6 +29,12 @@ import (
 // one lox run copies into the lock, never from the workspace: an agent
 // that edits .locksql changes nothing until the human reviews it again.
 //
+// A lock with networks (lockhub#194) has a third half, gwnet-<n>, on
+// gwlink-<n> and those existing networks only: it dials the endpoints
+// with a dotless host name (a container's there), gwout-<n> the dotted
+// ones. gwout-<n> never joins them, so no container there reaches the
+// lock's other endpoints through the gateway, nor answers for their names.
+//
 // Fail closed: what the allowlist cannot name exactly (a value it cannot
 // read) is reached by nothing, and the review says why. An IP address is
 // refused outright (lockhub#145): the gateway answers by host name only,
@@ -48,6 +54,10 @@ type Endpoint struct {
 	TLS bool
 	// What names the endpoint in the review ("database", "vault", …).
 	What string
+	// Via are the joined networks (locks.<n>.networks) the endpoint is
+	// reached through, by gwnet-<n>: a dotless host name, a container's
+	// there. Empty: through out-<n>, by gwout-<n>.
+	Via []string
 }
 
 // Addr is host:port.
@@ -157,9 +167,15 @@ func lockEgress(c *Config, name string, p *Profile) (Egress, error) {
 	if len(e.Endpoints) > maxEndpoints {
 		return e, fmt.Errorf("%d endpoints, at most %d", len(e.Endpoints), maxEndpoints)
 	}
-	for _, x := range e.Endpoints {
+	for i, x := range e.Endpoints {
 		if reservedHost(x.Host) {
 			return e, fmt.Errorf("%s (%s): a name of lox run's own services: rename it in the profile", x.Host, x.What)
+		}
+		// A dotless name is a container's on the joined networks: never
+		// resolved by gwout-<n>, so no container there can answer for a
+		// dotted name (lockhub#194).
+		if len(l.Networks) > 0 && !strings.Contains(x.Host, ".") {
+			e.Endpoints[i].Via = l.Networks
 		}
 	}
 	// One gateway port per endpoint port: a shared port is routed by TLS
@@ -186,7 +202,7 @@ func reservedHost(h string) bool {
 	if h == "lockhub" || h == "hubkey" {
 		return true
 	}
-	for _, p := range []string{"lock-", "gw-", "gwout-", "gatehome-", "gatekey-", "rotkey-", "profile-"} {
+	for _, p := range []string{"lock-", "gw-", "gwout-", "gwnet-", "gatehome-", "gatekey-", "rotkey-", "profile-"} {
 		if strings.HasPrefix(h, p) && !strings.Contains(h, ".") {
 			return true
 		}
@@ -442,7 +458,7 @@ func (e Egress) Lines(n string) []string {
 	}
 	var s []string
 	for _, x := range e.Endpoints {
-		s = append(s, fmt.Sprintf("lock %s egress %s (%s)", n, x.Addr(), x.What))
+		s = append(s, fmt.Sprintf("lock %s egress %s (%s)%s", n, x.Addr(), x.What, x.via()))
 	}
 	for _, r := range e.None {
 		s = append(s, fmt.Sprintf("lock %s egress unreachable: %s", n, r))
@@ -461,7 +477,7 @@ func (e Egress) Short() string {
 	}
 	var a []string
 	for _, x := range e.Endpoints {
-		a = append(a, x.Addr())
+		a = append(a, x.Addr()+x.via())
 	}
 	s := "only " + strings.Join(a, ", ")
 	if len(a) == 0 {
@@ -493,22 +509,95 @@ func formerNets(c *Config) map[string]bool {
 // egressLine tells summary lines of a lock's egress from the others.
 var egressLine = regexp.MustCompile(`^lock \S+ egress `)
 
+// via is the review's note of the networks x is reached through.
+func (x Endpoint) via() string {
+	switch len(x.Via) {
+	case 0:
+		return ""
+	case 1:
+		return " via network " + x.Via[0]
+	}
+	return " via networks " + strings.Join(x.Via, ", ")
+}
+
 // forwards are the gateway's --forward flags of e: the front's (on the
-// lock's network) and the back's (with the route out).
-func (e Egress) forwards(name string) (front, back []egress.Forward) {
+// lock's network), the back's (gwout-<n>, with the route out) and the
+// joined networks' (gwnet-<n>, the endpoints with Via).
+func (e Egress) forwards(name string) (front, back, joined []egress.Forward) {
 	shared := map[int]int{}
 	for _, x := range e.Endpoints {
 		shared[x.Port]++
 	}
 	for i, x := range e.Endpoints {
-		f := egress.Forward{Listen: x.Port, Host: "gwout-" + name, Port: gwBase + i}
+		half := "gwout-" + name
+		if len(x.Via) > 0 {
+			half = "gwnet-" + name
+		}
+		f := egress.Forward{Listen: x.Port, Host: half, Port: gwBase + i}
 		if shared[x.Port] > 1 {
 			f.SNI = x.Host
 		}
 		front = append(front, f)
-		back = append(back, egress.Forward{Listen: gwBase + i, Host: x.Host, Port: x.Port})
+		to := egress.Forward{Listen: gwBase + i, Host: x.Host, Port: x.Port}
+		if len(x.Via) > 0 {
+			joined = append(joined, to)
+		} else {
+			back = append(back, to)
+		}
 	}
-	return front, back
+	return front, back, joined
+}
+
+// joinedNets are the networks gwnet-<n> joins: those of the endpoints
+// with Via (none when the profile names no dotless host).
+func (e Egress) joinedNets() []string {
+	for _, x := range e.Endpoints {
+		if len(x.Via) > 0 {
+			return x.Via
+		}
+	}
+	return nil
+}
+
+// routeOut: gwout-<n> forwards an endpoint, so the lock has out-<n>.
+func (e Egress) routeOut() bool {
+	return slices.ContainsFunc(e.Endpoints, func(x Endpoint) bool { return len(x.Via) == 0 })
+}
+
+// networksLine is the summary line of lock n's joined networks.
+func networksLine(n string, l Lock) string {
+	return fmt.Sprintf("lock %s joins networks %s: its gateway gwnet-%s only, for the profile's dotless host names (networks)", n, strings.Join(l.Networks, " "), n)
+}
+
+// JoinNetKey is the compose key of the existing network n a gateway joins.
+func JoinNetKey(n string) string { return "join-" + n }
+
+// CheckJoinNets refuses, before anything starts, a joined network the
+// engine does not have or that belongs to a lox workspace: one lox run
+// labels, or one of a compose project that has the hub's network (a
+// lock's or the hub's of this workspace or another).
+func CheckJoinNets(c *Config, nets []EngineNet) error {
+	byName := map[string]EngineNet{}
+	loxProjects := map[string]bool{}
+	for _, n := range nets {
+		byName[n.Name] = n
+		if n.Labels[LabelRole] != "" {
+			loxProjects[n.Labels["com.docker.compose.project"]] = true
+		}
+	}
+	delete(loxProjects, "")
+	for _, name := range c.Instances() {
+		for _, j := range c.Locks[name].Networks {
+			n, ok := byName[j]
+			switch {
+			case !ok:
+				return fmt.Errorf("locks.%s.networks: no network %s on the engine: start the stack that makes it (docker compose up), or docker network create %s, then lox run", name, j, j)
+			case n.Labels[LabelRole] != "" || loxProjects[n.Labels["com.docker.compose.project"]]:
+				return fmt.Errorf("locks.%s.networks: %s is a network of a lox workspace, which a gateway never joins", name, j)
+			}
+		}
+	}
+	return nil
 }
 
 // aliases are the distinct names the front answers for.
