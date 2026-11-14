@@ -172,7 +172,11 @@ reveals: [docs/approvals.md](docs/approvals.md).
 
 "Since" is each lock's first release that runs under `lox run` (hub mode);
 `lox run` upgrades a pinned image older than the release this lox ships
-with. locklog's mount plan:
+with, over a stack an earlier lox left up (it stops it first, volumes and
+keys kept); nothing restarts the stack by itself, even at boot, and `lox
+down` stops it
+([docs/lox-run.md](docs/lox-run.md#upgrading-over-a-running-stack-lox-down)).
+locklog's mount plan:
 [docs/lox-run.md](docs/lox-run.md#locklog-the-mount-plan-and-the-containers-map);
 lockssh's egress, home files and auto rules:
 [docs/lox-run.md](docs/lox-run.md#lockssh-one-ssh-host-per-profile).
