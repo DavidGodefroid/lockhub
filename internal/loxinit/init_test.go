@@ -41,7 +41,7 @@ func golden(t *testing.T, name, root, got string) {
 }
 
 // endLine is lox init's last line, verbatim.
-const endLine = "Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`."
+const endLine = "Ready. Run `lea` (or your agent) and keep `lox run` open. Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`."
 
 // hubRef is a pinned hub image, as lox init writes it.
 const hubRef = "ghcr.io/davidgodefroid/lockhub@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

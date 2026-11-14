@@ -45,7 +45,8 @@ const usage = `lox: the Lock Family CLI
 
 Usage:
   lox init [--review] [-v] [--hub-image REF] [--file lockfamily.yaml]
-                                          start the project's hub alone, without a question: prerequisites, the
+                                          start the project's hub alone (no question for a hub alone; declared
+                                          locks are reviewed with Apply? [y/N]): prerequisites, the
                                           data sources its files name as hints (read only, no secret; lox add
                                           sets a lock up), lockfamily.yaml with the hub, then lox run
   lox run [--manual] [--theme light|dark] [--no-start] [--file lockfamily.yaml] [-v] [--review] [--pin sha256:DIGEST] [--no-upgrade] [--rotate hub|INSTANCE|all]
@@ -54,7 +55,8 @@ Usage:
                                           (masked) and serve decisions: auto mode by default (reads auto, writes
                                           and DDL asked, a connection asked once per profile per session), the
                                           rest asked in a question card; Shift+Tab switches auto/manual; quitting
-                                          stops decisions (tickets wait: fail closed). --no-start only serves
+                                          stops its decisions, not the stack (tickets wait at the hub for lox run
+                                          or another facade: nothing is auto-approved). --no-start only serves
                                           decisions; --pin, --rotate, --review, -v as they were on lox up;
                                           an image older than this lox's release is upgraded first, verified
                                           with cosign (--no-upgrade keeps the pins). A question plays a sound
@@ -63,14 +65,17 @@ Usage:
                                           LOX_SOUND_REMIND=DURATION (0 once), LOX_NOTIFY=1 desktop notification
   lox up                                  deprecated: use lox run (it still starts the hub and the locks)
   lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
-                                          one source (TYPE: locksql, lockmq, lockfile, lockhttp), guided (or
+                                          one source (TYPE: locksql, lockmq, lockfile, lockhttp, locklog, lockssh), guided (or
                                           from flags alone with --non-interactive) and applied at once: profile
                                           add, init claude, doctor, lockfamily.yaml, the start with this lock's
-                                          review, lox attach; a failure, a "n" or Ctrl-C keeps nothing; without
+                                          review, lox attach; a failure, a "n" or Ctrl-C before the console starts
+                                          restores config.toml and lockfamily.yaml (init claude's files and the
+                                          doctor's repairs stay); without
                                           a terminal it stops once the lock is declared
   lox add TYPE INSTANCE [--version vX.Y.Z | --image REF] [--profile P] [--hub-image REF] [--file lockfamily.yaml]
                                           only declare a lock, pinned by digest to its latest (or the given)
-                                          release, cosign-verified
+                                          release, cosign-verified (an --image or --hub-image given is taken as is,
+                                          verified at the next lox run)
   lox add slack --team T… --channel C… --user U… [--user U…] [--file lockfamily.yaml]
                                           enable the Slack facade; asks for its tokens at the terminal
   lox add telegram --chat ID --from ID [--chat ID --from ID …] [--file lockfamily.yaml]
@@ -108,16 +113,17 @@ Usage:
             [--decision denied|human|auto|pending] [--follow] [--json]
                                           the hub's exchanges: each ticket and its answer, masked
   lox audit show INSTANCE/ID [--json]     one exchange: masked plan, deciding rule or human, timings, signatures
-  lox audit verify --data DIR --hub-key-file FILE
+  lox audit verify --data DIR --hub-key-file FILE [--lock INSTANCE=PATH …] [--anchors FILE]
                                           check the hub's audit chain and decision signatures
   lox tickets [--lock NAME] [--pending|--error] [--json] [--socket PATH]
                                           the tickets pending at the hub, oldest first, with their age;
                                           --error: only those lox run cannot verify
   lox withdraw INSTANCE/ID… | --lock NAME --all-pending|--error [--socket PATH]
                                           take pending tickets back (as w in lox run): each ends withdrawn,
-                                          audited with you, and its lock ends the plan and frees its queue
+                                          audited with you, and its lock ends the plan and frees its queue (a
+                                          ticket the hub cannot verify: its lock is not told, its TTL ends it)
   lox version                            print the version
-  lox help                               show this help
+  lox help                               show this help: every command and its main flags; lox CMD -h lists all
 
 lockfamily.yaml lives in the workspace's .lockfamily/ (lea's agents only read it there); a legacy
 ./lockfamily.yaml is still read, with a warning. lox add TYPE INSTANCE, lox vault set and lox import

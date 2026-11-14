@@ -55,14 +55,15 @@ the internal `lockhub` network, which agents never join).
 
 ## Pairing
 
- `lox mobile pair --name phone` prints a one-time code (5 min,
-wrong codes cancel it). Open the origin on the phone, enter the code,
+ `lox mobile pair --name phone` prints a one-time code (5 min;
+20 wrong codes, from anyone, cancel every open pairing). Open the origin on the phone, enter the code,
 register; then compare the fingerprint the phone shows (computed from its own
 keys) with the one at the terminal and answer `y`. Run `lox run` to pin the
 phone at the locks: `lox run` reviews the device like any key and recreates
 the locks with it. `lox mobile list`, `lox mobile revoke NAME` (then `lox
-up`). The confirmation is only as strong as the facade socket: whoever can
-open it (your host account, never an agent container) can confirm a device.
+run`). The confirmation is only as strong as the facade socket: whoever can
+open it (any process of your host account, a host agent included, never an
+agent container) can confirm a device.
 `require_device` needs a paired device: `lox run` refuses it otherwise, so
 revoking the last phone leaves the locks pinning it (the hub refuses it) until
 you remove `require_device` and run `lox run`. `lox mobile pair` checks the

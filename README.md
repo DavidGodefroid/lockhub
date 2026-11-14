@@ -98,7 +98,9 @@ Details: [docs/getting-started.md](docs/getting-started.md#what-a-release-ships)
    lox run
    ```
 
-4. Start your agent (claude, codex, gemini, …) in the project, or `lea`.
+4. Start your agent in the project, or `lea`. `lox add` writes the MCP
+   configuration for Claude Code only (`<lock> init claude`); wire another
+   agent to the locks' launchers yourself.
    A lock added while lea runs reaches it at lea's next start (`lea stop`, then `lea`).
 
 Where to run each command, with or without lea:
@@ -176,8 +178,8 @@ reveals: [docs/approvals.md](docs/approvals.md).
 
 "Since" is each lock's first release that runs under `lox run` (hub mode);
 `lox run` upgrades a pinned image older than the release this lox ships
-with, over a stack an earlier lox left up (it stops it first, volumes and
-keys kept); nothing restarts the stack by itself, even at boot, and `lox
+with, over a stack an earlier lox left up (it stops it first when its networks
+changed, volumes and keys kept); nothing restarts the stack by itself, even at boot, and `lox
 down` stops it
 ([docs/lox-run.md](docs/lox-run.md#upgrading-over-a-running-stack-lox-down)).
 locklog's mount plan:
@@ -192,10 +194,14 @@ lockssh's egress, home files and auto rules:
   to the exact plan that was approved.
 - Chat facades (Slack, Telegram) show masked screens only and answer only
   non-production reads and writes; a `lockfamily.yaml` can narrow this routing, never widen it.
-- Quitting `lox run` stops serving decisions: pending tickets wait at the
-  hub for the next `lox run` (fail closed).
-- Whoever can open the facade socket is the host's human: your host
-  account, never an agent container.
+- Quitting `lox run` stops its decisions, not the stack: pending tickets
+  wait at the hub until `lox run` or another facade (`lox approve`, a
+  phone, a chat) answers; nothing is auto-approved.
+- Whoever can open the facade socket counts as the host's human: any
+  process of your host account, never an agent container. A host agent
+  running as you can therefore approve tickets (except the risk classes
+  `hub.mobile.require_device` reserves to a phone): run agents in lea to
+  keep them off it.
 
 Details and limits: [docs/approvals.md](docs/approvals.md),
 [docs/mobile.md](docs/mobile.md#limits), [docs/design-notes.md](docs/design-notes.md).

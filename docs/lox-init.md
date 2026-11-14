@@ -1,33 +1,33 @@
 # lox init
 
-`lox init` starts the hub of a project. It asks nothing and sets no lock
+`lox init` starts the hub of a project. It asks nothing for a hub alone
+(locks already declared are reviewed with `Apply? [y/N]`) and sets no lock
 up: each source is added afterwards, one at a time, with
 [`lox add`](lox-add.md).
 
 ```sh
-cd ~/projects        # with lea: its projects directory; with claude: the project
+cd ~/projects        # with lea: its projects directory; with an agent on the host: the project
 lox init
 ```
 
 Where to run it: with lea, in lea's projects directory, not a project
 inside it (lea reads `.lockfamily/up.json` only at the root of its projects
-directory); with `claude` on the host, in the project or a parent (the
+directory); with an agent on the host, in the project or a parent (the
 launchers walk up from the current directory to the nearest
-`.lockfamily/up.json`). With lea there is nothing to run: on its first
-start, when its projects directory has no `.lockfamily/up.json`, lea runs
-`lox init` there itself.
+`.lockfamily/up.json`). lea runs no lox command: run `lox init` (or `lox
+add`) yourself, and keep `lox run` open.
 
 It ends with:
 
 ```
-Ready. Run `lea` (or `claude` + `lox approve`). Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.
+Ready. Run `lea` (or your agent) and keep `lox run` open. Add a source: `lox add locksql|lockmq|lockfile|lockhttp|locklog|lockssh`.
 ```
 
 ## Flags
 
 | Flag | Meaning |
 |---|---|
-| `--file PATH` | the workspace's `lockfamily.yaml` (default: `.lockfamily/lockfamily.yaml` of the current directory) |
+| `--file PATH` | the workspace's `lockfamily.yaml` (default: `.lockfamily/lockfamily.yaml`, or a legacy `./lockfamily.yaml`) |
 | `--hub-image REF` | the hub's image for a new `lockfamily.yaml`, `ghcr.io/davidgodefroid/lockhub@sha256:<digest>` (default: the latest signed release's); an existing file keeps its hub image (`lox run --pin` changes it) |
 | `--review` | `lox run` shows everything and asks, even for a hub with no lock (needs a terminal) |
 | `-v` | show cosign's and docker's own output (default: only when a step fails) |

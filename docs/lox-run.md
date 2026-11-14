@@ -1,8 +1,8 @@
 # lox run and lea
 
 `lox run` runs the hub and a workspace's locks with Docker Compose. Agents
-reach the locks' sockets, never the hub: lea's agents in their containers,
-and a host agent (Claude Code, Codex... run in a terminal) through the
+use the locks' sockets: lea's agents in their containers (which never reach
+the hub), and a host agent (Claude Code, Codex... run in a terminal) through the
 locks' own launchers (`locksql mcp`, `lockmq mcp`, `lockfile mcp`, `locklog
 mcp`, `lockssh mcp`, as `<lock> init` writes them in `.mcp.json`). The locks
 `lox run` runs: locksql, lockmq, lockfile, lockhttp, locklog and lockssh. This
@@ -130,7 +130,7 @@ can neither read nor write this channel, and nothing of it goes to the hub).
   literal, a quoted identifier or a comment in some dialect (`'` `"` `` ` ``
   `[` `$` `#` `--` `/*`, or a non-ASCII byte): from there on each line is
   one `‹?›`, so no dialect's reading can show a value; numbers before it
-  are masked too, but for a `LIMIT`, `OFFSET` or `TOP` bound. `o` shows
+  are masked too, a `LIMIT` or `OFFSET` bound included. `o` shows
   the statements in clear on this screen only (they never leave
   `lox run`'s memory). The tab reads only the console's own lines: an
   unindented line in a format it knows, and the indented lines of the
@@ -165,9 +165,10 @@ can neither read nor write this channel, and nothing of it goes to the hub).
 - **A badge** on a tab that wants you: `policy pending`, `policy refused`,
   `refusal loop`, `question`.
 
-`lox run` reads what a console printed before it attached (its start, a
-policy change refused there) from its container's logs (`docker logs`, the
-last 200 lines, then what it printed since the last attach).
+`lox run` shows only what a console prints while it is attached: the
+consoles run with Docker's log driver `none` (no screen is kept in `docker
+logs`), so what one printed before (its start, a policy change refused
+there) is not read back.
 
 **Stuck tickets are withdrawn, not waited out.** `w` lists every ticket
 pending at the hub, oldest first, with its age and where lox run stands on
@@ -249,9 +250,7 @@ of a ticket or a decision (a password for the lock, a clear copy for a
 device) and the agent's free-text note are never read out. The hub records no
 row or message counts: the outcome shown is the ticket's state.
 
-Extension points: the image update (lockhub#118) and the lockfile seccomp
-profile under Vault (lockhub#45) belong to the start; the engine takes
-per-profile rules through `Session.Rules`.
+The engine takes per-profile rules through `Session.Rules`.
 
 ## Files
 
@@ -261,9 +260,9 @@ per-profile rules through `Session.Rules`.
 | `<workspace>/.lockfamily/up.json` | `lox run`, after a confirmed apply | lea; the locks' launchers (host agents) |
 | `<workspace>/.<type>/` (`.locksql`, `.lockmq`, `.lockfile`, `.lockhttp`, `.locklog`, `.lockssh`) | the human (the lock's own profile tools) | `lox run`, which copies it (see below) |
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox run` | `lox` only (hub data, applied fingerprint, compose copy) |
-| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox approve` (tty), lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
+| `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox run`, `lox approve` (tty), `lox audit`, `lox tickets`, `lox withdraw`, lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox run` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
-| `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lox approve`, lea's deck |
+| `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lox run`, `lox approve`, `lox audit`, `lox tickets`, `lox withdraw`, lea's deck, and any process of your uid |
 
 `$XDG_RUNTIME_DIR/lockhub` is on a tmpfs wiped at logout and reboot. Every
 `lox run` (and `lox init`, `lox add`, `lox remove`, which run it) makes it
@@ -297,7 +296,7 @@ lox run: the facade socket /run/user/1000/lockhub/facade.sock is served by the h
 
 `lox doctor` fails with the same line. A hub too old to answer `GET /v1/hub`
 cannot say whose it is: `lox run` upgrades it (unless `--no-upgrade` or
-`--pin` keep it), and refuses to serve it otherwise. To run two workspaces at
+`--pin` keep it), and serves it all the same otherwise; `lox doctor` warns. To run two workspaces at
 once, give the second its own runtime directory, for every `lox` command of
 that workspace: `XDG_RUNTIME_DIR=~/.run-b lox run` (lea's deck and
 `lox approve` then need the same `XDG_RUNTIME_DIR`, or `--socket`).
@@ -306,8 +305,10 @@ When `XDG_RUNTIME_DIR` is unset, the runtime directory is
 `$TMPDIR/lockhub-<uid>` (`/tmp` when `TMPDIR` is unset): `lox run` makes it (0700) and refuses one that is
 not yours, is a link, or that group or others can write.
 
-`lox run` (`--no-start` too) and `lox add` refuse a workspace directory,
-a `.lockfamily/` or a lock's `.<type>/` that is a link, not the user's, or
+`lox run` (`--no-start` too) and `lox add` refuse a workspace directory
+that is not the user's or is writable by group or others (a workspace
+reached through a link is checked at its real directory), and a
+`.lockfamily/` or a lock's `.<type>/` that is a link, not the user's, or
 writable by group or others (a umask 002 makes them 0775), with the command
 to run: `chmod go-w <directory>`. lox run keeps its own copy of up.json in its state
 directory. It writes up.json through a fresh file renamed into place (a
@@ -373,9 +374,9 @@ a type it has switched on:
   agent ever mounts it);
 - mounts it and adds the clients group, instead of the fixed `<type>-run`
   volume of a console started by the tool's own launcher. One lock of a
-  type: `/run/<type>`; several: each on `/run/<type>/<instance>` (Codex
-  gets one server per instance; a Claude agent passes `--instance NAME`
-  or sets `<TOOL>_INSTANCE`).
+  type: `/run/<type>`; several: each on `/run/<type>/<instance>` (an
+  agent gets one MCP server per instance, or passes `--instance NAME` /
+  sets `<TOOL>_INSTANCE`).
 
 For a lockhttp instance, lea's gate (beside lea's proxy) mounts the socket
 volume on `/run/lockhttp` and the volume of role `gate-home` as its
@@ -488,10 +489,15 @@ squatting the volume) and against files others than the user can write.
 They are **not** a boundary against the host agent itself: it usually runs
 as the user, often with Docker access, and can then rewrite up.json, create
 volumes and containers with any labels, `docker exec` into lox run's
-containers, or read a lock's home volume. What it still cannot do: decide a
-ticket (the hub signs decisions with its key, which the consoles pin, and
-only a human at a facade approves), or see a lock's credentials through
-the socket (the console holds them). An impostor socket could at most feed
+containers, or read a lock's home volume. It can also decide tickets: the
+facade socket (`facade.sock`, which `lox approve` and `lox run` use) admits
+any process of the user's uid, so a host agent running as the user can run
+`lox approve` or post a decision there and approve its own tickets. Only a
+risk class listed in `hub.mobile.require_device` is out of its reach: the
+locks then accept only a phone-signed approval of it. What it still cannot
+do: make a lock accept a decision the hub did not sign (the consoles pin
+the hub's key), or see a lock's credentials through the socket (the console
+holds them). An impostor socket could at most feed
 another agent false answers or collect its requests. To contain the agent,
 run it in lea: its containers have no Docker access and see `.lockfamily`
 read-only.
@@ -686,7 +692,8 @@ locks:
 ```
 
 lox run passes it as the console's `--allowed-uids 1000` (locksql v0.11.2,
-lockmq v0.4.1, lockfile v0.5.1 or later; an older image refuses to start), and the review
+lockmq v0.4.1, lockfile v0.5.1 or later, and locklog and lockssh, which
+take it too; an older image refuses to start), and the review
 shows it (`lock events serves uids 1000 besides its clients group`): a
 change of it is a change to confirm. Only uids, each once: never root, 65534
 (nobody), nor the console's own uid. `.lockfamily/` is read-only in lea's containers,
@@ -709,7 +716,7 @@ sources.json lea writes for it.
 
 `lox add` pins only releases that run under lox run (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
-lockhttp v0.3.0 or later.
+lockhttp v0.3.0, locklog v0.2.0, lockssh v0.1.0 or later.
 
 A TOML file of a profile must be UTF-8 of at most 64 KiB: every line of it is
 in the review.
@@ -1015,7 +1022,7 @@ after `up:`, leaves it out of what it applies (no key at the hub, no route, no
 container), shows it in its header (`locks <name> not started: <reason>`)
 and `lox doctor` fails it with the reason. Fix the profile or `log_roots`,
 then `lox run` again: the lock's start is a change to review. `lox add` of
-that very lock (and `--rotate` of it) still stops on the refusal.
+that very lock (and `lox run --rotate` of it) still stops on the refusal.
 
 ### locklog: networks and routing
 
@@ -1080,8 +1087,9 @@ A lockssh console runs one command per SSH session on its profile's host:
 lox run gives it the project kind (console `10041`, clients group `10040`,
 the profile copy at `<workspace>/.lockssh`, read-only; 1 GB, 256 processes,
 as its launcher) and an egress to that `host`:`port` only, plus the Vault
-address with `credentials = "vault"` (above). An IP address is refused: name
-the host (`host.docker.internal` for this machine).
+address when the lock has `vault: true` in lockfamily.yaml (and a `vault:`
+block; above). An IP address other than loopback is refused: name the host
+(`host.docker.internal` for this machine).
 
 **Home files.** The profile's `key` (with `auth = "key"`, the default) and a
 `known_hosts` it names are files of the console account, `~/` being its home
@@ -1266,8 +1274,9 @@ previous stack stopped (lockhub v0.10.1 → v0.11.0)
 
 The volumes (the hub key, the profiles, the consoles' homes and sockets)
 and the state directory (the hub's database and keys, the tickets) are
-kept: the hub key is not made again. A dry run takes nothing down: it
-says the stack in place must be stopped first. Should a compose call
+kept: the hub key is not made again. A dry run (`lox up --dry-run`, the
+deprecated command; `lox run` has none) takes nothing down: it says the
+stack in place must be stopped first. Should a compose call
 still be refused on a network in use (`has active endpoints`), lox run
 takes the stack down and tries once more; refused again, it names the
 network and the container in the way (one this stack does not own) and
@@ -1276,7 +1285,7 @@ how to clear it (`docker stop`, `docker network disconnect`).
 `lox down` stops the workspace's stack: its containers and networks, the
 volumes and the state directory kept; `lox run` starts it again. With
 nothing running it does nothing (`lox down: nothing runs for this
-workspace`).
+workspace (project <project>)`).
 
 ## Restoring a hub version, rotating keys
 
@@ -1294,8 +1303,8 @@ log whose key was rotated.
 
 `lox run --rotate hub`, `--rotate <instance>` or `--rotate all`
 (repeatable, or comma-separated) replaces keys. The new keys are made
-before the review, which shows each key line that changes; declined (or
-`--dry-run`), they are dropped.
+before the review, which shows each key line that changes; declined, they
+are dropped.
 
 - A lock's new key is made by its own `hub-key`, in its own volume, under
   `.lockfamily-rotate` (its home, or the gate's `--home` for lockhttp);

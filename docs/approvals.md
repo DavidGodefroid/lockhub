@@ -48,16 +48,19 @@ workspace's `lockfamily.yaml` can narrow this routing, never widen it.
 
 In `lox approve`, `o` (or Ctrl-O then Enter, where the terminal passes it:
 not on macOS, which keeps ^O) shows a ticket's clear values:
-the terminal sends an ephemeral key signed by its facade key (which every lock
-pins, written by `lox run`), the lock seals the clear screen to it and signs
+the terminal sends an ephemeral key signed by its facade key (which a lock
+with `reveal: true` pins, written by `lox run`; the others refuse reveals), the lock seals the clear screen to it and signs
 the answer, and only the terminal opens it. The hub relays ciphertext, and
 never offers this on Slack, Telegram or mobile. An expired ticket is listed for
 re-approval (`r`, approve again): the lock asks again, and when nothing changed
 in the plan since then (and it is not for production) the hub approves it in
 that one step; otherwise the new ticket shows what changed and waits for `y`.
 
-Threat model of the facade socket: whoever can open it is the host's human (one
-user). The facade name a client sends for `decide` and `renew` is self-declared
+Threat model of the facade socket: whoever can open it is taken for the host's human
+(one user): the socket checks the caller's uid only, so a host agent that
+runs as that user can approve tickets too (`lox approve`, or a decide of
+its own), except the risk classes `hub.mobile.require_device` reserves to a
+phone-signed approval. Run agents in lea to keep them off it. The facade name a client sends for `decide` and `renew` is self-declared
 by that same user; a reveal is bound by the facade's own signed key, which the
 lock checks against the key it pinned.
 
@@ -70,7 +73,7 @@ answered.
 ![lox run: a connection asked once, reads approved on their own, a production write asked](lox-run.svg)
 
 ```sh
-lox run              # in its own terminal, in the workspace (or a parent)
+lox run              # in its own terminal, at the workspace's root (or --file PATH)
 ```
 
 It starts (or reuses) the hub and the workspace's locks, then shows, live,
@@ -85,7 +88,7 @@ It runs in **auto mode** by default:
 |---|---|
 | read (SELECT, MQ peek, file read) | approved by the rule, no question |
 | locklog: a scan, an unmask, an approved lookup | as the profile's auto rules say (`auto`, `ask`, `deny`; locklog's default: asked), shown in the review |
-| locksql write, DDL | asked, every time |
+| locksql write, DDL | asked every time by default (a profile's auto rule may allow it) |
 | connect (a lock opens a profile's connection on its agent's first request) | asked once per profile per `lox run` session; the password of an `ask` profile, or a Vault token that expired, is typed here and sealed to the lock |
 | another profile | its own question, once per session |
 | lockhttp: a new endpoint | asked once per session, then auto |
@@ -96,11 +99,13 @@ A lock starts disconnected and closes an idle connection (lockkit `lazyconn`):
 the next request asks again, and `lox run` approves it on the session's earlier
 answer. **Shift+Tab** switches to manual (every ticket asked) and back; the mode
 is the coloured badge in the header. The terminal **bell rings only when a
-question waits**. A question is a framed card above the feed (`y` approve, `n`
+question waits** or a refusal loop is detected (with a sound file set, the
+sound plays instead). A question is a framed card above the feed (`y` approve, `n`
 deny, `d` the whole masked screen); masked values look like `‹j***(20)›`.
 `a` shows the hub's audit, as `lox audit` lists it, `?` shows the keys. **Quitting** (`q q`, Ctrl-C) stops
-serving decisions: pending and new tickets wait at the hub for the next `lox
-run` (fail closed).
+this terminal's decisions: the stack stays up, and pending and new tickets
+wait at the hub until the next `lox run` or another facade (`lox approve`,
+the phone, a chat) answers them; nothing is auto-approved meanwhile.
 
 It respects `NO_COLOR`, reads a light background from `COLORFGBG` (or
 `--theme light`), draws ASCII where the locale is not UTF-8, and redraws on

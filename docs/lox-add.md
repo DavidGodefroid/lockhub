@@ -33,7 +33,9 @@ At a terminal, `lox add TYPE` runs these steps in order:
    name. A profile already in the lock's config is kept as it is. The
    doctor's repairs and what still fails are shown; a failure of the doctor
    never stops `lox add` (the console is not running yet). The doctor runs
-   with `--fix --yes` for locksql, lockmq, lockhttp and lockssh, without `--fix` for
+   with `--fix --yes` for locksql, lockmq, lockhttp and lockssh (locksql from
+   v0.13.1 and lockmq from v0.6.1 of the launcher: with an older one
+   `lox add` runs `doctor --json` without `--fix` and says to update), without `--fix` for
    lockfile and locklog (their only repair wires your agents, which `init
    claude` did). locksql's `--fix` also
    wires your installed agents for your account: before it runs, `lox add`
@@ -49,7 +51,9 @@ At a terminal, `lox add TYPE` runs these steps in order:
    image, target, environment, credentials, production flag and profile
    sha256, then `Apply? [y/N]`. Other locks are not shown, and a change the
    block does not render is listed under it, so no change escapes the
-   review. `--review` shows this lock's whole profile, line by line, and asks.
+   review. `--review` shows this lock's whole profile, line by line, and asks
+   (on the workspace's first `lox run`, the whole configuration of every
+   lock).
 5. **The console's questions**, attached at your terminal (what `lox attach
    NAME` does): its policy on a first start and, for a lock whose
    credentials are `ask`, the password; for `vault`, the Vault token. Once
@@ -103,8 +107,9 @@ means:
 
 A refused answer is explained (the reason names the key, never the value
 typed) and asked again. When the project's files name exactly one source of
-this type, its values are the defaults of the questions; with several, they
-are listed above the questions as `found: ...` hints.
+this type, its values are the defaults of the questions. Every source of
+this type detected (one or several) is listed above the questions as a
+`found: ...` hint.
 
 ### locksql
 
@@ -231,7 +236,7 @@ Local sources need Linux with a rootful Docker engine 19.03 or later.
 
 | Prompt | Flag, notes |
 |---|---|
-| `SSH host, a name (host.docker.internal for this machine) (required): ` | `--host`: a name, no user, port or scheme; an IP address is refused (the lock's egress reaches names only) |
+| `SSH host, a name (host.docker.internal for this machine) (required): ` | `--host`: a name, no user, port or scheme; an IP address other than loopback is refused (the lock's egress reaches names only; the same rule holds for locksql's and lockfile's hosts) |
 | `Port (required) [22]: ` | `--port` |
 | `Login (required): ` | `--user`: the SSH login |
 | `Auth: key or password (required) [key]: ` | `--auth` |
@@ -242,6 +247,7 @@ Local sources need Linux with a rootful Docker engine 19.03 or later.
 | `Production? (tickets flagged production; the profile name is typed at the console's start) [y/N] ` | `--production` |
 | `Credentials: none (an unencrypted key), ask (typed at the console's start) or vault (required) [none]: ` | `--credentials`: the key's passphrase; with `auth` password, `ask` or `vault` (the password) |
 | `Vault path (required) [secret/data/lockssh/<name>]: ` | `--vault-path`, with `credentials` vault |
+| `Vault address`, `Vault namespace`, `Vault CA file` | with `credentials` vault, when `lockfamily.yaml` has no vault block yet, as for locksql; `--vault-address`, `--vault-namespace`, `--vault-ca-file` |
 | `Name (required) [ssh]: ` | `--name` |
 
 At a terminal, the hosts of your `~/.ssh/config` (a plain `Host` with its
@@ -282,10 +288,12 @@ with `--non-interactive`.
 ## Flags
 
 `--engine --host --port --user --database --tls --path --url --vhost
---amqp-url --source --bucket --endpoint --region --dir --auth --key
---known-hosts --base-dir --production --credentials --vault-path
---vault-address --vault-namespace --vault-ca-file --name` answer the question
-of the same name (`--dir` is lockfile's directory; `lox add lockfile` refuses
+--amqp-url --source --bucket --endpoint --region --dir --auth --only --key
+--known-hosts --allow --exec --base-dir --production --credentials
+--vault-path --vault-address --vault-namespace --vault-ca-file --name` answer
+the question of the same name (`--only`: locklog's directories; `--allow`,
+`--exec`: lockssh's allowed commands and whether the agent may ask for
+others) (`--dir` is lockfile's directory; `lox add lockfile` refuses
 `--path`; `--tls` answers no question, it sets locksql's TLS mode). The
 others:
 
@@ -348,7 +356,8 @@ lox vault set --address https://vault.example.com:8200 [--namespace NS] [--ca-fi
 ```
 
 An omitted `--namespace` or `--ca-file` keeps the current value, and `""`
-clears it. The same checks as in the questions apply, and the command repairs
+clears it. The same checks as in the questions apply, but for one: an IP
+address is not refused here, only at the next `lox run`. The command repairs
 a file whose vault block fails them. Nothing is started: run `lox run` to
 review and apply it. A change of the CA restarts the locks with Vault.
 
