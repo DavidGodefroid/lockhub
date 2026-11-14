@@ -235,6 +235,12 @@ one hub approves for all of them. Start at [lockfamily.dev](https://lockfamily.d
   docker run --rm --read-only --cap-drop ALL lockhub version
   ```
 
+  Docs are published at [lockfamily.dev/docs](https://lockfamily.dev/docs/)
+  from this repo's Markdown. Adding a file under `docs/`, or renaming or
+  removing a README H2 section, needs a matching change to
+  [lockfamily's `docs-site/nav.toml`](https://github.com/DavidGodefroid/lockfamily/blob/main/docs-site/nav.toml):
+  open a lockfamily PR, or the nightly docs build fails.
+
 - **Security:** report vulnerabilities privately through
   [GitHub security advisories](https://github.com/DavidGodefroid/lockhub/security/advisories/new).
 - **License:** Apache-2.0, see [LICENSE](LICENSE).
