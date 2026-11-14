@@ -702,7 +702,9 @@ the host. A client holding one is refused as unconfined, whatever it reports.
 None when the host has none. Only an image whose console takes the flag gets
 it, a lock's release on lockkit v0.20.0 or later (an older console would
 refuse to start on it): locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0,
-lockhttp v0.10.0, lockssh v0.3.0, locklog v0.4.0 or later.
+lockssh v0.3.0, locklog v0.4.0 or later. A lockhttp console gets none: it
+takes no hub flags, and its only client is lea's gate, which tells a
+confined agent from another by the sources.json lea writes for it.
 
 `lox add` pins only releases that run under lox run (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,
