@@ -71,7 +71,7 @@ func TestRunE2EWithdrawStuckQueue(t *testing.T) {
 	}
 	// The agent comes back for each: told it was withdrawn, its plan ended.
 	for _, id := range stuck {
-		err := w.begin(id)
+		_, err := w.begin(id)
 		if !errors.Is(err, hubclient.ErrDenied) || !strings.Contains(err.Error(), "withdrawn by david in lox run") {
 			t.Fatalf("the agent's run of %s: %v", id, err)
 		}
@@ -122,15 +122,15 @@ func (w *world) trySubmit() (string, error) {
 
 // begin is the agent's run of ticket id at the lock, once the lock has
 // the hub's decision.
-func (w *world) begin(id string) error {
+func (w *world) begin(id string) (*plans.Plan, error) {
 	w.t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		_, _, err := w.lock.Begin(w.plans, id, caller, func(p *plans.Plan) (string, string, error) {
+		p, _, err := w.lock.Begin(w.plans, id, caller, func(p *plans.Plan) (string, string, error) {
 			return p.Binding.PolicyFP, p.Binding.PlanHash, nil
 		})
 		if !errors.Is(err, hubclient.ErrPending) || time.Now().After(deadline) {
-			return err
+			return p, err
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
