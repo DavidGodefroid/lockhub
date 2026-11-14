@@ -704,6 +704,7 @@ func Compose(c *Config, p Paths) string {
 	if c.Hub.Mobile != nil {
 		network("mobile-hub", false)
 	}
+	var joins []string
 	for _, name := range c.Instances() {
 		if Kinds[c.Locks[name].Type].Gate {
 			// lockhttp's egress is its own policy's.
@@ -714,10 +715,24 @@ func Compose(c *Config, p Paths) string {
 			continue
 		}
 		network("locknet-"+name, true)
-		if len(p.Egress[name].Endpoints) > 0 {
+		if eg := p.Egress[name]; len(eg.Endpoints) > 0 {
 			network("gwlink-"+name, true)
-			network("out-"+name, false)
+			if eg.routeOut() {
+				network("out-"+name, false)
+			}
+			for _, j := range eg.joinedNets() {
+				if !slices.Contains(joins, j) {
+					joins = append(joins, j)
+				}
+			}
 		}
+	}
+	// The existing networks a gateway joins: never created, nor removed
+	// (compose leaves an external network be).
+	for _, j := range joins {
+		w("  %s:", q(JoinNetKey(j)))
+		w("    external: true")
+		w("    name: %s", q(j))
 	}
 	w("volumes:")
 	w("  hubkey: {}")
@@ -801,7 +816,7 @@ func managedServices(w func(string, ...any), c *Config, p Paths) {
 // the only one with a route out, each forwarding only the allowlist.
 // Both run the hub's image (lockhub egress-gateway), its own account.
 func gateway(w func(string, ...any), image, name string, eg Egress) {
-	front, back := eg.forwards(name)
+	front, back, joined := eg.forwards(name)
 	args := func(fs []egress.Forward) string {
 		a := []string{"egress-gateway"}
 		for _, f := range fs {
@@ -824,14 +839,29 @@ func gateway(w func(string, ...any), image, name string, eg Egress) {
 	w("      %s:", q("locknet-"+name))
 	w("        aliases: [%s]", quoteAll(eg.aliases()))
 	w("      %s: {}", q("gwlink-"+name))
-	w("  %s:", q("gwout-"+name))
-	common()
-	w("    command: [%s]", args(back))
-	if eg.hostGateway() {
-		// A database or broker on this machine, named so in the profile.
-		w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
+	if len(back) > 0 {
+		w("  %s:", q("gwout-"+name))
+		common()
+		w("    command: [%s]", args(back))
+		if eg.hostGateway() {
+			// A database or broker on this machine, named so in the profile.
+			w("    extra_hosts: [\"host.docker.internal:host-gateway\"]")
+		}
+		w("    networks: [%s, %s]", q("gwlink-"+name), q("out-"+name))
 	}
-	w("    networks: [%s, %s]", q("gwlink-"+name), q("out-"+name))
+	if len(joined) > 0 {
+		// The joined networks' half (lockhub#194): never on out-<n>, so a
+		// container there reaches through it only what it reaches anyway,
+		// and no name of the route out is resolved on those networks.
+		nets := []string{q("gwlink-" + name)}
+		for _, j := range eg.joinedNets() {
+			nets = append(nets, q(JoinNetKey(j)))
+		}
+		w("  %s:", q("gwnet-"+name))
+		common()
+		w("    command: [%s]", args(joined))
+		w("    networks: [%s]", strings.Join(nets, ", "))
+	}
 }
 
 // deviceArgs are a lock's flags for the paired devices: pinned, and as

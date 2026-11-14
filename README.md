@@ -154,7 +154,11 @@ agent → lock (socket) → hub (masked ticket) → lox run → hub (signed deci
   `lox approve`, the lea deck, Slack, Telegram or a paired phone can answer too.
 - The hub signs the decision, and the Lock checks the signature before it runs anything.
 - Each lock (but lockhttp, whose egress is its own policy) reaches only the
-  endpoints of its reviewed profile; `lox doctor` checks it.
+  endpoints of its reviewed profile; `lox doctor` checks it. A database in a
+  dev stack is reached by container name with `networks: [shop]` on the lock:
+  only a part of its gateway joins `shop`, for the profile's dotless host names
+  (`db`); the console never does
+  ([docs/lox-run.md](docs/lox-run.md#a-database-on-a-docker-network-networks)).
 
 The auto-mode rules, the keys of `lox run`, grants, production tickets and
 reveals: [docs/approvals.md](docs/approvals.md).

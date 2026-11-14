@@ -105,6 +105,9 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 		if f.Egress != "" {
 			row("egress", f.Egress)
 		}
+		if f.Networks != "" {
+			row("networks", f.Networks+" (its gateway gwnet only, for dotless host names)")
+		}
 		for _, r := range f.Unreachable {
 			row("unreachable", "WARNING: "+r)
 		}
@@ -143,6 +146,9 @@ func shortCovered(c *Config, focus string, sum []string) map[string]bool {
 		cov[fmt.Sprintf("lock %s image %s", n, l.Image)] = true
 		if l.Profile != "" {
 			cov[fmt.Sprintf("lock %s profile %s", n, l.Profile)] = true
+		}
+		if len(l.Networks) > 0 {
+			cov[networksLine(n, l)] = true
 		}
 		if l.Vault && c.Vault != nil {
 			cov[fmt.Sprintf("lock %s vault VAULT_ADDR=%s", n, c.Vault.Address)] = true

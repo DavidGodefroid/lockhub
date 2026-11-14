@@ -26,6 +26,9 @@ type Facts struct {
 	Changed bool
 	// Egress is the lock's allowlist as the short review shows it.
 	Egress string
+	// Networks are the existing networks the lock's gateway joins
+	// (locks.<n>.networks), as the short review shows them.
+	Networks string
 	// Unreachable are what the profile names that the lock reaches by
 	// nothing (Egress.None): a row each, so none hides in the egress row.
 	Unreachable []string

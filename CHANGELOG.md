@@ -34,6 +34,16 @@ digest).
   `lox run` decides a ticket in milliseconds, before any queue a facade
   reads shows it, so lea can tell that agent of every decision, auto
   included, as of a human's.
+- `locks.<name>.networks` in lockfamily.yaml: existing Docker networks a
+  lock's gateway joins, to reach a database or broker by container name
+  (`host = "db"` on a dev stack's network `shop`, no published port) (#194).
+  A third half of the gateway, `gwnet-<name>`, joins them, never the console
+  nor `gwout-<name>` (the half with the route out): dotless host names go
+  through the joined networks, dotted ones through `out-<name>` as before.
+  The review shows a `networks` row and `egress … via network shop`. `host`,
+  `none`, `bridge`, lox's own networks and any lox workspace's are refused,
+  as is a network the engine does not have. `lox doctor` checks `gwnet-<name>`
+  too.
 
 ### Fixed
 

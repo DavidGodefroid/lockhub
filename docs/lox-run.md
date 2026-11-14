@@ -794,6 +794,64 @@ Or publish the database's port (a container's `ports:`, a Kubernetes
 `Service`) and name it by `host` and `port`, `host.docker.internal` for this
 machine.
 
+#### A database on a Docker network: `networks`
+
+A database in a dev stack (`db` on the compose network `shop`, no published
+port) is reached by its container name once the lock's gateway joins that
+network:
+
+```yaml
+locks:
+  shopdb:
+    type: locksql
+    networks: [shop]   # existing Docker networks, the engine's names
+```
+
+```toml
+[profiles.dev]
+engine = "postgres"
+host = "db"            # a container name (or alias) on shop
+port = 5432
+```
+
+Only the gateway joins, and only a third half of it: `gwnet-<name>`, on the
+lock's `gwlink-<name>` and the named networks, never on `out-<name>`. The
+console stays on `locknet-<name>` alone, and `gwout-<name>` (the half with the
+route out) never joins either. Which half an endpoint goes through is fixed
+by its name, not by what the network holds at the time:
+
+- a **dotless** host name (`db`, `rabbit`) is a container's: it is reached
+  through the joined networks, by `gwnet-<name>`;
+- a **dotted** name (`db.example.com`, `host.docker.internal`) is reached
+  through `out-<name>`, by `gwout-<name>`, as without `networks`.
+
+The review says so: the `egress` row reads `only db:5432 via network shop`,
+a `networks` row lists the joined networks, and `lox run --review` lists `lock
+<name> egress db:5432 (database) via network shop`. The gateway still forwards
+only the profile's endpoints: another container of `shop`, or another port of
+`db`, is refused like any other endpoint. Without `networks`, nothing changes.
+
+`lox run` refuses, before anything starts: `host`, `none` and `bridge` (the
+engine's own; `bridge` resolves no container name), a name of lox's own
+networks (`lockhub`, `egress-hub`, `mobile-hub`, `locknet-*`, `gwlink-*`,
+`out-*`, `egress-*`, bare or as `<project>_<key>`), a network the engine does
+not have (start the stack first), a network of any lox workspace (one of a
+compose project that holds a hub network), and `networks` on a lockhttp lock.
+Stopping or removing the lock removes `gwnet-<name>`, which detaches it; the
+network itself is declared `external` in the compose file and never removed.
+
+**Limits, and what this trusts.** Every container on a joined network can
+reach `gwnet-<name>`'s ports, which forward to that network's endpoints only:
+nothing it could not reach anyway, and never the lock's other endpoints (those
+are `gwout-<name>`'s, which is not on the network). Name resolution on the
+joined network is that network's: any container on `shop` can take the alias
+`db` and answer for it, so join a network whose containers you trust as much
+as the database itself, and keep agents off it (an agent on `shop` reaches
+`db` without the lock). A dotless name that no container of the network has is
+resolved by the engine's upstream DNS, through the joined network's own route,
+if it has one. With several joined networks, the engine picks the first that
+answers for a name: give endpoints distinct names.
+
 Every network takes a small subnet of its own (a /28; the hub's a /24) from
 the workspace's pool, `10.123.0.0/16` unless `network.pool` in lockfamily.yaml
 names another, set in the compose file: none comes from Docker's default

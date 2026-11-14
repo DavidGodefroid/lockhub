@@ -255,6 +255,12 @@ type Lock struct {
 	// writes the directories it took). The console gets them as
 	// LOCKLOG_EXTRA_ROOTS.
 	LogRoots []string `yaml:"log_roots,omitempty"`
+	// Networks are existing Docker networks (the engine's names) that a
+	// third half of the lock's egress gateway, gwnet-<n>, joins to reach
+	// the profile's endpoints named there by container name: those with a
+	// dotless host name (lockhub#194). The console never joins them, nor
+	// does gwout-<n>, the half with the route out.
+	Networks []string `yaml:"networks,omitempty"`
 }
 
 // The values of a lock's vault_token.
@@ -350,6 +356,55 @@ func validLogRoots(name string, l Lock) error {
 		}
 	}
 	return nil
+}
+
+// netName is a Docker network name.
+var netName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// validNetworks checks a lock's networks as lockfamily.yaml can: each a
+// network name, once, none of the engine's own (host, none, and bridge,
+// which resolves no container name) nor named as one of lox run's; and
+// only on a lock with a gateway (not lockhttp, whose egress is its own).
+// That each exists and belongs to no lox workspace is checked against the
+// engine (CheckJoinNets).
+func validNetworks(name string, l Lock) error {
+	if len(l.Networks) == 0 {
+		return nil
+	}
+	if Kinds[l.Type].Gate {
+		return fmt.Errorf("locks.%s.networks: a lockhttp lock's egress is its own policy's: it joins no network", name)
+	}
+	for i, n := range l.Networks {
+		switch {
+		case !netName.MatchString(n):
+			return fmt.Errorf("locks.%s.networks: %q is not a Docker network name", name, n)
+		case n == "host" || n == "none" || n == "bridge":
+			return fmt.Errorf("locks.%s.networks: %s is the engine's own network, which a gateway never joins: name a network of yours (docker network create, or a compose project's)", name, n)
+		case loxNetName(n):
+			return fmt.Errorf("locks.%s.networks: %s is named as a network of lox run's own (a lock's or the hub's), which a gateway never joins", name, n)
+		case slices.Contains(l.Networks[:i], n):
+			return fmt.Errorf("locks.%s.networks: %s is listed twice", name, n)
+		}
+	}
+	return nil
+}
+
+// loxNetName: n is named as one of lox run's networks, bare (its compose
+// key) or in a compose project (<project>_<key>).
+func loxNetName(n string) bool {
+	if _, key, ok := strings.Cut(n, "_"); ok && loxNetName(key) {
+		return true
+	}
+	switch n {
+	case "lockhub", "egress-hub", "mobile-hub":
+		return true
+	}
+	for _, p := range []string{"locknet-", "gwlink-", "out-", "egress-"} {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // AllowedUIDsFlag is the console's --allowed-uids value for l ("" when none).
@@ -479,6 +534,9 @@ func (c *Config) Validate() error {
 			return err
 		}
 		if err := validLogRoots(name, l); err != nil {
+			return err
+		}
+		if err := validNetworks(name, l); err != nil {
 			return err
 		}
 		if l.Vault && l.Type == "lockhttp" {
