@@ -714,3 +714,26 @@ func TestRuntimeGIDs(t *testing.T) {
 		})
 	}
 }
+
+// Every lock type has its first release on lockkit v0.20.0 in
+// RuntimeGIDsSince (#212): a type missing from it never gets the host's
+// runtime gids, and its console cannot see a client in the docker group.
+func TestRuntimeGIDsSinceEveryLock(t *testing.T) {
+	want := map[string]string{"locksql": "v0.20.0", "lockmq": "v0.10.0", "lockfile": "v0.10.0", "lockhttp": "v0.10.0", "lockssh": "v0.3.0", "locklog": "v0.4.0"}
+	for typ := range MinRelease {
+		if typ == "lockhub" {
+			continue
+		}
+		if RuntimeGIDsSince[typ] != want[typ] || want[typ] == "" {
+			t.Errorf("RuntimeGIDsSince[%s] = %q, want %q", typ, RuntimeGIDsSince[typ], want[typ])
+		}
+	}
+	if len(RuntimeGIDsSince) != len(want) {
+		t.Errorf("RuntimeGIDsSince = %v, want %v", RuntimeGIDsSince, want)
+	}
+	for typ, tag := range RuntimeGIDsSince {
+		if !takesRuntimeGIDs(typ, tag) || takesRuntimeGIDs(typ, "v0.0.1") {
+			t.Errorf("takesRuntimeGIDs(%s): %s takes it, v0.0.1 does not", typ, tag)
+		}
+	}
+}

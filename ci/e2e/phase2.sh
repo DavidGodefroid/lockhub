@@ -14,6 +14,10 @@
 #
 #   ci/e2e/phase2.sh LOX_BIN
 #
+# An agent as lea runs it is served; an agent as it runs on the host
+# (Docker's socket, the docker group), or one holding only the docker group
+# that lox run names to the console (--runtime-gids), is refused as
+# unconfined (CodeUnconfined, lockhub#212).
 # With LOCKSQL_LAUNCHER (locksql's scripts/locksql), a host agent too:
 # `locksql mcp` from the workspace, as .mcp.json starts it, plans, runs,
 # and after the approval through the facade gets the rows, through the
@@ -415,6 +419,37 @@ if [ -n "$sql" ]; then
 	[ -n "$ok" ] || { cat uid4242.out; die "uid 4242 (allowed_uids) refused by the locksql lock"; }
 	asuid 4243 >uid4243.out 2>&1 && { cat uid4243.out; die "uid 4243 (not in allowed_uids) served by the locksql lock"; }
 	grep -q "closed the connection" uid4243.out || { cat uid4243.out; die "uid 4243: not refused by the console"; }
+	say "lockhub#212: an agent as lea runs it is served (above); an unconfined one is refused (CodeUnconfined), the docker group included through --runtime-gids"
+	# The group of the host's rootful Docker socket (group-writable on the
+	# runner): lox run computes it on the host and passes it to the
+	# console, which cannot see the host's sockets from its container.
+	rgid=$(stat -c %g /var/run/docker.sock)
+	sed -n '/^  lock-db:$/,/^  [^ ]/p' "$state/compose.yaml" >lock-db.yaml
+	grep -Eq "\"--runtime-gids\", \"([0-9]+,)*$rgid(,[0-9]+)*\"" lock-db.yaml ||
+		{ cat lock-db.yaml; die "lock-db has no --runtime-gids with the docker socket's gid $rgid"; }
+	# unconfined OUT REASON... ARGS...: the client run with ARGS (docker run
+	# options) as uid 4242 is refused as unconfined (exit 1, not 2: the
+	# console answered), naming each REASON, and "run it inside lea".
+	unconfined() {
+		u_out=$1 u_reasons=$2
+		shift 2
+		rc=0
+		docker run --rm --network none --user 4242:4242 --group-add 10000 -e HOME=/tmp -v "${p}_db-run:/run/locksql" -w "$ws" "$@" "$sqlimg" status --profile e2e >"$u_out" 2>&1 || rc=$?
+		cat "$u_out"
+		[ "$rc" = 1 ] || die "$u_out: want exit 1 (refused), got $rc"
+		grep -q "does not run confined" "$u_out" && grep -q "run it inside lea" "$u_out" || die "$u_out: not refused as unconfined"
+		for r in $u_reasons; do
+			grep -q "$r" "$u_out" || die "$u_out: the refusal does not name $r"
+		done
+	}
+	# An agent as it runs on the host: it reaches Docker (the socket, the
+	# docker group).
+	unconfined host-agent.out "no_host_runtime runtime_group" --group-add "$rgid" -v /var/run/docker.sock:/var/run/docker.sock -v "$ws:$ws:ro"
+	# Confined by its own report (a container, no runtime socket, no Lock
+	# Family state, .lockfamily read-only): only the kernel's record of its
+	# groups, checked against --runtime-gids, refuses it.
+	unconfined docker-group.out runtime_group --group-add "$rgid" -v "$ws:$ws:ro"
+	grep -q no_host_runtime docker-group.out && die "docker-group.out: the client reported a runtime socket it has not"
 	# A literal the agent typed, shaped as a personal value (on a column
 	# that is not personal: locksql limits how a PII column is filtered): the
 	# screen that leaves the lock masks every literal (locksql's

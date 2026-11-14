@@ -27,7 +27,8 @@ digest).
   the profile sets `unconfined = true`, or that the console does not start on
   a production profile with it. `lox run` passes `--runtime-gids` (the gids
   owning the host's runtime sockets with group write) to the consoles whose
-  release takes it; no lock release does yet, so none gets it for now.
+  release takes it: locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0,
+  lockhttp v0.10.0, lockssh v0.3.0, locklog v0.4.0 or later (#212).
 - `GET /v1/decided` (facade socket) items carry `request`: the decided
   ticket as its lock signed it, as `GET /v1/queue` serves it (#200). Its
   requester names the agent that waits on the decision: an auto rule of
