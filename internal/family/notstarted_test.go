@@ -92,15 +92,16 @@ func TestLogRootsConfig(t *testing.T) {
 // doctor; once fixed, it starts at the next lox run (lockhub#177).
 func TestUpSkipsLockWithRefusedPlan(t *testing.T) {
 	h, logs := logHost(t)
+	bad := outsideLogRoot(t, logs)
 	w := newWS(t, logConf("    profile: app\n"))
 	f := newFake()
 	f.keys["logs"] = pubKey()
-	f.keys["plan/logs"] = "profile app false\nfile /etc /etc/*.conf\n"
+	f.keys["plan/logs"] = "profile app false\nfile " + bad + " " + bad + "/*.conf\n"
 	out, err := upLog(w, h, "y\n", f)
 	if err != nil {
 		t.Fatalf("lox run stopped on one bad lock: %v\n%s", err, out)
 	}
-	why := "mount plan: /etc is not under an allowed log root (" + logs + ")"
+	why := "mount plan: " + bad + " is not under an allowed log root (" + logs + ")"
 	for _, want := range []string{"lock logs: not started: " + why, "lock crm-prod: started", "lock events: started", "lock logs not started: " + why} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q:\n%s", want, out)
@@ -109,7 +110,7 @@ func TestUpSkipsLockWithRefusedPlan(t *testing.T) {
 	if strings.Contains(out, "lock logs: started") {
 		t.Errorf("logs said started:\n%s", out)
 	}
-	if block(f.upCompose, "lock-logs") != "" || block(f.upCompose, "lock-crm-prod") == "" || strings.Contains(f.upCompose, "/etc") {
+	if block(f.upCompose, "lock-logs") != "" || block(f.upCompose, "lock-crm-prod") == "" || strings.Contains(f.upCompose, bad) {
 		t.Errorf("compose:\n%s", f.upCompose)
 	}
 	state := filepath.Join(w.dir, "state")
@@ -149,15 +150,16 @@ func TestUpSkipsLockWithRefusedPlan(t *testing.T) {
 
 // lox add of the bad lock itself still stops on it: nothing to serve.
 func TestUpFocusOnRefusedPlanStops(t *testing.T) {
-	h, _ := logHost(t)
+	h, logs := logHost(t)
+	bad := outsideLogRoot(t, logs)
 	w := newWS(t, logConf(""))
 	f := newFake()
 	f.keys["logs"] = pubKey()
-	f.keys["plan/logs"] = "profile app false\nfile /etc /etc/*.conf\n"
+	f.keys["plan/logs"] = "profile app false\nfile " + bad + " " + bad + "/*.conf\n"
 	var out strings.Builder
 	u := &Up{File: w.file, State: filepath.Join(w.dir, "state"), Runtime: filepath.Join(w.dir, "run"), User: "1000:1000", Run: f,
 		In: nil, Out: &out, LogHost: h, Focus: "logs"}
-	if err := u.Do(t.Context()); err == nil || !strings.Contains(err.Error(), "/etc is not under an allowed log root") {
+	if err := u.Do(t.Context()); err == nil || !strings.Contains(err.Error(), bad+" is not under an allowed log root") {
 		t.Errorf("lox add of a refused lock: %v\n%s", err, out.String())
 	}
 }

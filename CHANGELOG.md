@@ -5,6 +5,16 @@ digest).
 
 ## Unreleased
 
+### Breaking
+
+- `lox run` refuses a lock whose profile has a `proxy_command` (the one it
+  names, or any of `config.toml` when it names none), before the review,
+  naming the profile and the alternative: the built-in ssh bastion
+  (`[profiles.<p>.ssh]`) or a published port (#193). It only showed an
+  `unreachable` row before, and the console failed at connection time:
+  the gateway cannot follow the program's destination, and the signed
+  image has no `ssh`, `docker` or `kubectl` client to run it.
+
 ### Fixed
 
 - `lox add` and `lox run` verify images signed in the sigstore bundle

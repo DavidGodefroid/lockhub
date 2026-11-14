@@ -75,7 +75,6 @@ func TestEgressFromReviewedProfile(t *testing.T) {
 			want: []string{"host.docker.internal:3306"}},
 		"sqlite":      {typ: "locksql", toml: "[profiles.p]\nengine = \"sqlite\"\npath = \"/data/x.db\"\n", none: "lock reaches no host"},
 		"ssh":         {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"10.0.0.5\"\n[profiles.p.ssh]\nhost = \"bastion.example.com\"\nuser = \"u\"\n", want: []string{"bastion.example.com:22"}},
-		"proxy":       {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n", none: "proxy_command"},
 		"loopback":    {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"127.0.0.1\"\n", none: "lock reaches no host"},
 		"loopback v6": {typ: "lockmq", toml: "[profiles.e]\nurl = \"http://[::1]:15672\"\n", none: "lock reaches no host"},
 		"odd port":    {typ: "locksql", toml: "[profiles.p]\nengine = \"postgres\"\nhost = \"db.example.com\"\nport = \"5432\"\n", none: "engine, host or port cannot be read"},
@@ -208,6 +207,39 @@ func TestEgressRefusesIPAddresses(t *testing.T) {
 	c := lockConf(t, "locksql", "", "    profile: a\n")
 	if _, err := Egresses(c, map[string]*Profile{"locksql": profileOf(t, "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.b]\nengine = \"postgres\"\nhost = \"10.9.9.9\"\n")}); err != nil {
 		t.Errorf("profile a refused for b's IP: %v", err)
+	}
+}
+
+// A proxy_command is refused before anything starts (lockhub#193): the
+// gateway cannot follow the program it runs. The refusal names the
+// profile and the built-in ssh bastion; a profile without one is served.
+func TestEgressRefusesProxyCommand(t *testing.T) {
+	const want = "egress of lock x: profile shop-prod: proxy_command is not supported under lox run; reach the database through the built-in ssh bastion ([profiles.shop-prod.ssh]) or publish its port (see docs/lox-run.md)"
+	for name, tc := range map[string]struct{ lock, toml string }{
+		"named profile": {lock: "    profile: shop-prod\n",
+			toml: "[profiles.shop-prod]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"ssh\", \"bastion\", \"socat\", \"-\", \"TCP:db:5432\"]\n"},
+		"one of every profile": {
+			toml: "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.shop-prod]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"docker\", \"exec\", \"-i\", \"db\", \"socat\", \"-\", \"TCP:localhost:5432\"]\n"},
+		"with an ssh bastion too": {
+			toml: "[profiles.shop-prod]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n[profiles.shop-prod.ssh]\nhost = \"bastion.example.com\"\nuser = \"u\"\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := lockConf(t, "locksql", "", tc.lock)
+			es, err := Egresses(c, map[string]*Profile{"locksql": profileOf(t, tc.toml)})
+			if err == nil || err.Error() != want {
+				t.Fatalf("err %v, want %q (%+v)", err, want, es)
+			}
+		})
+	}
+	// A named profile without one: served as before, b's proxy_command
+	// aside.
+	c := lockConf(t, "locksql", "", "    profile: a\n")
+	es, err := Egresses(c, map[string]*Profile{"locksql": profileOf(t, "[profiles.a]\nengine = \"postgres\"\nhost = \"a.example.com\"\n[profiles.b]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n")})
+	if err != nil {
+		t.Fatalf("profile a refused for b's proxy_command: %v", err)
+	}
+	if got := addrs(es["x"]); !slices.Equal(got, []string{"a.example.com:5432"}) {
+		t.Errorf("endpoints %v", got)
 	}
 }
 
@@ -403,6 +435,22 @@ func TestEgressIPBastionStopsUp(t *testing.T) {
 	}
 	if strings.Contains(out, "Apply? [y/N]") || f.upCompose != "" {
 		t.Errorf("asked or applied despite the IP:\n%s", out)
+	}
+}
+
+// A proxy_command stops lox run before the review and before anything
+// starts, naming the profile and the ssh bastion (lockhub#193).
+func TestEgressProxyCommandStopsUp(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	ws := filepath.Dir(filepath.Dir(w.file))
+	os.WriteFile(filepath.Join(ws, ".locksql", "config.toml"), []byte("[profiles.p]\nengine = \"postgres\"\nhost = \"db\"\nproxy_command = [\"nc\", \"db\", \"5432\"]\n"), 0o644)
+	f := newFake()
+	out, err := w.up("y\n", f)
+	if err == nil || !strings.Contains(err.Error(), "profile p: proxy_command is not supported under lox run; reach the database through the built-in ssh bastion ([profiles.p.ssh])") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Apply? [y/N]") || f.upCompose != "" {
+		t.Errorf("asked or applied despite the proxy_command:\n%s", out)
 	}
 }
 
