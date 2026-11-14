@@ -119,6 +119,9 @@ type Decision struct {
 	Instance string
 	Raw      []byte
 	At       time.Time
+	// TicketRaw is the decided ticket, as the lock signed it (AllDecisions
+	// only): its requester names the agent that waits on the decision.
+	TicketRaw []byte
 }
 
 // Store is the database. Safe for concurrent use.
@@ -337,7 +340,9 @@ type querier interface {
 }
 
 func allDecisions(ctx context.Context, q querier, since int64, limit int) ([]Decision, error) {
-	rows, err := q.QueryContext(ctx, `SELECT seq, ticket, instance, raw, at FROM decisions WHERE seq > ? ORDER BY seq LIMIT ?`, since, limit)
+	rows, err := q.QueryContext(ctx, `SELECT d.seq, d.ticket, d.instance, d.raw, d.at, t.raw FROM decisions d
+		LEFT JOIN tickets t ON t.instance = d.instance AND t.id = d.ticket
+		WHERE d.seq > ? ORDER BY d.seq LIMIT ?`, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +351,7 @@ func allDecisions(ctx context.Context, q querier, since int64, limit int) ([]Dec
 	for rows.Next() {
 		var d Decision
 		var at int64
-		if err := rows.Scan(&d.Seq, &d.Ticket, &d.Instance, &d.Raw, &at); err != nil {
+		if err := rows.Scan(&d.Seq, &d.Ticket, &d.Instance, &d.Raw, &at, &d.TicketRaw); err != nil {
 			return nil, err
 		}
 		d.At = time.Unix(at, 0).UTC()

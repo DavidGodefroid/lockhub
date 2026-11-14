@@ -428,7 +428,13 @@ if [ -n "$sql" ]; then
 	[ "$(jq -r .status run1.json)" = pending ] || die "the run did not answer pending"
 	ticket=$(jq -r .ticket run1.json)
 	[ -n "$ticket" ] && [ "$ticket" != null ] || die "no ticket"
-	asagent run --profile e2e --json "$ticket" >early.json 2>&1 && { cat early.json; die "the ticket ran before a decision"; }
+	# Before a decision, the run of the ticket answers pending again, on
+	# the same ticket (locksql v0.18.2, locksql#234), or fails (older).
+	if asagent run --profile e2e --json "$ticket" >early.json 2>&1 &&
+		! jq -e --arg t "$ticket" '.status == "pending" and .ticket == $t' early.json >/dev/null 2>&1; then
+		cat early.json
+		die "the ticket ran before a decision"
+	fi
 	ok=""
 	for i in $(seq 1 30); do
 		tty 'y\n' "$lox" approve --once >approve2.out 2>&1 || true
@@ -445,7 +451,10 @@ if [ -n "$sql" ]; then
 	tr -d '\r' <approve2.out | grep -q 'carol@mail.test' && die "the facade screen shows the statement's literal in clear"
 	ok=""
 	for i in $(seq 1 30); do
-		if asagent run --profile e2e --json "$ticket" >run2.json 2>run2.err; then ok=1; break; fi
+		if asagent run --profile e2e --json "$ticket" >run2.json 2>run2.err && [ "$(jq -r '.rows | length' run2.json 2>/dev/null)" = 2 ]; then ok=1; break; fi
+		# Not decided yet at the console: pending on the same ticket
+		# (locksql#234), or the older error.
+		jq -e --arg t "$ticket" '.status == "pending" and .ticket == $t' run2.json >/dev/null 2>&1 && { sleep 2; continue; }
 		cat run2.json run2.err >run2.all; grep -q "no decision yet" run2.all || break
 		sleep 2
 	done
@@ -494,7 +503,8 @@ if [ -n "$sql" ]; then
 		ok=""
 		for i in $(seq 1 30); do
 			if hostmcp locksql_run "{\"profile\":\"e2e\",\"ticket\":\"$hticket\"}" >hrun2.json && [ "$(jq -r '.rows | length' hrun2.json 2>/dev/null)" = 2 ]; then ok=1; break; fi
-			grep -q "no decision yet" hrun2.json || break
+			jq -e --arg t "$hticket" '.status == "pending" and .ticket == $t' hrun2.json >/dev/null 2>&1 ||
+				grep -q "no decision yet" hrun2.json || break
 			sleep 2
 		done
 		cat hrun2.json

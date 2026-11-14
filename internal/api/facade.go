@@ -360,6 +360,24 @@ func (f *facades) ticket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// DecidedItem is one decision in GET /v1/decided: the lock API's item,
+// and Request, the decided ticket as its lock signed it (verbatim, as
+// GET /v1/queue serves it). Its requester names the agent that waits on
+// the decision: an auto rule decides a ticket in milliseconds, before any
+// queue a facade reads shows it, and every decision, auto included,
+// reaches the agent that asked (lockhub#200).
+type DecidedItem struct {
+	DecisionItem
+	Request json.RawMessage `json:"request,omitempty"`
+}
+
+// DecidedResult answers GET /v1/decided. Cursor is the seq to send as
+// since next time.
+type DecidedResult struct {
+	Decisions []DecidedItem `json:"decisions"`
+	Cursor    int64         `json:"cursor"`
+}
+
 // decided lists every decision after a cursor (read-only, for lea).
 func (f *facades) decided(w http.ResponseWriter, r *http.Request) {
 	since, err := strconv.ParseInt(r.URL.Query().Get("since"), 10, 64)
@@ -375,9 +393,10 @@ func (f *facades) decided(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	res := DecisionsResult{Decisions: []DecisionItem{}, Cursor: since}
+	res := DecidedResult{Decisions: []DecidedItem{}, Cursor: since}
 	for _, d := range ds {
-		res.Decisions = append(res.Decisions, DecisionItem{Seq: d.Seq, Ticket: d.Ticket, Decision: d.Raw})
+		res.Decisions = append(res.Decisions, DecidedItem{DecisionItem: DecisionItem{Seq: d.Seq, Ticket: d.Ticket, Decision: d.Raw},
+			Request: d.TicketRaw})
 		res.Cursor = d.Seq
 	}
 	writeJSON(w, http.StatusOK, res)
