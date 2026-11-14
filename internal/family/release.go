@@ -221,13 +221,12 @@ var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "l
 // RuntimeGIDsSince is each lock's first release whose console takes
 // --runtime-gids (lockkit v0.20.0, lockkit#133): an older console exits
 // on the unknown flag, so lox run passes it only to an image signed for
-// this release or a later one. A type not listed gets no flag: lockhttp's
-// console takes no hub flags, and its only client is lea's gate, which
-// tells confined agents from the others itself (its sources.json).
+// this release or a later one. A type not listed gets no flag.
 var RuntimeGIDsSince = map[string]string{
 	"locksql":  "v0.20.0",
 	"lockmq":   "v0.10.0",
 	"lockfile": "v0.10.0",
+	"lockhttp": "v0.12.0",
 	"lockssh":  "v0.3.0",
 	"locklog":  "v0.4.0",
 }
