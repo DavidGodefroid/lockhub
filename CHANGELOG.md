@@ -5,6 +5,17 @@ digest).
 
 ## Unreleased
 
+### Fixed
+
+- `lox add` and `lox run` verify images signed in the sigstore bundle
+  format (lockfile v0.8 and later, signed with cosign v3) with a local
+  cosign v2 too (#197): a verify that finds no signature is tried once
+  more with `--new-bundle-format`, same identity and issuer; a refused
+  signature is never retried. They failed with `not signed by its
+  release`. A cosign older than v2.5.0 (no `--new-bundle-format`) is
+  refused up front with how to upgrade it; `lox init` and `lox doctor`
+  show cosign's version and flag an unsupported one.
+
 ## v0.11.0 (2026-11-13)
 
 Supported locks: lockssh joins `lox run` (lockssh v0.1.0 or later).

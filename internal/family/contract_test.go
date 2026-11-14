@@ -182,9 +182,14 @@ func TestEnsureDirRefusesLink(t *testing.T) {
 	}
 }
 
+// cosignFake is a cosign v2.6.1 that verifies every image; calls are
+// its verifications.
 type cosignFake struct{ calls []string }
 
 func (c *cosignFake) Run(_ context.Context, _ []byte, name string, args ...string) ([]byte, error) {
+	if len(args) > 0 && args[0] == "version" {
+		return []byte(`{"gitVersion":"v2.6.1"}`), nil
+	}
 	c.calls = append(c.calls, name+" "+strings.Join(args, " "))
 	return nil, nil
 }

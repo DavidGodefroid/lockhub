@@ -159,8 +159,7 @@ func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) 
 	// The digest is only trusted once its signature is: by this
 	// repository's release workflow, run for this very tag.
 	id := "^" + regexp.QuoteMeta("https://github.com/"+Owner+"/"+repo+"/.github/workflows/release.yml@refs/tags/"+tag) + "$"
-	if _, err := r.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-		"--certificate-identity-regexp", id, ref); err != nil {
+	if _, err := verifyImage(ctx, r.Run, ref, id); err != nil {
 		return "", fmt.Errorf("image %s (%s %s) is not signed by its release: %w", ref, repo, tag, err)
 	}
 	return ref, nil

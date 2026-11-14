@@ -25,8 +25,8 @@ Without lea (your agent on the host: claude, codex, gemini, …): `lox init` in 
 `lox add locksql`. Either way, keep `lox run` open in a terminal of its own:
 it serves the decisions.
 
-`lox init` asks nothing. It checks the prerequisites (Docker, cosign, lea,
-the locks' launchers), lists the data sources the project's files name as
+`lox init` asks nothing. It checks the prerequisites (Docker, cosign v2.5.0 or
+later, lea, the locks' launchers), lists the data sources the project's files name as
 hints (`.env*`, `compose*.yaml`, `config/`: read only, never a secret),
 writes a `lockfamily.yaml` with the hub alone and starts it, as `lox run` does. With no lock
 declared yet, that first start asks no question (`--review` shows
