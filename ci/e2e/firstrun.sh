@@ -23,7 +23,8 @@
 # home flagged at lox add, copied with the review's command, then started
 # past the console's file check; lockhub#167: a relative tls_ca in the
 # profile's directory not flagged, an inline ssh table's missing key
-# flagged —
+# flagged; lockhub#200: under lox run's AUTO mode, a host agent's read
+# returns its rows in one call —
 # lox remove (the console stops, the yaml entry goes, the profile stays
 # unless --purge) — no secret on disk (the workspace but .env, and lox
 # up's state directory).
@@ -68,6 +69,7 @@ cproject="$E2E_ID-shop"
 # cleanup never changes the exit status: under set -e a failing command
 # here (ws_project on a half-written up.json) would fail a passed run.
 cleanup() {
+	[ -z "${autorun:-}" ] || kill "$autorun" 2>/dev/null || true
 	p=
 	if [ -f "$ws/.lockfamily/up.json" ]; then
 		p=$(ws_project "$ws" 2>/dev/null) || p=
@@ -321,6 +323,57 @@ if [ "$vault" = 0 ]; then
 	grep -qF 'WARNING: tls_ca' "$out/rel.out" && die "lox add rel: the relative tls_ca in .locksql/ flagged"
 	grep -qF 'WARNING: ssh: ' "$out/rel.out" && die "lox add rel: the inline ssh table not read"
 	rm .locksql/rel-ca.pem
+
+	say "lockhub#200: AUTO mode, lox run decides a host agent's read: its rows in one call"
+	# lox run stays up in the background, at a terminal, deciding by its
+	# auto rules: a read is auto (default:read). The lock waits up to 2 s
+	# for the decision (lockkit hubclient.DecisionWait) and runs the ticket
+	# at once (locksql v0.18.3, locksql#233): the agent's locksql_run
+	# answers rows, never pending.
+	python3 "$here/expect.py" 900 \
+		'Apply? [y/N]' 'y\n' \
+		'up: project ' '' \
+		-- "$lox" run >"$out/run-auto.raw" 2>&1 &
+	autorun=$!
+	i=0
+	until tr -d '\r' <"$out/run-auto.raw" | grep -q 'up: project '; do
+		kill -0 "$autorun" 2>/dev/null || { tr -d '\r' <"$out/run-auto.raw"; die "lox run (AUTO) ended before its stack was up"; }
+		i=$((i + 1))
+		[ "$i" -le 300 ] || { tr -d '\r' <"$out/run-auto.raw"; die "lox run (AUTO) did not bring its stack up"; }
+		sleep 1
+	done
+	# Whatever lox run recreated, orders is restarted once: it asks its
+	# password again (its policy and PII rules are kept), typed at its
+	# terminal.
+	docker restart "$p-lock-orders-1" >/dev/null
+	i=0
+	until docker exec "$p-lock-orders-1" sh -c 'ls /run/locksql/*.question' >/dev/null 2>&1; do
+		i=$((i + 1))
+		[ "$i" -le 60 ] || die "the restarted orders console recorded no question"
+		sleep 1
+	done
+	python3 "$here/expect.py" 120 \
+		'Password for shop@' "<pause>$inv_pw\\n" \
+		'Type "continue" to proceed' 'continue\n' \
+		'lock orders serves: detached' '' \
+		-- "$lox" attach orders >"$out/attach-auto.out" 2>&1 ||
+		{ cat "$out/attach-auto.out"; die "orders did not serve again under lox run"; }
+	hostmcp orders locksql_plan '{"profile":"orders","db":"shop","sql":"SELECT id, label FROM customers ORDER BY id LIMIT 10","intent":"e2e AUTO one-call read"}' \
+		>"$out/plan-auto.json" || { cat "$out/plan-auto.json"; die "AUTO: locksql_plan failed"; }
+	plan=$(jq -r .plan_id "$out/plan-auto.json")
+	[ -n "$plan" ] && [ "$plan" != null ] || { cat "$out/plan-auto.json"; die "AUTO: no plan id"; }
+	hostmcp orders locksql_run "{\"profile\":\"orders\",\"plan_id\":\"$plan\"}" >"$out/run-auto.json" ||
+		{ cat "$out/run-auto.json"; die "AUTO: locksql_run failed"; }
+	cat "$out/run-auto.json"
+	jq -e '.status == "pending"' "$out/run-auto.json" >/dev/null 2>&1 &&
+		{ tr -d '\r' <"$out/run-auto.raw" | tail -30; die "AUTO: the read answered pending, not its rows"; }
+	[ "$(jq -r '.rows | length' "$out/run-auto.json")" = 2 ] && [ "$(jq -r '.rows[0][1]' "$out/run-auto.json")" = alpha ] ||
+		die "AUTO: the read did not return its 2 rows in one call"
+	kill "$autorun" 2>/dev/null || true
+	wait "$autorun" 2>/dev/null || true
+	autorun=
+	tr -d '\r' <"$out/run-auto.raw" >"$out/run-auto.out"
+	grep -q 'Apply? \[y/N\]' "$out/run-auto.out" || { cat "$out/run-auto.out"; die "lox run (AUTO) showed no review"; }
 fi
 
 if [ "$vault" = 1 ]; then
