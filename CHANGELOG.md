@@ -5,6 +5,25 @@ digest).
 
 ## Unreleased
 
+## v0.12.1 (2026-11-14)
+
+`lox run` upgrades older lockhttp images to lockhttp v0.12.0; the other
+shipped locks are those of v0.12.0.
+
+### Added
+
+- `lox run` passes `--runtime-gids` to a lockhttp console signed for
+  lockhttp v0.12.0 or later (`family.RuntimeGIDsSince`, lockhttp#69): its
+  policy-only console now takes the flag, and a client of its socket
+  holding one of those gids is refused as unconfined. An older lockhttp
+  image gets none, as before.
+
+### Changed
+
+- `lox run` upgrades an older lockhttp image to lockhttp v0.12.0
+  (`family.ShippedLocks`), so the flag reaches the lockhttp consoles it
+  starts.
+
 ## v0.12.0 (2026-11-14)
 
 Supported locks: lockkit v0.20.0 (confined agents). `lox run` upgrades

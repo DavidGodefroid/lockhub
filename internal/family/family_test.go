@@ -718,12 +718,12 @@ func TestRuntimeGIDs(t *testing.T) {
 // Every lock type whose agents reach its console has its first release on
 // lockkit v0.20.0 in RuntimeGIDsSince (#212): a type missing from it never
 // gets the host's runtime gids, and its console cannot see a client in the
-// docker group. lockhttp's console takes no hub flags (lea's gate is its
-// only client): it gets none.
+// docker group. lockhttp's policy-only console takes it from v0.12.0
+// (lockhttp#69).
 func TestRuntimeGIDsSinceEveryLock(t *testing.T) {
-	want := map[string]string{"locksql": "v0.20.0", "lockmq": "v0.10.0", "lockfile": "v0.10.0", "lockssh": "v0.3.0", "locklog": "v0.4.0"}
+	want := map[string]string{"locksql": "v0.20.0", "lockmq": "v0.10.0", "lockfile": "v0.10.0", "lockhttp": "v0.12.0", "lockssh": "v0.3.0", "locklog": "v0.4.0"}
 	for typ := range MinRelease {
-		if typ == "lockhub" || typ == "lockhttp" {
+		if typ == "lockhub" {
 			continue
 		}
 		if RuntimeGIDsSince[typ] != want[typ] || want[typ] == "" {
