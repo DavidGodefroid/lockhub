@@ -3,7 +3,14 @@
 set -eu
 E2E_ID=${E2E_ID:-e2e$$}
 say() { printf '\n=== %s\n' "$*"; }
-die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+die() {
+	printf 'FAIL: %s\n' "$*" >&2
+	# DEBUG lockhub#199 (temporary): the failure and the containers' state as annotations.
+	printf '::error::FAIL: %s\n' "$*"
+	docker ps -a --format '{{.Names}} {{.Status}} {{.Image}}' 2>/dev/null | tail -20 | sed 's/^/::error::ps: /'
+	for f in *.out; do [ -f "$f" ] && tail -15 "$f" | tr -d '\r' | sed "s/^/::error::$f: /"; done 2>/dev/null
+	exit 1
+}
 # tty INPUT CMD...: runs CMD at a pseudo-terminal (lox up, approve and
 # attach refuse a pipe), INPUT typed in. Output goes to stdout.
 tty() {
