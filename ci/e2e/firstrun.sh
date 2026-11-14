@@ -217,7 +217,10 @@ sql_query() {
 	ok=""
 	for i in $(seq 1 30); do
 		if hostmcp "$inst" locksql_run "{\"profile\":\"$prof\",\"ticket\":\"$ticket\"}" >"$out/run2-$inst.json" && [ "$(jq -r '.rows | length' "$out/run2-$inst.json" 2>/dev/null)" = 2 ]; then ok=1; break; fi
-		grep -q "no decision yet" "$out/run2-$inst.json" || break
+		# Before the console has the decision: pending on the same ticket
+		# (locksql#234), or the older error.
+		jq -e --arg t "$ticket" '.status == "pending" and .ticket == $t' "$out/run2-$inst.json" >/dev/null 2>&1 ||
+			grep -q "no decision yet" "$out/run2-$inst.json" || break
 		sleep 2
 	done
 	cat "$out/run2-$inst.json"

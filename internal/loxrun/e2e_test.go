@@ -75,6 +75,10 @@ type world struct {
 	dials   []*conn
 	stopRun context.CancelFunc
 	runDone chan error
+	// startRun starts lox run, once (newWorldCfg calls it but with
+	// worldCfg.later).
+	startRun func()
+	sock     string
 }
 
 type syncBuf struct {
@@ -104,6 +108,8 @@ type worldCfg struct {
 	routes route.Rules
 	pinned ed25519.PublicKey
 	rateN  int
+	// later: lox run starts when the test calls startRun, not at once.
+	later bool
 }
 
 func newWorldCfg(t *testing.T, cfg worldCfg) *world {
@@ -132,6 +138,7 @@ func newWorldCfg(t *testing.T, cfg worldCfg) *world {
 	lsrv := httptest.NewServer(api.LockHandler(w.h, "e2e"))
 	t.Cleanup(lsrv.Close)
 	sock := filepath.Join(dir, "f.sock")
+	w.sock = sock
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
@@ -200,8 +207,16 @@ func newWorldCfg(t *testing.T, cfg worldCfg) *world {
 			return loxaudit.Load(context.Background(), loxaudit.Source{Data: dir, HubKeys: []ed25519.PublicKey{hubPub},
 				LockKeys: map[string]ed25519.PublicKey{inst: lockPub}})
 		}}
-	go func() { w.runDone <- s.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-w.runDone })
+	var once sync.Once
+	w.startRun = func() {
+		once.Do(func() {
+			go func() { w.runDone <- s.Run(ctx) }()
+			t.Cleanup(func() { cancel(); <-w.runDone })
+		})
+	}
+	if !cfg.later {
+		w.startRun()
+	}
 	return w
 }
 
