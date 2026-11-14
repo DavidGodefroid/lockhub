@@ -30,11 +30,13 @@ import (
 // that edits .locksql changes nothing until the human reviews it again.
 //
 // Fail closed: what the allowlist cannot name exactly (a value it cannot
-// read, a proxy command) is reached by nothing, and the review says why.
-// An IP address is refused outright (lockhub#145): the gateway answers by
-// host name only, so the lock could never reach it, and lox run stops
-// before anything starts instead of the console failing at connection
-// time with a bare "network is unreachable".
+// read) is reached by nothing, and the review says why. An IP address is
+// refused outright (lockhub#145): the gateway answers by host name only,
+// so the lock could never reach it, and lox run stops before anything
+// starts instead of the console failing at connection time with a bare
+// "network is unreachable". So is a proxy_command (lockhub#193): it runs
+// a program whose destination the gateway cannot follow, with a client
+// the signed image lacks; the built-in ssh bastion is the supported route.
 
 // Endpoint is one host:port a lock may reach.
 type Endpoint struct {
@@ -61,7 +63,8 @@ type Egress struct {
 	// nothing (fail closed).
 	None []string
 	// Refused are the values the egress can never reach and lox run
-	// refuses to apply (an IP address): each names its key and the fix.
+	// refuses to apply (an IP address, a proxy_command): each names its
+	// key and the fix.
 	Refused []string
 }
 
@@ -142,7 +145,7 @@ func lockEgress(c *Config, name string, p *Profile) (Egress, error) {
 	}
 	if p == nil {
 		e.None = append(e.None, "no reviewed profile")
-	} else if err := profileEndpoints(l, p, add, func(s string) { e.None = append(e.None, s) }); err != nil {
+	} else if err := profileEndpoints(l, p, add, func(s string) { e.None = append(e.None, s) }, func(s string) { e.Refused = append(e.Refused, s) }); err != nil {
 		e.None = append(e.None, err.Error())
 	}
 	slices.SortFunc(e.Endpoints, func(a, b Endpoint) int {
@@ -222,7 +225,7 @@ func configTOML(p *Profile) ([]byte, error) {
 // profileEndpoints reads the endpoints of the lock's profile (or of every
 // profile of config.toml when the lock names none: the human picks one at
 // the console) from the reviewed copy.
-func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string, string), none func(string)) error {
+func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string, string), none, refuse func(string)) error {
 	b, err := configTOML(p)
 	if err != nil {
 		return fmt.Errorf("the reviewed profile cannot be read: %v", err)
@@ -255,13 +258,13 @@ func profileEndpoints(l Lock, p *Profile, add func(string, int, bool, string, st
 		}
 		readProfile(l.Type, n, pr, func(h string, port int, tls bool, what, key string) {
 			add(h, port, tls, what, "profiles."+n+"."+key+" in config.toml")
-		}, none)
+		}, none, refuse)
 	}
 	return nil
 }
 
 // add's last argument is the key that sets the host, under the profile.
-func readProfile(typ, name string, pr map[string]any, add func(string, int, bool, string, string), none func(string)) {
+func readProfile(typ, name string, pr map[string]any, add func(string, int, bool, string, string), none, refuse func(string)) {
 	str := func(k string) (string, bool) {
 		v, ok := pr[k]
 		if !ok {
@@ -279,6 +282,10 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 		return int(n), ok
 	}
 	bad := func(k string) { none(fmt.Sprintf("profile %s: %s cannot be read", name, k)) }
+	if _, ok := pr["proxy_command"]; ok {
+		refuse(fmt.Sprintf("profile %s: proxy_command is not supported under lox run; reach the database through the built-in ssh bastion ([profiles.%s.ssh]) or publish its port (see docs/lox-run.md)", name, name))
+		return
+	}
 	// An SSH tunnel: the lock reaches the bastion only, the target is on
 	// the far side.
 	if v, ok := pr["ssh"]; ok {
@@ -293,10 +300,6 @@ func readProfile(typ, name string, pr map[string]any, add func(string, int, bool
 			port = 22
 		}
 		add(h, port, false, "ssh", "ssh.host")
-		return
-	}
-	if _, ok := pr["proxy_command"]; ok {
-		none(fmt.Sprintf("profile %s: proxy_command runs a program the gateway cannot follow", name))
 		return
 	}
 	switch typ {
