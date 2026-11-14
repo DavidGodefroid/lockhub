@@ -43,6 +43,8 @@ type Card struct {
 	PII        []string
 	Red        bool
 	Production bool
+	// Unconfined: the agent does not run confined (lockkit#133).
+	Unconfined bool
 	Expires    *time.Time
 	// Answerable: the message gets approve/deny buttons; otherwise Why
 	// says where to answer.
@@ -68,7 +70,7 @@ func CardOf(t store.Ticket, rules route.Rules, facade string) (Card, bool) {
 	// Only the masked screen: tk.PII.ClearSealed is never read.
 	c.Lock, c.Workspace, c.Requester = tk.Source.Lock, tk.Workspace, tk.Requester.Agent
 	c.Header, c.Note, c.Body, c.Warnings = tk.Screen.Header, tk.Screen.Note, tk.Screen.Body, tk.Screen.Warnings
-	c.PII, c.Red, c.Production = tk.PII.Touched, tk.Screen.Red, tk.Flags.Production
+	c.PII, c.Red, c.Production, c.Unconfined = tk.PII.Touched, tk.Screen.Red, tk.Flags.Production, tk.Flags.Unconfined
 	if !t.Expires.IsZero() {
 		e := t.Expires
 		c.Expires = &e

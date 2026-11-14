@@ -139,6 +139,20 @@ func (r *Releases) Tags(ctx context.Context, repo string) ([]string, error) {
 // its first release with hub mode, v0.2.0).
 var MinRelease = map[string]string{"lockhub": "v0.1.1", "locksql": "v0.11.0", "lockmq": "v0.3.0", "lockfile": "v0.4.0", "lockhttp": "v0.3.0", "locklog": "v0.2.0", "lockssh": "v0.1.0"}
 
+// RuntimeGIDsSince is each lock's first release whose console takes
+// --runtime-gids (lockkit v0.20.0, lockkit#133): an older console exits
+// on the unknown flag, so lox run passes it only to an image signed for
+// this release or a later one. A type not listed gets no flag: none
+// until each lock's release on lockkit v0.20.0 ships.
+var RuntimeGIDsSince = map[string]string{}
+
+// takesRuntimeGIDs reports whether an image of lock type typ signed for
+// release tag ("" when its signature names none) takes --runtime-gids.
+func takesRuntimeGIDs(typ, tag string) bool {
+	min, ok := RuntimeGIDsSince[typ]
+	return ok && semverTag.MatchString(tag) && !semverLess(tag, min)
+}
+
 // Image is the image of repo's release tag, pinned by the digest the
 // registry serves for it, once cosign verified that digest's signature
 // by repo's release workflow run for tag.

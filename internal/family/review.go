@@ -5,10 +5,12 @@ import (
 	"io"
 	"slices"
 	"strings"
+
+	"github.com/DavidGodefroid/lockkit/console"
 )
 
 // The short review shows, per lock, what a human decides on (image,
-// target, environment, credentials, production, profile sha256). It is
+// target, environment, credentials, production, unconfined, profile sha256). It is
 // display only: the fingerprint stays over the full summary, and every
 // summary line the short form does not render is listed under "Other
 // changes since the last lox run:", so no change escapes the review.
@@ -88,6 +90,18 @@ func renderShortAs(w io.Writer, c *Config, focus string, facts map[string]Facts,
 			prod = "? (" + o + " in the profile)"
 		}
 		row("production", prod)
+		// Unconfined agents are refused unless the profile lets them in
+		// (lockkit#133): the console's own banner says what that costs.
+		unc := "no (an unconfined agent is refused)"
+		switch {
+		case f.Odd["unconfined"] != "":
+			unc = "? (" + f.Odd["unconfined"] + " in the profile)"
+		case f.Unconfined && f.Production:
+			unc = "yes: the console refuses to start (a production profile)"
+		case f.Unconfined:
+			unc = "WARNING: " + console.UnconfinedBanner
+		}
+		row("unconfined", unc)
 		if f.Egress != "" {
 			row("egress", f.Egress)
 		}

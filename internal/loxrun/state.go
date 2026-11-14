@@ -523,7 +523,7 @@ func (st *state) ask(t *tracked, why, tag string) {
 	c := &Card{ID: t.id, Instance: clean(t.instance), Lock: clean(tk.Source.Lock), Agent: clean(tk.Requester.Agent),
 		Profile: clean(t.req.Profile()), Kind: t.req.Kind, Risk: clean(string(tk.Risk)), Production: tk.Flags.Production,
 		Workspace: clean(tk.Workspace), Header: clean(tk.Screen.Header), Note: clean(tk.Screen.Note), Why: why,
-		Unverified: !t.req.Verified}
+		Unverified: !t.req.Verified, Unconfined: tk.Flags.Unconfined}
 	for _, b := range tk.Screen.Body {
 		c.Body = append(c.Body, clean(b))
 	}

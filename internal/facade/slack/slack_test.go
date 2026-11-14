@@ -433,3 +433,16 @@ func TestCloseErrors(t *testing.T) {
 		})
 	}
 }
+
+// An unconfined agent's ticket (lockkit#133) is marked so in its head.
+func TestUnconfinedShown(t *testing.T) {
+	c := chat.Card{ID: "t1", Instance: "crm", Risk: "read", Lock: "locksql", Answerable: true}
+	head := func(c chat.Card) string { raw, _ := json.Marshal(slack.Blocks(c, "")[0]); return string(raw) }
+	if strings.Contains(head(c), "UNCONFINED") {
+		t.Errorf("confined: %s", head(c))
+	}
+	c.Unconfined = true
+	if !strings.Contains(head(c), "*UNCONFINED*") {
+		t.Errorf("unconfined: %s", head(c))
+	}
+}

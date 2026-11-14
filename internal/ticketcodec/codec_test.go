@@ -275,3 +275,27 @@ func TestTicketInputs(t *testing.T) {
 		t.Fatalf("opened %q, %v", vals, err)
 	}
 }
+
+// A ticket of an unconfined agent (lockkit#133) verifies, and its flags
+// keep the member; a confined agent's ticket does not carry it.
+func TestUnconfinedFlag(t *testing.T) {
+	_, lock, _ := fixtures(t)
+	pub := lock.Public().(ed25519.PublicKey)
+	for _, unc := range []bool{true, false} {
+		tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm"}, ticket.RiskRead, "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), time.Now(), 0)
+		tk.Workspace, tk.Requester = "ws", ticket.Requester{Agent: "dev-1", Session: "s"}
+		tk.Screen = ticket.Screen{Header: "h"}
+		tk.Flags.Unconfined = unc
+		if err := tk.Sign(lock); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := tk.Marshal()
+		info, err := Codec{}.VerifyTicket(pub, b)
+		if err != nil {
+			t.Fatalf("unconfined %v: %v", unc, err)
+		}
+		if got := strings.Contains(info.Flags, `"unconfined":true`); got != unc || !unc && strings.Contains(info.Flags, "unconfined") {
+			t.Errorf("unconfined %v: flags %s", unc, info.Flags)
+		}
+	}
+}

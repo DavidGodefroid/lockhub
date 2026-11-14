@@ -84,6 +84,12 @@ type Paths struct {
 	// ManagedDir in every lock, and their label, so that a change
 	// recreates them. "": no managed file, no volume, no mount.
 	Managed string
+	// RuntimeGIDs is each lock's --runtime-gids, by instance: the gids
+	// owning the host's container runtime sockets with group write
+	// (confine.RuntimeGIDs, on the host), which a containerized console
+	// cannot see, for the locks whose image takes the flag
+	// (RuntimeGIDsSince). A lock without one gets no flag.
+	RuntimeGIDs map[string]string
 }
 
 // lockNet reports whether lock l sits on its own network, locknet-<n>
@@ -359,6 +365,11 @@ func Compose(c *Config, p Paths) string {
 		}
 		if len(l.AllowedUIDs) > 0 {
 			cmd = append(cmd, "--allowed-uids", l.AllowedUIDsFlag())
+		}
+		if g := p.RuntimeGIDs[name]; g != "" {
+			// A peer holding one is unconfined (lockkit#133): a policy-only
+			// console takes it too.
+			cmd = append(cmd, "--runtime-gids", g)
 		}
 		if !k.Gate {
 			cmd = append(cmd, "--hub", "http://lockhub:8443", "--hub-plain-http", "--hub-key-file", HubKeyDir+"/hub.pub", "--instance", name)

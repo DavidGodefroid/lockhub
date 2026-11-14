@@ -160,6 +160,9 @@ func Screen(it api.QueueItem, now time.Time) (string, *ticket.Ticket, error) {
 	if t.Flags.Production {
 		prod = "  PRODUCTION"
 	}
+	if t.Flags.Unconfined {
+		prod += "  UNCONFINED"
+	}
 	fmt.Fprintf(&b, "%s · %s · %s%s\n", clean(t.Source.Lock), clean(it.Instance), clean(it.Risk), prod)
 	fmt.Fprintf(&b, "ticket %s · asked by (unverified) %s · workspace %s\n", clean(it.ID), clean(t.Requester.Agent), clean(t.Workspace))
 	if it.Expires != nil {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/DavidGodefroid/lockkit/console"
 	"github.com/DavidGodefroid/lockkit/ticket"
 )
 
@@ -119,6 +120,9 @@ type Card struct {
 	// Unverified: lox run could not check the ticket under the pinned
 	// lock key (shown on the card).
 	Unverified bool
+	// Unconfined: the agent does not run confined (lockkit#133), let in
+	// by its profile.
+	Unconfined bool
 	// Console: a question of the lock's console at its terminal, not a
 	// ticket (Header is its prompt, Body the lines above it).
 	Console bool
@@ -743,6 +747,11 @@ func card(v View, c Card, waiting, w int, st Style) []line {
 	}
 	if c.Unverified {
 		rows = append(rows, row(line{{"! not checked under the pinned lock key", st.errored()}}))
+	}
+	if c.Unconfined {
+		// Two rows: the banner would be cut on an 80-column card.
+		head, tail, _ := strings.Cut(console.UnconfinedBanner, ": ")
+		rows = append(rows, row(line{{"! " + head + ": the agent does not run confined", st.denied()}}), row(line{{"  " + tail, st.denied()}}))
 	}
 	rows = append(rows, row(line{{"why asked: " + c.Why, sgrDim}}))
 	if p := c.Prompt; p != nil {

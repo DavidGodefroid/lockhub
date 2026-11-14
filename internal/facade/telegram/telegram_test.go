@@ -412,3 +412,15 @@ func TestCloseErrors(t *testing.T) {
 		})
 	}
 }
+
+// An unconfined agent's ticket (lockkit#133) is marked so in its head.
+func TestUnconfinedShown(t *testing.T) {
+	c := chat.Card{ID: "t1", Instance: "crm", Risk: "read", Lock: "locksql", Answerable: true}
+	if strings.Contains(telegram.Text(c, ""), "UNCONFINED") {
+		t.Error("confined ticket marked unconfined")
+	}
+	c.Unconfined = true
+	if txt := telegram.Text(c, ""); !strings.Contains(strings.SplitN(txt, "\n", 2)[0], "<b>UNCONFINED</b>") {
+		t.Errorf("unconfined: %q", txt)
+	}
+}

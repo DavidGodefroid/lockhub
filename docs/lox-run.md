@@ -518,8 +518,19 @@ lock shop-db (locksql)
   environment  none
   credentials  ask, typed at the console's start
   production   no
+  unconfined   no (an unconfined agent is refused)
   profile      sha256:…  (lox run --review prints it in full)
 ```
+
+`unconfined` is the profile's `unconfined` key (lockkit v0.20.0,
+lockkit#133). A console refuses an agent that does not run confined (outside
+a container, holding a gid of a container runtime's socket, or a client too old
+to say): lea's agents are served, the same agent run on the host is not. A
+non-production profile with `unconfined = true` lets such an agent in: the row
+then reads `WARNING: unconfined: this lock protects against mistakes, not
+against a compromised agent`, the console's own banner, and every ticket of
+such an agent is marked `UNCONFINED` on the approval screens. A production
+profile with it does not start (`yes: the console refuses to start`).
 
 `environment` is `VAULT_ADDR=…` (and the namespace) for a lock with Vault, and
 `credentials` then reads `vault, <path>`; with `vault_token: cli`, a `vault
@@ -681,6 +692,14 @@ and every `allowed_uids` (from a legacy root file or a sub-project `lox
 import` reads, which agents may write, too) is in the review you confirm. A lockhttp lock takes none (lox run refuses
 the key there): it is reached by lea's gate, an account of its image. `lox import` keeps the uids every
 declaration of an instance lists.
+
+A console in a container cannot see the host's container runtime sockets, so
+lox run tells it their gids: `--runtime-gids <gid,...>`, the groups that own
+the host's rootful runtime sockets with group write (`docker`, …), computed on
+the host. A client holding one is refused as unconfined, whatever it reports.
+None when the host has none. Only an image whose console takes the flag gets
+it (a lock's release on lockkit v0.20.0 or later; an older console would
+refuse to start on it): until those releases, no lock gets it.
 
 `lox add` pins only releases that run under lox run (hub mode on lockkit
 v0.3.1): lockhub v0.1.1, locksql v0.11.0, lockmq v0.3.0, lockfile v0.4.0,

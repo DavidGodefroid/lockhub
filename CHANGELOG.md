@@ -17,6 +17,17 @@ digest).
 
 ### Added
 
+- Confined agents (lockkit v0.20.0, lockkit#133, #212). lockkit goes to
+  v0.20.0: the hub takes the tickets of unconfined agents
+  (`flags.unconfined`). `lox approve`, Slack and Telegram mark them
+  `UNCONFINED`, the phone `· unconfined`, and `lox run`'s card shows the
+  console's banner ("unconfined: this lock protects against mistakes, not
+  against a compromised agent"). The review shows each lock's `unconfined`
+  row: `no` (an unconfined agent is refused), the banner as a warning when
+  the profile sets `unconfined = true`, or that the console does not start on
+  a production profile with it. `lox run` passes `--runtime-gids` (the gids
+  owning the host's runtime sockets with group write) to the consoles whose
+  release takes it; no lock release does yet, so none gets it for now.
 - `GET /v1/decided` (facade socket) items carry `request`: the decided
   ticket as its lock signed it, as `GET /v1/queue` serves it (#200). Its
   requester names the agent that waits on the decision: an auto rule of

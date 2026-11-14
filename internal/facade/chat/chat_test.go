@@ -281,3 +281,20 @@ func TestHangingCloseBounded(t *testing.T) {
 		t.Fatalf("a click waited %s behind a hanging close", d)
 	}
 }
+
+// An unconfined agent's ticket (lockkit#133) says so on the card.
+func TestCardUnconfined(t *testing.T) {
+	tk := ticket.NewTicket(ticket.Source{Lock: "locksql", Instance: "crm"}, ticket.RiskRead, "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), time.Now(), 0)
+	tk.Flags.Unconfined = true
+	raw, _ := tk.Marshal()
+	rules := route.Rules{Enabled: []string{route.Slack}}
+	c, ok := chat.CardOf(store.Ticket{Instance: "crm", ID: tk.ID, Risk: string(ticket.RiskRead), Raw: raw}, rules, route.Slack)
+	if !ok || !c.Unconfined || !c.Answerable {
+		t.Errorf("card %+v %v", c, ok)
+	}
+	tk.Flags.Unconfined = false
+	raw, _ = tk.Marshal()
+	if c, _ := chat.CardOf(store.Ticket{Instance: "crm", ID: tk.ID, Risk: string(ticket.RiskRead), Raw: raw}, rules, route.Slack); c.Unconfined {
+		t.Errorf("confined card %+v", c)
+	}
+}
