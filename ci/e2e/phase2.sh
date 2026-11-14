@@ -292,21 +292,38 @@ docker network create "$agents" >/dev/null
 hubnet=$(jq -r .hub_network .lockfamily/up.json)
 subnet=$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$hubnet")
 img=$(sed -n '/^  web:/,/image:/s/^ *image: *//p' .lockfamily/lockfamily.yaml)
+# The sources.json lea writes for a gate (lockhttp docs/lea.md §2.3): the
+# gate's address on the agents' network names the agent container. Without
+# it, every request is unconfined (no_lea_sources, lockhttp v0.10.0) and
+# refused. The gate polls it: written once the gate has that address.
+srcdir=$(dirname "$ws")/gate-sources
+mkdir -p "$srcdir/web" "$srcdir/api"
+chmod 0755 "$srcdir" "$srcdir/web" "$srcdir/api"
+# sources NAME CONTAINER: NAME's sources.json, CONTAINER's address on the
+# agents' network.
+sources() {
+	ip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$agents\").IPAddress}}" "$2")
+	[ -n "$ip" ] || die "$2 has no address on $agents"
+	printf '{"version":1,"networks":[{"local_ip":"%s","container":"e2e-agent","project":"e2e"}]}\n' "$ip" >"$srcdir/$1/sources.json"
+	chmod 0644 "$srcdir/$1/sources.json"
+}
 docker run -d --name "$gate" --network "$hubnet" --user 10003:10020 \
-	-v "${p}_web-run:/run/lockhttp" -v "${p}_web-gate:/g" -v "${p}_hubkey:/run/lockfamily:ro" \
-	"$img" gate --listen 0.0.0.0:3128 --profile default \
+	-v "${p}_web-run:/run/lockhttp" -v "${p}_web-gate:/g" -v "${p}_hubkey:/run/lockfamily:ro" -v "$srcdir/web:/etc/lockhttp-gate:ro" \
+	"$img" gate --listen 0.0.0.0:3128 --profile default --sources /etc/lockhttp-gate/sources.json \
 	--hub "$(jq -r .hub_url .lockfamily/up.json)" --hub-plain-http --hub-key-file /run/lockfamily/hub.pub \
 	--instance web --home /g --hub-net "$subnet" >/dev/null
 docker network connect "$agents" "$gate"
+sources web "$gate"
 # The control: a gate as lea would run it without --hub-net (lockhttp
 # instance api). It knows the hub only by the name and the address it
 # had at start.
 docker run -d --name "$gate-ctl" --network "$hubnet" --user 10003:10020 \
-	-v "${p}_api-run:/run/lockhttp" -v "${p}_api-gate:/g" -v "${p}_hubkey:/run/lockfamily:ro" \
-	"$img" gate --listen 0.0.0.0:3128 --profile default \
+	-v "${p}_api-run:/run/lockhttp" -v "${p}_api-gate:/g" -v "${p}_hubkey:/run/lockfamily:ro" -v "$srcdir/api:/etc/lockhttp-gate:ro" \
+	"$img" gate --listen 0.0.0.0:3128 --profile default --sources /etc/lockhttp-gate/sources.json \
 	--hub "$(jq -r .hub_url .lockfamily/up.json)" --hub-plain-http --hub-key-file /run/lockfamily/hub.pub \
 	--instance api --home /g >/dev/null
 docker network connect "$agents" "$gate-ctl"
+sources api "$gate-ctl"
 sleep 5
 docker logs "$gate" 2>&1 | tail -5
 hubip=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$hubnet\").IPAddress}}" "${p}-lockhub-1")
