@@ -821,8 +821,9 @@ func (e *escapeWatch) Write(p []byte) (int, error) {
 	return e.w.Write(p)
 }
 
-// pinRelease is the image of repo's release tag (the latest when tag is
-// empty), by its digest, once cosign verified it.
+// pinRelease is the image of repo's release tag (when tag is empty, the
+// newest release whose image is published: LatestImage), by its digest,
+// once cosign verified it.
 func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, stdout io.Writer) (string, error) {
 	return pinVariant(ctx, rel, repo, tag, "", stdout)
 }
@@ -830,19 +831,27 @@ func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, std
 // pinVariant is pinRelease for the release's variant image ("vault"; ""
 // is the plain image).
 func pinVariant(ctx context.Context, rel *family.Releases, repo, tag, variant string, stdout io.Writer) (string, error) {
+	var ref string
 	if tag == "" {
-		t, pre, err := rel.Latest(ctx, repo)
+		p, err := rel.LatestImage(ctx, repo, variant)
 		if err != nil {
 			return "", err
 		}
-		if pre {
-			fmt.Fprintf(stdout, "%s has only pre-releases: pinning %s\n", repo, t)
+		for _, s := range p.Skipped {
+			fmt.Fprintf(stdout, "%s %s: no published image yet (its release workflow may still be running): skipped\n", repo, s)
 		}
-		tag = t
-	}
-	ref, err := rel.ImageVariant(ctx, repo, tag, variant)
-	if err != nil {
-		return "", err
+		if p.Pre {
+			fmt.Fprintf(stdout, "%s has only pre-releases: pinning %s\n", repo, p.Tag)
+		} else if len(p.Skipped) > 0 {
+			fmt.Fprintf(stdout, "%s: pinning %s, the newest release with a published image\n", repo, p.Tag)
+		}
+		tag, ref = p.Tag, p.Ref
+	} else {
+		r, err := rel.ImageVariant(ctx, repo, tag, variant)
+		if err != nil {
+			return "", err
+		}
+		ref = r
 	}
 	if variant != "" {
 		tag += " (" + variant + ")"

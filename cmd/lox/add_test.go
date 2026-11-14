@@ -82,6 +82,54 @@ func TestAddResolvesLatestSignedRelease(t *testing.T) {
 	}
 }
 
+// lox add pins the newest release whose image is published: a release
+// whose release workflow has not pushed its image yet is skipped, saying
+// so (lockhub#213); asked for by --version, it is a clear error.
+func TestAddSkipsReleaseWithoutImage(t *testing.T) {
+	d := map[string]string{"locksql": strings.Repeat("a", 64), "lockhub": strings.Repeat("b", 64)}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/releases"):
+			w.Write([]byte(`[{"tag_name":"v1.3.0"},{"tag_name":"v1.2.3"}]`))
+		case r.URL.Path == "/token":
+			w.Write([]byte(`{"token":"t"}`))
+		case strings.HasSuffix(r.URL.Path, "/manifests/1.2.3"):
+			repo := strings.Split(r.URL.Path, "/")[3]
+			w.Header().Set("Docker-Content-Digest", "sha256:"+d[repo])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	old := newReleases
+	newReleases = func() *family.Releases {
+		return &family.Releases{API: srv.URL, Registry: srv.URL, HTTP: srv.Client(), Run: &okRunner{}}
+	}
+	t.Cleanup(func() { newReleases = old })
+	ws, _ := filepath.EvalSymlinks(t.TempDir())
+	wd, _ := os.Getwd()
+	os.Chdir(ws)
+	t.Cleanup(func() { os.Chdir(wd) })
+	var out, errb bytes.Buffer
+	if code := run([]string{"add", "locksql", "x", "--version", "v1.3.0"}, devNull(t), &out, &errb); code == 0 || !strings.Contains(errb.String(), "locksql v1.3.0: no published image") {
+		t.Errorf("--version without an image: %d\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"add", "locksql", "crm"}, devNull(t), &out, &errb); code != 0 {
+		t.Fatalf("%d %s %s", code, out.String(), errb.String())
+	}
+	for _, want := range []string{"locksql v1.3.0: no published image yet", "locksql: pinning v1.2.3, the newest release with a published image", "lockhub v1.3.0: no published image yet"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(ws, ".lockfamily", "lockfamily.yaml"))
+	if !strings.Contains(string(b), "ghcr.io/davidgodefroid/locksql@sha256:"+d["locksql"]) || !strings.Contains(string(b), "ghcr.io/davidgodefroid/lockhub@sha256:"+d["lockhub"]) {
+		t.Errorf("lockfamily.yaml:\n%s", b)
+	}
+}
+
 // fakeReleases serves release v1.2.3 of every repo, the plain image and
 // its -vault variant by their digests, with cosign as a recording runner.
 func fakeReleases(t *testing.T) (digests map[string]string, cos *okRunner) {
