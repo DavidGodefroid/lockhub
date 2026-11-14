@@ -8,10 +8,11 @@
 #  1. the stack up (hub, lock, gateway): lox run takes it down in one
 #     line, asks nothing more than the usual review, and applies; the
 #     volumes, the hub key and the hub's database are the same ones;
-#  2. the hub exited, the lock running (the state after a reboot): same;
-#  3. the Docker daemon restarted: no container of the workspaces runs
-#     until lox run;
-#  4. lox down: containers and networks gone, volumes kept; again: no-op.
+#  2. lox down: containers and networks gone, volumes kept; again: no-op;
+#  3. another workspace of lox OLD, its hub exited, its lock running (the
+#     state after a reboot): same as 1;
+#  4. the Docker daemon restarted: no container of the workspace runs
+#     until lox run.
 #
 #   ci/e2e/upgrade-running.sh OUTDIR [OLD]
 #
@@ -116,44 +117,15 @@ root=$(mktemp -d)
 
 say "1. lox $old's stack up: lox run of this commit"
 oldstack "$root/up/projects"
-pa=$p
 kept >before.kept
 run upgraded
 upgraded upgraded
 kept >after.kept
 diff before.kept after.kept || die "a volume, the hub key or the hub's database changed"
 
-say "2. lox $old's stack, the hub exited, the lock running (after a reboot)"
-oldstack "$root/reboot/projects"
-pb=$p
-docker stop "$p-lockhub-1" >/dev/null
-[ "$(docker inspect -f '{{.State.Running}}' "$p-lock-first-1")" = true ] || die "the lock does not run"
-kept >before.kept
-run reboot
-upgraded reboot
-kept >after.kept
-diff before.kept after.kept || die "a volume, the hub key or the hub's database changed"
-
-say "3. the Docker daemon restarts: nothing of the workspaces runs until lox run"
-sudo systemctl restart docker
-i=0
-until docker info >/dev/null 2>&1; do
-	i=$((i + 1))
-	[ "$i" -le 60 ] || die "dockerd did not come back"
-	sleep 1
-done
-sleep 5
-for q in $pa $pb; do
-	running=$(docker ps -q --filter "label=com.docker.compose.project=$q")
-	[ -z "$running" ] || { docker ps --filter "label=com.docker.compose.project=$q"; die "a container of $q runs after the daemon restarted"; }
-done
-cd "$root/up/projects"
-p=$pa
-state="$XDG_STATE_HOME/lockfamily/$p"
-run restarted
-[ "$(docker inspect -f '{{.State.Running}}' "$p-lockhub-1")" = true ] || die "lox run did not start the hub again"
-
-say "4. lox down: containers and networks gone, volumes kept; idempotent"
+say "2. lox down: containers and networks gone, volumes kept; idempotent"
+# (Two workspaces of one XDG_RUNTIME_DIR share the facade socket: the
+# next one runs once this one is down.)
 vols=$(docker volume ls -q --filter "label=com.docker.compose.project=$p" | sort)
 "$lox" down >down.out 2>&1 || { cat down.out; die "lox down failed"; }
 cat down.out
@@ -163,4 +135,28 @@ grep -q "^lox down: stopped " down.out || die "lox down stopped nothing"
 [ "$(docker volume ls -q --filter "label=com.docker.compose.project=$p" | sort)" = "$vols" ] || die "lox down removed a volume"
 "$lox" down >down2.out 2>&1 || { cat down2.out; die "lox down (again) failed"; }
 grep -q "nothing runs for this workspace" down2.out || { cat down2.out; die "lox down again did something"; }
+
+say "3. lox $old's stack, the hub exited, the lock running (after a reboot)"
+oldstack "$root/reboot/projects"
+docker stop "$p-lockhub-1" >/dev/null
+[ "$(docker inspect -f '{{.State.Running}}' "$p-lock-first-1")" = true ] || die "the lock does not run"
+kept >before.kept
+run reboot
+upgraded reboot
+kept >after.kept
+diff before.kept after.kept || die "a volume, the hub key or the hub's database changed"
+
+say "4. the Docker daemon restarts: nothing of the workspace runs until lox run"
+sudo systemctl restart docker
+i=0
+until docker info >/dev/null 2>&1; do
+	i=$((i + 1))
+	[ "$i" -le 60 ] || die "dockerd did not come back"
+	sleep 1
+done
+sleep 5
+running=$(docker ps -q --filter "label=com.docker.compose.project=$p")
+[ -z "$running" ] || { docker ps --filter "label=com.docker.compose.project=$p"; die "a container of $p runs after the daemon restarted"; }
+run restarted
+[ "$(docker inspect -f '{{.State.Running}}' "$p-lockhub-1")" = true ] || die "lox run did not start the hub again"
 echo "upgrade over a running stack: OK"
