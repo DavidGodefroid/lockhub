@@ -5,6 +5,11 @@ digest).
 
 ## Unreleased
 
+## v0.12.1 (2026-11-14)
+
+`lox run` upgrades older lockhttp images to lockhttp v0.12.0; the other
+shipped locks are those of v0.12.0.
+
 ### Added
 
 - `lox run` passes `--runtime-gids` to a lockhttp console signed for
