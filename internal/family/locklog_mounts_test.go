@@ -29,6 +29,35 @@ func logHost(t *testing.T) (*LogHost, string) {
 		}}, logs
 }
 
+// outsideLogRoot is a physical directory, a sibling of logHost's log root,
+// that lox run refuses for being outside it. Not /etc: on macOS /etc is a
+// symbolic link, refused one check earlier (lockhub#198).
+func outsideLogRoot(t *testing.T, logs string) string {
+	t.Helper()
+	d := filepath.Join(filepath.Dir(logs), "etc")
+	os.MkdirAll(d, 0o755)
+	os.WriteFile(filepath.Join(d, "app.conf"), []byte("x\n"), 0o644)
+	return d
+}
+
+// A directory with a symbolic link on its path is refused, even under an
+// allowed log root, before the log root check.
+func TestDeriveLogPlanRefusesSymlink(t *testing.T) {
+	h, logs := logHost(t)
+	d := filepath.Join(logs, "nginx")
+	os.MkdirAll(filepath.Join(d, "sub"), 0o755)
+	link := filepath.Join(logs, "link")
+	if err := os.Symlink(d, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{link, filepath.Join(link, "sub")} {
+		_, err := derive(t, h, nil, "profile app false\nfile "+dir+" "+dir+"/*.log\n")
+		if want := "mount plan: " + dir + " is not a directory with no symbolic link on its path"; err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %q", dir, err, want)
+		}
+	}
+}
+
 func derive(t *testing.T, h *LogHost, f *fake, plan string) (*LogPlan, error) {
 	t.Helper()
 	if f == nil {
@@ -346,10 +375,11 @@ func TestUpMountsLocklogPlan(t *testing.T) {
 	}
 	// A plan the host check refuses: the lock is not started, nothing of
 	// it mounted; the other locks are (lockhub#177).
-	f.keys["plan/logs"] = "profile app false\nfile /etc /etc/*.conf\n"
+	bad := outsideLogRoot(t, logs)
+	f.keys["plan/logs"] = "profile app false\nfile " + bad + " " + bad + "/*.conf\n"
 	g := &fake{keys: f.keys}
-	if out, err := upLog(w, h, "y\n", g); err != nil || !strings.Contains(out, "lock logs: not started: ") || strings.Contains(g.upCompose, "/etc") || block(g.upCompose, "lock-logs") != "" {
-		t.Errorf("/etc mounted: %v\n%s", err, out)
+	if out, err := upLog(w, h, "y\n", g); err != nil || !strings.Contains(out, "lock logs: not started: mount plan: "+bad+" is not under an allowed log root") || strings.Contains(g.upCompose, bad) || block(g.upCompose, "lock-logs") != "" {
+		t.Errorf("%s mounted: %v\n%s", bad, err, out)
 	}
 }
 
