@@ -4,10 +4,12 @@ package lockconsoles
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -214,5 +216,66 @@ func TestBridgeFeed(t *testing.T) {
 	}
 	if err := b.Command("nope", ":review"); err == nil {
 		t.Error("a command typed at an unknown console")
+	}
+}
+
+// startDocker is a console whose container stays stopped until it is
+// started (Starter): the engine starts no console by itself.
+type startDocker struct {
+	fakeDocker
+	mu     sync.Mutex
+	starts []time.Time
+	// stuck: a start does not make it run (it ends again at once).
+	stuck bool
+}
+
+func (d *startDocker) Container(context.Context, string) (string, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return "c1", len(d.starts) > 0 && !d.stuck, nil
+}
+
+func (d *startDocker) Start(_ context.Context, id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if id != "c1" {
+		return errors.New("no such container")
+	}
+	d.starts = append(d.starts, time.Now())
+	return nil
+}
+
+func (d *startDocker) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.starts)
+}
+
+// A stopped console is started again by lox run while it follows it, and
+// one that keeps stopping is started again less and less often.
+func TestBridgeStartsStoppedConsole(t *testing.T) {
+	if _, err := exec.LookPath("stty"); err != nil {
+		t.Skip("no stty")
+	}
+	defer func(p, s, r, sb, mb time.Duration) {
+		poll, settle, retry, startBackoff, maxBackoff = p, s, r, sb, mb
+	}(poll, settle, retry, startBackoff, maxBackoff)
+	poll, settle, retry, startBackoff, maxBackoff = 50*time.Millisecond, 20*time.Millisecond, 10*time.Millisecond, 100*time.Millisecond, 400*time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &startDocker{fakeDocker: fakeDocker{t.TempDir()}}
+	b := Start(ctx, d, []Lock{{Instance: "shop-prod", Type: "locksql"}})
+	defer b.Close()
+	if e := next(t, b, loxrun.ConsoleWaiting); e.Question.Prompt != "Apply these changes? [y/N]" || d.count() != 1 {
+		t.Fatalf("after the start: %+v, %d starts", e.Question, d.count())
+	}
+
+	stuck := &startDocker{fakeDocker: fakeDocker{t.TempDir()}, stuck: true}
+	b2 := Start(ctx, stuck, []Lock{{Instance: "shop-prod", Type: "locksql"}})
+	defer b2.Close()
+	time.Sleep(1500 * time.Millisecond)
+	// Backoff 100, 200, 400, 400…ms: about 5 starts in 1.5s, not 150.
+	if n := stuck.count(); n < 3 || n > 7 {
+		t.Errorf("%d starts in 1.5s of a console that keeps stopping", n)
 	}
 }
