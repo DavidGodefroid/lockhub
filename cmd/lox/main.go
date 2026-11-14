@@ -79,6 +79,9 @@ Usage:
                                           take a lock out of lockfamily.yaml and stop its console after one
                                           review; its profile stays in the lock's config.toml unless --purge;
                                           a "n", a failure or Ctrl-C keeps the lock
+  lox down [--file lockfamily.yaml]       stop the workspace's stack (the hub, the locks, their gateways:
+                                          containers and networks); volumes, keys and tickets are kept, lox run
+                                          starts it again. Nothing restarts it by itself, even at boot
   lox vault set --address URL [--namespace NS] [--ca-file PATH] [--file lockfamily.yaml]
                                           write the shared vault: block; lox run reviews and applies it;
                                           an omitted --namespace / --ca-file keeps the current value, "" clears it
@@ -158,6 +161,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return addCmd(args[1:], stdin, stdout, stderr)
 	case "remove":
 		return removeCmd(args[1:], stdin, stdout, stderr)
+	case "down":
+		return downCmd(args[1:], stdout, stderr)
 	case "vault":
 		return vaultCmd(args[1:], stdout, stderr)
 	case "import":
@@ -548,6 +553,14 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		}
 		return p
 	}
+	// The engine starts no console by itself (restart: "no"): a stopped
+	// one is started here, as lox run does while it follows it.
+	start := func() {
+		if p := ask(); p.state == "exited" || p.state == "created" {
+			dc("start", "lock-"+name).Run()
+		}
+	}
+	start()
 	fmt.Fprintln(stdout, attachLine(name, ask()))
 	fmt.Fprintln(stdout, detachLine)
 	// --sig-proxy=false: a hang-up (the terminal closed) or a signal to lox
@@ -574,6 +587,7 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 				return nil
 			case !errors.Is(err, errNoPty):
 				// The console ended (a wrong answer, an error).
+				start()
 				fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
 				return err
 			}
@@ -588,10 +602,11 @@ func attachConsole(abs, name string, stdin *os.File, stdout, stderr io.Writer) e
 		fmt.Fprintf(stdout, "detached from %s: its console keeps running\n", name)
 		return nil
 	}
-	// The console ended (a wrong answer, an error): its container restarts
-	// it, and the next attach must not be blind. Its next question, once
-	// it asks one, is shown now.
+	// The console ended (a wrong answer, an error): started again, and the
+	// next attach must not be blind. Its next question, once it asks one,
+	// is shown now.
 	if err != nil {
+		start()
 		fmt.Fprintln(stdout, afterExit(name, ask, attachTries))
 	}
 	return err
@@ -604,7 +619,7 @@ func composeArgs(project, state string) []string {
 }
 
 // attachTries and attachStep are how long lox attach waits for a console
-// that ended to ask its next question: its container restarts it.
+// that ended, and that it started again, to ask its next question.
 var (
 	attachTries = 10
 	attachStep  = 500 * time.Millisecond
@@ -806,8 +821,9 @@ func (e *escapeWatch) Write(p []byte) (int, error) {
 	return e.w.Write(p)
 }
 
-// pinRelease is the image of repo's release tag (the latest when tag is
-// empty), by its digest, once cosign verified it.
+// pinRelease is the image of repo's release tag (when tag is empty, the
+// newest release whose image is published: LatestImage), by its digest,
+// once cosign verified it.
 func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, stdout io.Writer) (string, error) {
 	return pinVariant(ctx, rel, repo, tag, "", stdout)
 }
@@ -815,19 +831,27 @@ func pinRelease(ctx context.Context, rel *family.Releases, repo, tag string, std
 // pinVariant is pinRelease for the release's variant image ("vault"; ""
 // is the plain image).
 func pinVariant(ctx context.Context, rel *family.Releases, repo, tag, variant string, stdout io.Writer) (string, error) {
+	var ref string
 	if tag == "" {
-		t, pre, err := rel.Latest(ctx, repo)
+		p, err := rel.LatestImage(ctx, repo, variant)
 		if err != nil {
 			return "", err
 		}
-		if pre {
-			fmt.Fprintf(stdout, "%s has only pre-releases: pinning %s\n", repo, t)
+		for _, s := range p.Skipped {
+			fmt.Fprintf(stdout, "%s %s: no published image yet (its release workflow may still be running): skipped\n", repo, s)
 		}
-		tag = t
-	}
-	ref, err := rel.ImageVariant(ctx, repo, tag, variant)
-	if err != nil {
-		return "", err
+		if p.Pre {
+			fmt.Fprintf(stdout, "%s has only pre-releases: pinning %s\n", repo, p.Tag)
+		} else if len(p.Skipped) > 0 {
+			fmt.Fprintf(stdout, "%s: pinning %s, the newest release with a published image\n", repo, p.Tag)
+		}
+		tag, ref = p.Tag, p.Ref
+	} else {
+		r, err := rel.ImageVariant(ctx, repo, tag, variant)
+		if err != nil {
+			return "", err
+		}
+		ref = r
 	}
 	if variant != "" {
 		tag += " (" + variant + ")"

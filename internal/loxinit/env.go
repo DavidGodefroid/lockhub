@@ -4,6 +4,8 @@ import (
 	"context"
 	"os/exec"
 	"strings"
+
+	"github.com/DavidGodefroid/lockhub/internal/family"
 )
 
 // Locks are the lock types lox init knows, in the order its prerequisites
@@ -18,6 +20,9 @@ type Env struct {
 	LookPath func(string) (string, error)
 	// DockerVersion is the version of the Docker engine that answers.
 	DockerVersion func(ctx context.Context) (string, error)
+	// CosignVersion is the installed cosign's version (family.CosignVersion);
+	// nil: not asked.
+	CosignVersion func(ctx context.Context) (string, error)
 	// Types are the lock types lox up runs (family.Types).
 	Types []string
 	// UID is the uid lea's agents run as (os.Getuid).
@@ -47,13 +52,18 @@ type Prereqs struct {
 	DockerCLI bool
 	// Cosign and Lea are their paths, "" when not found.
 	Cosign, Lea string
+	// CosignVersion is cosign's version, "" when it does not tell.
+	CosignVersion string
 	// Launchers are each lock's launcher on PATH, "" when not found.
 	Launchers map[string]string
 }
 
 // Ready reports whether lox init can go on: Docker answers and cosign
-// (lox add and lox run verify every image) is installed.
-func (p Prereqs) Ready() bool { return p.Docker != "" && p.Cosign != "" }
+// (lox add and lox run verify every image) is installed, in a version
+// lox verifies with.
+func (p Prereqs) Ready() bool {
+	return p.Docker != "" && p.Cosign != "" && family.CosignSupported(p.CosignVersion)
+}
 
 // CheckPrereqs looks for Docker, cosign, lea and the launchers.
 func CheckPrereqs(ctx context.Context, e Env) Prereqs {
@@ -71,6 +81,11 @@ func CheckPrereqs(ctx context.Context, e Env) Prereqs {
 		}
 	}
 	p.Cosign = look("cosign")
+	if p.Cosign != "" && e.CosignVersion != nil {
+		if v, err := e.CosignVersion(ctx); err == nil {
+			p.CosignVersion = v
+		}
+	}
 	p.Lea = look("lea")
 	for _, l := range Locks {
 		p.Launchers[l] = look(l)

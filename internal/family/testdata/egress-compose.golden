@@ -20,7 +20,7 @@ services:
         bind:
           create_host_path: false
     networks: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   hubkey:
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     profiles: [setup]
@@ -61,7 +61,7 @@ services:
       - "profile-locksql:/w/.locksql:ro"
     networks: [lockhub, "locknet-db"]
     depends_on: [lockhub, "gw-db"]
-    restart: unless-stopped
+    restart: "no"
   "gw-db":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -72,7 +72,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "5432=gwout-db:20000", "--forward", "8200=gwout-db:20001"]
     networks:
       "locknet-db":
@@ -88,7 +88,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=host.docker.internal:5432", "--forward", "20001=host.docker.internal:8200"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     networks: ["gwlink-db", "out-db"]
@@ -115,7 +115,7 @@ services:
       - "profile-lockfile:/home/lockfile/.config/lockfile:ro"
     networks: [lockhub, "locknet-docs"]
     depends_on: [lockhub]
-    restart: unless-stopped
+    restart: "no"
   lock-mq:
     image: "ghcr.io/davidgodefroid/lockmq@sha256:3333333333333333333333333333333333333333333333333333333333333333"
     user: "10011:10010"
@@ -140,7 +140,7 @@ services:
       - "profile-lockmq:/w/.lockmq:ro"
     networks: [lockhub, "locknet-mq"]
     depends_on: [lockhub, "gw-mq"]
-    restart: unless-stopped
+    restart: "no"
   "gw-mq":
     image: "ghcr.io/davidgodefroid/lockhub@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     read_only: true
@@ -151,7 +151,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "443=gwout-mq:20000,sni=amqp.example.com", "--forward", "443=gwout-mq:20001,sni=mgmt.example.com"]
     networks:
       "locknet-mq":
@@ -167,7 +167,7 @@ services:
     mem_limit: 64m
     sysctls:
       net.ipv4.ip_unprivileged_port_start: "0"
-    restart: unless-stopped
+    restart: "no"
     command: ["egress-gateway", "--forward", "20000=amqp.example.com:443", "--forward", "20001=mgmt.example.com:443"]
     networks: ["gwlink-mq", "out-mq"]
   lock-web:
@@ -192,7 +192,7 @@ services:
       - hubkey:/run/lockfamily:ro
       - "profile-lockhttp:/home/lockhttp/.config/lockhttp:ro"
     networks: ["egress-web"]
-    restart: unless-stopped
+    restart: "no"
   gatehome-web:
     image: "ghcr.io/davidgodefroid/lockhttp@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     profiles: [setup]

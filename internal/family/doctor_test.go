@@ -113,8 +113,9 @@ func healthy(t *testing.T) (*Doctor, *answers) {
 	write(t, filepath.Join(root, "etc", "passwd"), "root:x:0:0:root:/root:/bin/bash\ndavid:x:1000:1000::/home/david:/bin/bash\n")
 	write(t, filepath.Join(root, "etc", "group"), "root:x:0:\n")
 	a := &answers{out: map[string]string{
-		"info --format": "27.3.1\n",
-		"image inspect": "sha256:abc\n",
+		"info --format":         "27.3.1\n",
+		"cosign version --json": "{\"gitVersion\":\"v2.6.1\"}\n",
+		"image inspect":         "sha256:abc\n",
 		"ps --all --format json": `{"Service":"lockhub","State":"running"}
 {"Service":"lock-crm-prod","State":"running"}
 {"Service":"lock-events","State":"running"}
@@ -138,7 +139,7 @@ func TestDoctorHealthy(t *testing.T) {
 	if n != 0 || strings.Contains(out, "FAIL") || strings.Contains(out, "warn") {
 		t.Fatalf("%d problems:\n%s", n, out)
 	}
-	for _, want := range []string{"lockfamily.yaml", "engine", "hub key", "facade socket", "lock-events running", "internal",
+	for _, want := range []string{"lockfamily.yaml", "engine", "ok   cosign v2.6.1\n", "hub key", "facade socket", "lock-events running", "internal",
 		"the hub on the facade socket is this workspace's", "hub answers on the facade socket: 0 ticket(s) pending", fmt.Sprintf("at most %d plans pending", hubclient.MaxPending), fmt.Sprintf("%d new tickets per %s", hubclient.RateN, hubclient.RateWindow), "at most 50 per lock", "one agent can use it up", fmt.Sprintf("pending crm-prod on the hub: 0 of %d", hubclient.MaxPending)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q:\n%s", want, out)
@@ -152,6 +153,10 @@ func TestDoctorFindsProblems(t *testing.T) {
 		want   string
 	}{
 		"engine down": {func(d *Doctor, a *answers) { a.fail = []string{"info"} }, "FAIL engine"},
+		"no cosign":   {func(d *Doctor, a *answers) { a.fail = []string{"cosign version"} }, "FAIL cosign: refused"},
+		"cosign too old": {func(d *Doctor, a *answers) { a.out["cosign version --json"] = "{\"gitVersion\":\"v2.4.3\"}" },
+			"FAIL cosign v2.4.3: lox needs cosign v2.5.0 or later: brew upgrade cosign"},
+		"cosign version unknown": {func(d *Doctor, a *answers) { a.out["cosign version --json"] = "cosign v?" }, "warn cosign: version unknown"},
 		"lock stopped": {func(d *Doctor, a *answers) {
 			a.out["ps --all --format json"] = `[{"Service":"lockhub","State":"running"},{"Service":"lock-crm-prod","State":"exited"}]`
 		}, "FAIL lock-crm-prod exited"},

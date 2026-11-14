@@ -69,6 +69,16 @@ func semverLess(a, b string) bool {
 	return ma[4] < mb[4]
 }
 
+// ErrNoImage is Digest's error when the registry serves no image for
+// the release: its release workflow has not pushed it (yet).
+var ErrNoImage = errors.New("no published image")
+
+// noImage is an error that is ErrNoImage, worded as it says.
+type noImage string
+
+func (e noImage) Error() string        { return string(e) }
+func (e noImage) Is(target error) bool { return target == ErrNoImage }
+
 // Latest is the tag of repo's newest release: the newest that is not a
 // pre-release, else (a repository that only has pre-releases yet) the
 // newest pre-release, and whether it is one.
@@ -77,26 +87,95 @@ func (r *Releases) Latest(ctx context.Context, repo string) (string, bool, error
 	if err != nil {
 		return "", false, err
 	}
-	best, pre := "", ""
+	tags, pre := candidates(rs)
+	if len(tags) == 0 {
+		return "", false, fmt.Errorf("%s has no published release", repo)
+	}
+	return tags[0], pre, nil
+}
+
+// candidates are the tags Latest chooses from, newest first: the
+// releases that are not pre-releases, else (a repository that only has
+// pre-releases yet) the pre-releases, and whether they are.
+func candidates(rs []release) ([]string, bool) {
+	var rel, pre []string
 	for _, x := range rs {
 		if x.Draft || !semverTag.MatchString(x.Tag) {
 			continue
 		}
 		if x.Prerelease {
-			if pre == "" || semverLess(pre, x.Tag) {
-				pre = x.Tag
-			}
-		} else if best == "" || semverLess(best, x.Tag) {
-			best = x.Tag
+			pre = append(pre, x.Tag)
+		} else {
+			rel = append(rel, x.Tag)
 		}
 	}
-	switch {
-	case best != "":
-		return best, false, nil
-	case pre != "":
-		return pre, true, nil
+	tags, isPre := rel, false
+	if len(rel) == 0 {
+		tags, isPre = pre, true
 	}
-	return "", false, fmt.Errorf("%s has no published release", repo)
+	slices.SortFunc(tags, func(a, b string) int {
+		if semverLess(b, a) {
+			return -1
+		}
+		if semverLess(a, b) {
+			return 1
+		}
+		return 0
+	})
+	return slices.Compact(tags), isPre
+}
+
+// Pinned is what LatestImage pins.
+type Pinned struct {
+	// Tag is the release, Ref its image by digest, signature verified.
+	Tag, Ref string
+	// Pre is whether Tag is a pre-release (the repository has no
+	// release yet).
+	Pre bool
+	// Skipped are the newer releases whose image is not published yet,
+	// newest first.
+	Skipped []string
+}
+
+// LatestImage is the image (variant as for ImageVariant) of repo's
+// newest release, as Latest chooses it, whose image is published: a
+// release exists on GitHub before its release workflow pushed its
+// image, so a newer release without one is skipped (Pinned.Skipped) for
+// the previous one (lockhub#213). Only a missing image is skipped: an
+// image that does not verify is an error.
+func (r *Releases) LatestImage(ctx context.Context, repo, variant string) (Pinned, error) {
+	rs, err := r.releases(ctx, repo)
+	if err != nil {
+		return Pinned{}, err
+	}
+	tags, pre := candidates(rs)
+	if len(tags) == 0 {
+		return Pinned{}, fmt.Errorf("%s has no published release", repo)
+	}
+	p := Pinned{Pre: pre}
+	for _, t := range tags {
+		if min, ok := MinRelease[repo]; ok && semverLess(t, min) {
+			break
+		}
+		ref, err := r.ImageVariant(ctx, repo, t, variant)
+		if errors.Is(err, ErrNoImage) {
+			p.Skipped = append(p.Skipped, t)
+			continue
+		}
+		if err != nil {
+			return Pinned{}, err
+		}
+		p.Tag, p.Ref = t, ref
+		return p, nil
+	}
+	if len(p.Skipped) == 0 {
+		return Pinned{}, fmt.Errorf("%s: no release runs under lox run: %s or later is needed", repo, MinRelease[repo])
+	}
+	what := "an image"
+	if variant != "" {
+		what = "a -" + variant + " image"
+	}
+	return Pinned{}, fmt.Errorf("%s: no release publishes %s yet (tried %s)", repo, what, strings.Join(p.Skipped, ", "))
 }
 
 // releases are repo's releases on GitHub (the newest 100).
@@ -159,8 +238,7 @@ func (r *Releases) ImageVariant(ctx context.Context, repo, tag, variant string) 
 	// The digest is only trusted once its signature is: by this
 	// repository's release workflow, run for this very tag.
 	id := "^" + regexp.QuoteMeta("https://github.com/"+Owner+"/"+repo+"/.github/workflows/release.yml@refs/tags/"+tag) + "$"
-	if _, err := r.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-		"--certificate-identity-regexp", id, ref); err != nil {
+	if _, err := verifyImage(ctx, r.Run, ref, id); err != nil {
 		return "", fmt.Errorf("image %s (%s %s) is not signed by its release: %w", ref, repo, tag, err)
 	}
 	return ref, nil
@@ -208,7 +286,10 @@ func (r *Releases) Digest(ctx context.Context, repo, tag, variant string) (strin
 	// "vault" is the only variant today, so the hint names the credentials
 	// choice; a new variant needs its own wording.
 	if resp.StatusCode == http.StatusNotFound && variant != "" {
-		return "", fmt.Errorf("%s %s publishes no -%s image: choose credentials ask, or a release that has one", repo, tag, variant)
+		return "", noImage(fmt.Sprintf("%s %s publishes no -%s image: choose credentials ask, or a release that has one", repo, tag, variant))
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%s %s: %w (image %s:%s): its release workflow may still be running; retry later, or choose another --version", repo, tag, ErrNoImage, name, ver)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("image %s:%s: registry answered %s", name, ver, resp.Status)

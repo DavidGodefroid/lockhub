@@ -85,7 +85,9 @@ func NetKeys(c *Config) []string {
 type EngineNet struct {
 	Name   string            `json:"Name"`
 	Labels map[string]string `json:"Labels"`
-	IPAM   struct {
+	// Internal: no route out (Docker's Internal, Podman's internal).
+	Internal bool `json:"Internal"`
+	IPAM     struct {
 		Config []struct {
 			Subnet string `json:"Subnet"`
 		} `json:"Config"`

@@ -344,6 +344,13 @@ func (u *Up) Do(ctx context.Context) error {
 		return err
 	}
 	project := Project(ws)
+	// A compose call refused on a network still in use takes the stack
+	// down and runs again, once (reconcile.go).
+	if _, ok := u.Run.(endpointRetry); !ok {
+		run := u.Run
+		u.Run = endpointRetry{Runner: run, project: project, out: u.Out, apply: !u.Probe && !u.DryRun}
+		defer func() { u.Run = run }()
+	}
 	// Each lock's console reads its own profile, from the workspace: a
 	// copy, reviewed below (profile.go).
 	profiles := map[string]*Profile{}
@@ -483,8 +490,7 @@ func (u *Up) Do(ctx context.Context) error {
 	// The release each image was signed for, from its certificate.
 	tags := map[string]string{}
 	for _, im := range images {
-		out, err := u.Run.Run(ctx, nil, "cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-			"--certificate-identity-regexp", "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"), im.ref)
+		out, err := verifyImage(ctx, u.Run, im.ref, "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"))
 		if err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
@@ -513,22 +519,22 @@ func (u *Up) Do(ctx context.Context) error {
 		}
 	}
 	// Each network's subnet, from the workspace's pool: none from the
-	// engine's default address pools, which a few projects exhaust.
-	if !u.Probe {
-		nets, err := ReadEngineNets(ctx, u.Run)
-		if err != nil {
-			return err
-		}
-		subs, err := AllocSubnets(c.Pool(), project, NetKeys(c), nets)
-		if err != nil {
-			return err
-		}
-		paths.Subnets = map[string]string{}
-		for k, s := range subs {
-			paths.Subnets[k] = s.String()
-		}
-		composeYAML = []byte(Compose(c, paths))
+	// engine's default address pools, which a few projects exhaust. A
+	// probe too (it only reads the engine): its compose calls must not
+	// declare the networks otherwise, compose would recreate them.
+	nets, err := ReadEngineNets(ctx, u.Run)
+	if err != nil {
+		return err
 	}
+	subs, err := AllocSubnets(c.Pool(), project, NetKeys(c), nets)
+	if err != nil {
+		return err
+	}
+	paths.Subnets = map[string]string{}
+	for k, s := range subs {
+		paths.Subnets[k] = s.String()
+	}
+	composeYAML = []byte(Compose(c, paths))
 	if m != nil {
 		if err := u.checkManaged(ctx, m, c, project, &paths, profiles, tags, notStarted, skip); err != nil {
 			return err
@@ -553,6 +559,14 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if len(notStarted) > 0 {
 		drop(nil)
+	}
+	// A stack an earlier lox made (left up, or brought back by the
+	// engine) whose networks this file declares differently is taken
+	// down before the first compose call (lockhub#199).
+	if !u.Probe {
+		if err := u.reconcile(ctx, project, composeYAML, nets, upgradeWhy(ups)); err != nil {
+			return err
+		}
 	}
 
 	// 2. Keys: the hub's (created once in its data dir) and each lock's.
