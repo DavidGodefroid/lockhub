@@ -9,7 +9,7 @@ digest).
 
 Supported locks: lockkit v0.20.0 (confined agents). `lox run` upgrades
 older images to locksql v0.20.0, lockmq v0.10.0, lockfile v0.10.0,
-lockhttp v0.10.0, locklog v0.3.1 and lockssh v0.3.0 (`family.ShippedLocks`;
+lockhttp v0.10.0, locklog v0.4.0 and lockssh v0.3.0 (`family.ShippedLocks`;
 v0.11.0 pinned locksql v0.18.1, lockmq v0.9.0, lockfile v0.9.1, lockhttp
 v0.9.1, locklog v0.3.0 and lockssh v0.2.0); `lox add` still pins each
 lock's latest signed release. A local cosign must be v2.5.0 or later
