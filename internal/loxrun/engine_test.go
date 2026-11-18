@@ -540,12 +540,17 @@ func TestMQRules(t *testing.T) {
 	}
 }
 
-// The production floor: no rule approves a write on production, for any
-// lock; it is asked (lox live leaves it to a human). The same rule
-// approves it off production, and production reads stay auto.
+// The production floor is a whitelist: on a production ticket, or one of
+// risk prod-write, the auto mode approves only a read (kind read, a read
+// risk), a connect, or an action of a read risk whose ticket verb is one
+// its lock is known to only read with. Everything else is asked, whatever
+// a rule or a default says: lox live leaves it to a human. Off production
+// the same tickets keep their rule.
 func TestProductionFloor(t *testing.T) {
 	sqlAuto := SQLRules(func(string) string { return "auto" })
 	mqAuto := MQRules(func(string) string { return "auto" })
+	sshAuto := ProfileRules{ActConnect: Allow, ActRead: Allow, ActWrite: Allow}
+	any := ProfileRules{ActRead: Allow, ActWrite: Allow, ActDDL: Allow, ActAction: Allow, ActEndpoint: Allow, ActConnect: Allow}
 	e := NewEngine(Auto)
 	e.Rules = func(lock, instance, profile string) ProfileRules {
 		switch lock {
@@ -553,37 +558,52 @@ func TestProductionFloor(t *testing.T) {
 			return sqlAuto
 		case LockLockmq:
 			return mqAuto
+		case LockLockssh:
+			return sshAuto
+		case "unknown-rules":
+			return nil
 		}
-		return ProfileRules{ActWrite: Allow, ActDDL: Allow, ActAction: Allow}
+		return any
 	}
 	for _, c := range []struct {
 		name, lock string
 		kind       ticket.Kind
 		verb       string
-		// risk is the ticket's risk off production; on production a
-		// write is prod-write when prodRisk, else the flag alone says it.
-		risk     ticket.Risk
+		risk       ticket.Risk
+		// prodRisk: on production the ticket's risk is prod-write.
 		prodRisk bool
-		write    bool
+		// off: approved off production; on: approved on production.
+		off, on bool
 	}{
-		{"locksql write", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, true, true},
-		{"locksql write, flag only", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, false, true},
-		{"locksql ddl", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, true, true},
-		{"locksql ddl, flag only", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, false, true},
-		{"lockmq get", LockLockmq, ticket.KindAction, "get", ticket.RiskWrite, false, true},
-		{"lockmq publish", LockLockmq, ticket.KindAction, "publish", ticket.RiskWrite, false, true},
-		{"lockmq purge", LockLockmq, ticket.KindAction, "purge", ticket.RiskWrite, true, true},
-		{"lockmq delete", LockLockmq, ticket.KindAction, "delete", ticket.RiskWrite, false, true},
-		// A lockmq write verb whose ticket claims a read risk is a write all the same.
-		{"lockmq delete, risk read", LockLockmq, ticket.KindAction, "delete", ticket.RiskRead, false, true},
-		{"another lock's write action", "lockfile", ticket.KindAction, "put", ticket.RiskWrite, false, true},
-		{"another lock's write", "lockfile", ticket.KindWrite, "", ticket.RiskWrite, true, true},
-		{"locksql read", LockLocksql, ticket.KindRead, "", ticket.RiskRead, false, false},
-		{"locksql read of PII", LockLocksql, ticket.KindRead, "", ticket.RiskReadPII, false, false},
-		{"locksql connect", LockLocksql, ticket.KindConnect, "", ticket.RiskRead, false, false},
-		{"lockmq list", LockLockmq, ticket.KindAction, "list", ticket.RiskRead, false, false},
-		{"lockmq read", LockLockmq, ticket.KindAction, "read", ticket.RiskReadPII, false, false},
-		{"lockmq peek", LockLockmq, ticket.KindAction, "peek", ticket.RiskReadPII, false, false},
+		{"locksql read", LockLocksql, ticket.KindRead, "", ticket.RiskRead, false, true, true},
+		{"locksql read of PII", LockLocksql, ticket.KindRead, "", ticket.RiskReadPII, false, true, true},
+		{"locksql connect", LockLocksql, ticket.KindConnect, "", ticket.RiskRead, true, true, true},
+		{"locksql write", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, true, true, false},
+		{"locksql write, flag only", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, false, true, false},
+		{"locksql ddl", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, true, true, false},
+		{"locksql ddl, flag only", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, false, true, false},
+		// A read by its kind whose risk is a write is not a read.
+		{"kind read, risk write", LockLocksql, ticket.KindRead, "", ticket.RiskWrite, false, true, false},
+		{"lockmq list", LockLockmq, ticket.KindAction, "list", ticket.RiskRead, false, true, true},
+		{"lockmq read", LockLockmq, ticket.KindAction, "read", ticket.RiskReadPII, false, true, true},
+		{"lockmq peek", LockLockmq, ticket.KindAction, "peek", ticket.RiskReadPII, false, true, true},
+		{"lockmq get", LockLockmq, ticket.KindAction, "get", ticket.RiskWrite, false, true, false},
+		// The ticket's verb decides, not the risk its lock claims.
+		{"lockmq get, risk read-pii", LockLockmq, ticket.KindAction, "get", ticket.RiskReadPII, false, true, false},
+		{"lockmq publish", LockLockmq, ticket.KindAction, "publish", ticket.RiskWrite, false, true, false},
+		{"lockmq purge", LockLockmq, ticket.KindAction, "purge", ticket.RiskWrite, true, true, false},
+		{"lockmq delete", LockLockmq, ticket.KindAction, "delete", ticket.RiskWrite, false, true, false},
+		{"lockmq delete, risk read", LockLockmq, ticket.KindAction, "delete", ticket.RiskRead, false, true, false},
+		{"lockmq, a verb nobody knows", LockLockmq, ticket.KindAction, "shovel", ticket.RiskRead, false, true, false},
+		{"lockmq, no verb", LockLockmq, ticket.KindAction, "", ticket.RiskRead, false, true, false},
+		{"lockssh run", LockLockssh, ticket.KindAction, "run", ticket.RiskRead, false, true, true},
+		{"lockssh exec", LockLockssh, ticket.KindAction, "exec", ticket.RiskWrite, true, true, false},
+		{"lockssh exec, risk read", LockLockssh, ticket.KindAction, "exec", ticket.RiskRead, false, true, false},
+		{"lockfile put, risk read", "lockfile", ticket.KindAction, "put", ticket.RiskRead, false, true, false},
+		{"lockfile read", "lockfile", ticket.KindRead, "", ticket.RiskRead, false, true, true},
+		{"another lock's write", "lockfile", ticket.KindWrite, "", ticket.RiskWrite, true, true, false},
+		{"another lock's write action", "lockfile", ticket.KindAction, "put", ticket.RiskWrite, false, true, false},
+		{"an endpoint", "lockhttp", ticket.KindEndpoint, "POST", ticket.RiskWrite, false, true, false},
 	} {
 		for _, prod := range []bool{false, true} {
 			q := Request{Instance: "i", Lock: c.lock, V: ticket.VersionKinds, Kind: c.kind, Risk: c.risk,
@@ -591,14 +611,26 @@ func TestProductionFloor(t *testing.T) {
 			if prod && c.prodRisk {
 				q.Risk = ticket.RiskProdWrite
 			}
-			want := Approve
-			if prod && c.write {
-				want = Question
+			want := c.off
+			if prod {
+				want = c.on
 			}
-			if v := e.Decide(q); v.Outcome != want {
-				t.Errorf("%s, production %v: %+v, want outcome %v", c.name, prod, v, want)
+			if v := e.Decide(q); (v.Outcome == Approve) != want {
+				t.Errorf("%s, production %v: %+v, want approved %v", c.name, prod, v, want)
 			}
 		}
+	}
+	// The engine's defaults are floored as a rule is: a lockmq delete that
+	// claims a read risk, its rules unknown, is not default:action on
+	// production.
+	if v := e.Decide(Request{Instance: "i", Lock: LockLockmq + "x", V: ticket.VersionKinds, Kind: ticket.KindAction, Risk: ticket.RiskRead,
+		Subject: &ticket.Subject{Profile: "p", Verb: "delete"}, Production: true, Verified: true}); v.Outcome != Question {
+		t.Errorf("an unknown lock's delete of risk read on production: %+v", v)
+	}
+	e2 := NewEngine(Auto)
+	if v := e2.Decide(Request{Instance: "i", Lock: LockLockmq, V: ticket.VersionKinds, Kind: ticket.KindAction, Risk: ticket.RiskRead,
+		Subject: &ticket.Subject{Profile: "p", Verb: "delete"}, Production: true, Verified: true}); v.Outcome != Question {
+		t.Errorf("lockmq delete of risk read on production, rules unknown: %+v", v)
 	}
 	// A prod-write risk alone (a ticket not flagged) is floored too.
 	if v := e.Decide(Request{Instance: "i", Lock: LockLocksql, V: ticket.VersionKinds, Kind: ticket.KindWrite, Risk: ticket.RiskProdWrite,
@@ -607,7 +639,6 @@ func TestProductionFloor(t *testing.T) {
 	}
 	// A production profile's connection is not a write: lockkit gives it
 	// the prod-write risk class, and its own connect rule decides.
-	e.Rules = func(string, string, string) ProfileRules { return ProfileRules{ActConnect: Allow, ActWrite: Allow} }
 	if v := e.Decide(Request{Instance: "i", Lock: LockLocksql, V: ticket.VersionKinds, Kind: ticket.KindConnect, Risk: ticket.RiskProdWrite,
 		Subject: &ticket.Subject{Profile: "p"}, Production: true, Verified: true}); v.Outcome != Approve || v.Rule != "profile:connect" {
 		t.Errorf("production connect with connect = auto: %+v", v)

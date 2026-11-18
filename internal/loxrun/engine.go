@@ -11,6 +11,7 @@ package loxrun
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
@@ -316,11 +317,11 @@ func (e *Engine) Decide(r Request) Verdict {
 		// never-auto anyway).
 		v = Ask
 	}
-	if v == Allow && productionWrite(r, a, ra) {
-		// The production floor, for every lock: no rule approves a write
-		// on production (a locksql write or ddl, a lockmq get, publish,
-		// purge or delete, any action that is not a read). It waits for a
-		// human, in lox run as in lox live. Reads stay as their rule says.
+	if v == Allow && !productionAuto(r, a) {
+		// The production floor, for every lock, rule or default: on
+		// production the auto mode approves a read, a connect or an action
+		// known to only read, nothing else (productionAuto). The rest
+		// waits for a human, in lox run as in lox live.
 		v = Ask
 	}
 	// The company's ceiling: never looser than its action's cap.
@@ -382,38 +383,45 @@ func (e *Engine) Decide(r Request) Verdict {
 	return ask(string(ra), string(ra)+" is always asked")
 }
 
-// productionWrite reports a request that changes production: it is not a
-// connect and its risk is prod-write, or its ticket is flagged production and its action (a, or
-// the rule's ra) writes: a write, a schema change, a lockmq action that
-// consumes or changes the broker, any action whose risk is not a read.
-// The ticket's own flag is trusted here: it only makes a decision
-// stricter.
-func productionWrite(r Request, a, ra Action) bool {
-	if a == ActConnect {
-		// Opening a production profile's connection writes nothing: its
-		// lock gives it the prod-write risk class only to keep it off the
-		// chat facades (lockkit lazyconn), and signs it never-auto when
-		// its own connect rule is not auto. Every write that follows is
-		// floored by itself.
-		return false
-	}
-	if r.Risk == ticket.RiskProdWrite {
+// readVerbs are the verbs of an action ticket each lock is known to only
+// read with: lockmq's metadata and message reads (its get consumes),
+// lockssh's allow-listed command. A verb not listed, or of another lock,
+// is not known to be a read.
+var readVerbs = map[string][]string{
+	LockLockmq:  {"list", "read", "peek"},
+	LockLockssh: {"run"},
+}
+
+// productionAuto reports whether the auto mode may approve r at all: a
+// request off production (not flagged, and not of risk prod-write) always
+// may, as its rule says. On production it is a whitelist, read from the
+// ticket itself (its kind, its risk, its verb), never from the rule
+// action it maps to:
+//
+//   - a connect: opening a production profile's connection writes
+//     nothing; its lock gives it the prod-write risk class only to keep it
+//     off the chat facades (lockkit lazyconn), and signs it never-auto
+//     when its own connect rule is not auto;
+//   - a read (kind read) whose risk is a read's;
+//   - an action whose risk is a read's and whose verb is one of its
+//     lock's readVerbs.
+//
+// A write, a schema change, an endpoint, a policy change, an action that
+// consumes or changes anything (get, publish, purge, delete, exec, put),
+// one whose verb is unknown, and anything whose risk is not a read's are
+// never approved by the auto mode on production. The ticket's own flag
+// is trusted here: it only makes a decision stricter.
+func productionAuto(r Request, a Action) bool {
+	if !r.Production && r.Risk != ticket.RiskProdWrite {
 		return true
-	}
-	if !r.Production {
-		return false
 	}
 	switch a {
-	case ActWrite, ActDDL:
+	case ActConnect:
 		return true
+	case ActRead:
+		return readRisk(r.Risk)
 	case ActAction:
-		if !readRisk(r.Risk) {
-			return true
-		}
-	}
-	switch ra {
-	case ActWrite, ActDDL, "get", "publish", "purge", "delete":
-		return true
+		return readRisk(r.Risk) && slices.Contains(readVerbs[r.Lock], r.verb())
 	}
 	return false
 }
