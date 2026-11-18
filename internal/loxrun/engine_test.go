@@ -539,3 +539,83 @@ func TestMQRules(t *testing.T) {
 		}
 	}
 }
+
+// The production floor: no rule approves a write on production, for any
+// lock; it is asked (lox live leaves it to a human). The same rule
+// approves it off production, and production reads stay auto.
+func TestProductionFloor(t *testing.T) {
+	sqlAuto := SQLRules(func(string) string { return "auto" })
+	mqAuto := MQRules(func(string) string { return "auto" })
+	e := NewEngine(Auto)
+	e.Rules = func(lock, instance, profile string) ProfileRules {
+		switch lock {
+		case LockLocksql:
+			return sqlAuto
+		case LockLockmq:
+			return mqAuto
+		}
+		return ProfileRules{ActWrite: Allow, ActDDL: Allow, ActAction: Allow}
+	}
+	for _, c := range []struct {
+		name, lock string
+		kind       ticket.Kind
+		verb       string
+		// risk is the ticket's risk off production; on production a
+		// write is prod-write when prodRisk, else the flag alone says it.
+		risk     ticket.Risk
+		prodRisk bool
+		write    bool
+	}{
+		{"locksql write", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, true, true},
+		{"locksql write, flag only", LockLocksql, ticket.KindWrite, "", ticket.RiskWrite, false, true},
+		{"locksql ddl", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, true, true},
+		{"locksql ddl, flag only", LockLocksql, ticket.KindDDL, "", ticket.RiskWrite, false, true},
+		{"lockmq get", LockLockmq, ticket.KindAction, "get", ticket.RiskWrite, false, true},
+		{"lockmq publish", LockLockmq, ticket.KindAction, "publish", ticket.RiskWrite, false, true},
+		{"lockmq purge", LockLockmq, ticket.KindAction, "purge", ticket.RiskWrite, true, true},
+		{"lockmq delete", LockLockmq, ticket.KindAction, "delete", ticket.RiskWrite, false, true},
+		// A lockmq write verb whose ticket claims a read risk is a write all the same.
+		{"lockmq delete, risk read", LockLockmq, ticket.KindAction, "delete", ticket.RiskRead, false, true},
+		{"another lock's write action", "lockfile", ticket.KindAction, "put", ticket.RiskWrite, false, true},
+		{"another lock's write", "lockfile", ticket.KindWrite, "", ticket.RiskWrite, true, true},
+		{"locksql read", LockLocksql, ticket.KindRead, "", ticket.RiskRead, false, false},
+		{"locksql read of PII", LockLocksql, ticket.KindRead, "", ticket.RiskReadPII, false, false},
+		{"locksql connect", LockLocksql, ticket.KindConnect, "", ticket.RiskRead, false, false},
+		{"lockmq list", LockLockmq, ticket.KindAction, "list", ticket.RiskRead, false, false},
+		{"lockmq read", LockLockmq, ticket.KindAction, "read", ticket.RiskReadPII, false, false},
+		{"lockmq peek", LockLockmq, ticket.KindAction, "peek", ticket.RiskReadPII, false, false},
+	} {
+		for _, prod := range []bool{false, true} {
+			q := Request{Instance: "i", Lock: c.lock, V: ticket.VersionKinds, Kind: c.kind, Risk: c.risk,
+				Subject: &ticket.Subject{Profile: "p", Verb: c.verb}, Production: prod, Verified: true}
+			if prod && c.prodRisk {
+				q.Risk = ticket.RiskProdWrite
+			}
+			want := Approve
+			if prod && c.write {
+				want = Question
+			}
+			if v := e.Decide(q); v.Outcome != want {
+				t.Errorf("%s, production %v: %+v, want outcome %v", c.name, prod, v, want)
+			}
+		}
+	}
+	// A prod-write risk alone (a ticket not flagged) is floored too.
+	if v := e.Decide(Request{Instance: "i", Lock: LockLocksql, V: ticket.VersionKinds, Kind: ticket.KindWrite, Risk: ticket.RiskProdWrite,
+		Subject: &ticket.Subject{Profile: "p"}, Verified: true}); v.Outcome != Question {
+		t.Errorf("prod-write risk without the flag: %+v", v)
+	}
+	// A production profile's connection is not a write: lockkit gives it
+	// the prod-write risk class, and its own connect rule decides.
+	e.Rules = func(string, string, string) ProfileRules { return ProfileRules{ActConnect: Allow, ActWrite: Allow} }
+	if v := e.Decide(Request{Instance: "i", Lock: LockLocksql, V: ticket.VersionKinds, Kind: ticket.KindConnect, Risk: ticket.RiskProdWrite,
+		Subject: &ticket.Subject{Profile: "p"}, Production: true, Verified: true}); v.Outcome != Approve || v.Rule != "profile:connect" {
+		t.Errorf("production connect with connect = auto: %+v", v)
+	}
+	// A deny still refuses on production: the floor only turns auto into ask.
+	e.Rules = func(string, string, string) ProfileRules { return ProfileRules{ActWrite: Deny} }
+	if v := e.Decide(Request{Instance: "i", Lock: LockLocksql, V: ticket.VersionKinds, Kind: ticket.KindWrite, Risk: ticket.RiskProdWrite,
+		Subject: &ticket.Subject{Profile: "p"}, Production: true, Verified: true}); v.Outcome != Refuse {
+		t.Errorf("deny on production: %+v", v)
+	}
+}

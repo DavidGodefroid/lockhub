@@ -316,6 +316,13 @@ func (e *Engine) Decide(r Request) Verdict {
 		// never-auto anyway).
 		v = Ask
 	}
+	if v == Allow && productionWrite(r, a, ra) {
+		// The production floor, for every lock: no rule approves a write
+		// on production (a locksql write or ddl, a lockmq get, publish,
+		// purge or delete, any action that is not a read). It waits for a
+		// human, in lox run as in lox live. Reads stay as their rule says.
+		v = Ask
+	}
 	// The company's ceiling: never looser than its action's cap.
 	capped := ""
 	if cv, key := e.Caps.capOf(r, a, ra); key != "" && valueRank[cv] < valueRank[v] {
@@ -373,6 +380,42 @@ func (e *Engine) Decide(r Request) Verdict {
 		return ask("managed", "company policy: "+capped)
 	}
 	return ask(string(ra), string(ra)+" is always asked")
+}
+
+// productionWrite reports a request that changes production: it is not a
+// connect and its risk is prod-write, or its ticket is flagged production and its action (a, or
+// the rule's ra) writes: a write, a schema change, a lockmq action that
+// consumes or changes the broker, any action whose risk is not a read.
+// The ticket's own flag is trusted here: it only makes a decision
+// stricter.
+func productionWrite(r Request, a, ra Action) bool {
+	if a == ActConnect {
+		// Opening a production profile's connection writes nothing: its
+		// lock gives it the prod-write risk class only to keep it off the
+		// chat facades (lockkit lazyconn), and signs it never-auto when
+		// its own connect rule is not auto. Every write that follows is
+		// floored by itself.
+		return false
+	}
+	if r.Risk == ticket.RiskProdWrite {
+		return true
+	}
+	if !r.Production {
+		return false
+	}
+	switch a {
+	case ActWrite, ActDDL:
+		return true
+	case ActAction:
+		if !readRisk(r.Risk) {
+			return true
+		}
+	}
+	switch ra {
+	case ActWrite, ActDDL, "get", "publish", "purge", "delete":
+		return true
+	}
+	return false
 }
 
 // autoRule names the rule of an auto approval: the profile's own rule
