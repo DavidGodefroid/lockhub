@@ -24,6 +24,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/loxlive"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 	"github.com/DavidGodefroid/lockhub/internal/peer"
+	"github.com/DavidGodefroid/lockhub/internal/servelock"
 )
 
 // lox live enrol records what is applied only once the human typed each
@@ -84,7 +85,7 @@ func TestRunAndLiveExclude(t *testing.T) {
 	os.WriteFile(abs, []byte("version: 1\nhub:\n  image: ghcr.io/davidgodefroid/lockhub@sha256:"+strings.Repeat("1", 64)+"\n"), 0o644)
 	state := stateDir(family.Project(family.Workspace(abs)))
 
-	liveHeld, err := loxlive.Acquire(state, loxlive.Live)
+	liveHeld, err := servelock.Acquire(state, servelock.Live)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +101,7 @@ func TestRunAndLiveExclude(t *testing.T) {
 	}
 	var out, errb2 bytes.Buffer
 	code := run([]string{"live", "--file", abs, "--status-socket", filepath.Join(t.TempDir(), "s.sock")}, os.Stdin, &out, &errb2)
-	if code != 1 || !strings.Contains(errb2.String(), "lox live: lox run serves this workspace's decisions in a terminal") {
+	if code != 1 || !strings.Contains(errb2.String(), "lox live: a lox at a terminal holds this workspace") {
 		t.Fatalf("lox live next to lox run: %d %q", code, errb2.String())
 	}
 	release()

@@ -25,52 +25,6 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
-// lox run (shared) and lox live (exclusive) never serve one workspace
-// together; several lox run may, as before; the lock goes with its
-// holder.
-func TestServeLock(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "state")
-	run1, err := Acquire(state, Run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	run2, err := Acquire(state, Run)
-	if err != nil {
-		t.Fatalf("a second lox run: %v", err)
-	}
-	_, err = Acquire(state, Live)
-	var he *HeldError
-	if !errors.As(err, &he) || !strings.Contains(err.Error(), "lox run serves this workspace") {
-		t.Fatalf("lox live next to lox run: %v", err)
-	}
-	run1()
-	if _, err := Acquire(state, Live); err == nil {
-		t.Fatal("lox live started while a lox run still serves")
-	}
-	run2()
-	live, err := Acquire(state, Live)
-	if err != nil {
-		t.Fatalf("lox live once lox run stopped: %v", err)
-	}
-	_, err = Acquire(state, Run)
-	if !errors.As(err, &he) || !strings.Contains(err.Error(), "lox live serves this workspace") || !strings.Contains(err.Error(), "lox approve") ||
-		!strings.Contains(err.Error(), "pid ") {
-		t.Fatalf("lox run next to lox live: %v", err)
-	}
-	if _, err := Acquire(state, Live); !errors.As(err, &he) || !strings.Contains(err.Error(), "lox live serves this workspace") {
-		t.Fatalf("a second lox live: %v", err)
-	}
-	live()
-	again, err := Acquire(state, Run)
-	if err != nil {
-		t.Fatalf("lox run once lox live stopped: %v", err)
-	}
-	again()
-	if fi, err := os.Stat(state); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Errorf("state directory %v %v", fi, err)
-	}
-}
-
 // The health: serving only when it is enrolled, the hub answers and every
 // lock of the workspace serves.
 func TestTrackerHealth(t *testing.T) {

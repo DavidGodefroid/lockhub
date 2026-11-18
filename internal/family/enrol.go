@@ -1,6 +1,8 @@
 package family
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +32,11 @@ type Enrolment struct {
 	Version int `json:"version"`
 	// Fingerprint is Applied.Fingerprint when it was enrolled.
 	Fingerprint string `json:"fingerprint"`
+	// Inputs is the digest of the files the fingerprint derives from
+	// (inputsDigest): lockfamily.yaml's bytes, each lock type's profile,
+	// the Vault CA and the paired devices. An unattended start compares
+	// it first, before it runs or makes anything.
+	Inputs string `json:"inputs"`
 	// Images are the pinned images (by digest) cosign verified at the
 	// enrolment, each with the release its signature names ("" unknown).
 	Images map[string]string `json:"images"`
@@ -44,7 +51,9 @@ type Enrolment struct {
 // lox live enrol records.
 type Reviewed struct {
 	Fingerprint string
-	Images      map[string]string
+	// Inputs is the digest of the files it derives from (inputsDigest).
+	Inputs string
+	Images map[string]string
 	// Production: the instances whose profile is a production one, with
 	// its name.
 	Production map[string]string
@@ -52,7 +61,7 @@ type Reviewed struct {
 
 // NewEnrolment is the enrolment of r, by the human by at at.
 func NewEnrolment(r *Reviewed, by string, at time.Time) *Enrolment {
-	return &Enrolment{Version: 1, Fingerprint: r.Fingerprint, Images: maps.Clone(r.Images), Production: maps.Clone(r.Production),
+	return &Enrolment{Version: 1, Fingerprint: r.Fingerprint, Inputs: r.Inputs, Images: maps.Clone(r.Images), Production: maps.Clone(r.Production),
 		At: at.UTC().Truncate(time.Second), By: by}
 }
 
@@ -162,4 +171,33 @@ func AppliedFacts(state string) (map[string]Facts, error) {
 		out[n] = ProfileFacts(&Profile{Lines: lines[t]}, t, LockProfile(Lock{Type: t, Profile: prof[n]}))
 	}
 	return out, nil
+}
+
+// inputsDigest is one digest of the files a workspace's configuration is
+// read from, all on the host and none through the engine: the bytes of
+// lockfamily.yaml, each lock type's profile directory (its reviewed
+// copy's fingerprint), the Vault CA the locks trust and the paired
+// devices. Equal digests: the same files. The keys in the locks' volumes
+// and what the lock images derive from the profiles (mount plans, auto
+// rules) are not files: the review's fingerprint covers them, compared
+// once they were read.
+func (u *Up) inputsDigest(raw []byte, c *Config, profiles map[string]*Profile) (string, error) {
+	h := sha256.Sum256(raw)
+	lines := []string{"lockfamily.yaml sha256:" + hex.EncodeToString(h[:])}
+	for _, t := range types(c) {
+		lines = append(lines, "profile "+t+" "+profiles[t].Fingerprint)
+	}
+	if ca := c.vaultCAFile(); ca != "" {
+		_, sha, err := readCA(ca)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, "vault ca_file "+ca+" sha256:"+sha)
+	}
+	devices, err := ReadDevices(u.State)
+	if err != nil {
+		return "", fmt.Errorf("paired devices: %w", err)
+	}
+	lines = append(lines, devicesSummary(devices)...)
+	return fingerprint(lines), nil
 }

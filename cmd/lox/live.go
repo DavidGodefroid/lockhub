@@ -30,6 +30,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/loxlive"
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
 	"github.com/DavidGodefroid/lockhub/internal/route"
+	"github.com/DavidGodefroid/lockhub/internal/servelock"
 )
 
 // lox live is lox run's headless twin, for a host nobody sits at (a
@@ -97,7 +98,7 @@ func liveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	project := family.Project(family.Workspace(abs))
 	state := stateDir(project)
 	// lox run and lox live never serve one workspace together.
-	release, err := loxlive.Acquire(state, loxlive.Live)
+	release, err := servelock.Acquire(state, servelock.Live)
 	if err != nil {
 		fmt.Fprintln(stderr, "lox live:", err)
 		return 1
@@ -647,7 +648,7 @@ func liveEnrol(ctx context.Context, in *bufio.Reader, out io.Writer, probe func(
 // serveLock takes the workspace's serve lock for lox run, saying on
 // stderr when lox live holds it.
 func serveLock(abs string, stderr io.Writer) (func(), bool) {
-	release, err := loxlive.Acquire(stateDir(family.Project(family.Workspace(abs))), loxlive.Run)
+	release, err := servelock.Acquire(stateDir(family.Project(family.Workspace(abs))), servelock.Run)
 	if err != nil {
 		fmt.Fprintln(stderr, "lox run:", err)
 		return nil, false

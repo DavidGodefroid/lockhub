@@ -144,16 +144,27 @@ func readProfileRules(state, typ, inst string) (map[string]*LogRules, error) {
 // here: lox run asks a lockssh lock's tickets, and keeps its defaults for
 // the others.
 func AppliedProfileRules(state string, c *Config) map[string]map[string]*LogRules {
-	out := map[string]map[string]*LogRules{}
+	out, _ := ReadAppliedRules(state, c)
+	return out
+}
+
+// ReadAppliedRules is AppliedProfileRules with, by instance, why a lock's
+// applied rules could not be read (none applied, a file that is not lox
+// run's): lox live approves nothing for such a lock and says so.
+func ReadAppliedRules(state string, c *Config) (map[string]map[string]*LogRules, map[string]error) {
+	out, errs := map[string]map[string]*LogRules{}, map[string]error{}
 	for _, n := range c.Instances() {
 		t := c.Locks[n].Type
 		k := Kinds[t]
 		if !k.Rules || k.Mounts {
 			continue
 		}
-		if m, err := readProfileRules(state, t, n); err == nil {
-			out[n] = m
+		m, err := readProfileRules(state, t, n)
+		if err != nil {
+			errs[n] = err
+			continue
 		}
+		out[n] = m
 	}
-	return out
+	return out, errs
 }

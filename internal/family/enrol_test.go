@@ -3,11 +3,14 @@ package family
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DavidGodefroid/lockhub/internal/servelock"
 )
 
 // upLive is one Up of w with mod applied, its input closed (nobody
@@ -62,6 +65,9 @@ func TestEnrolmentRecord(t *testing.T) {
 			t.Errorf("image %s not recorded as verified: %v", img, e.Images)
 		}
 	}
+	if !strings.HasPrefix(e.Inputs, "sha256:") {
+		t.Errorf("no digest of the files: %+v", e)
+	}
 	if len(e.Images) != 3 || e.Production["crm-prod"] != "prod" || len(e.Production) != 1 || e.By != "david" {
 		t.Errorf("enrolment %+v", e)
 	}
@@ -107,6 +113,18 @@ func TestUpEnrolledStartsWithoutAHuman(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(w.dir, "run", "lockhub")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("runtime directory: %v %v", fi, err)
 	}
+	// The configuration it validated and started is its answer: lox live
+	// serves that, never the workspace's file read again.
+	_, u2, err := w.upLive(&fake{keys: f.keys}, func(u *Up) { u.Enrolled = e })
+	if err != nil || u2.Config == nil || len(u2.Config.Locks) != 2 || u2.Config.Locks["crm-prod"].Type != "locksql" {
+		t.Errorf("config returned: %+v %v", u2.Config, err)
+	}
+	// A profile rules command that fails this time (the engine was busy)
+	// changes nothing that was enrolled: the applied rules hold.
+	f4 := &fake{keys: f.keys, failing: "--no-deps rules-"}
+	if out, _, err := w.upLive(f4, func(u *Up) { u.Enrolled = e }); err != nil || !f4.ran("up -d --remove-orphans") {
+		t.Errorf("a transient profile rules failure: %v\n%s", err, out)
+	}
 	// It takes no flag of a maintenance run.
 	for name, mod := range map[string]func(*Up){
 		"pin":     func(u *Up) { u.Pin = "sha256:" + strings.Repeat("9", 64) },
@@ -123,6 +141,30 @@ func TestUpEnrolledStartsWithoutAHuman(t *testing.T) {
 // Anything that differs from the enrolment is not applied: nothing is
 // started, stopped or asked, and the error says an enrolment is needed.
 func TestUpEnrolledRefusesAChange(t *testing.T) {
+	// snapshot lists everything under the runtime and state directories.
+	snapshot := func(w ws) string {
+		var b strings.Builder
+		for _, d := range []string{"run", "state"} {
+			filepath.Walk(filepath.Join(w.dir, d), func(p string, fi os.FileInfo, err error) error {
+				if err == nil && filepath.Base(p) != "serve.lock" {
+					fmt.Fprintf(&b, "%s %v %d\n", p, fi.Mode(), fi.Size())
+				}
+				return nil
+			})
+		}
+		return b.String()
+	}
+	// early: the files differ from the enrolled ones, so not one command
+	// ran and nothing was made.
+	early := func(t *testing.T, w ws, before string, f *fake) {
+		t.Helper()
+		if len(f.calls) != 0 {
+			t.Errorf("commands ran for a configuration that is not the enrolled one: %v", f.calls)
+		}
+		if after := snapshot(w); after != before {
+			t.Errorf("something was made or changed:\nbefore:\n%s\nafter:\n%s", before, after)
+		}
+	}
 	needs := func(t *testing.T, err error, f *fake, out string) *NeedsEnrolmentError {
 		t.Helper()
 		var ne *NeedsEnrolmentError
@@ -144,11 +186,14 @@ func TestUpEnrolledRefusesAChange(t *testing.T) {
 		f := newFake()
 		e := w.enrol(t, f)
 		os.WriteFile(w.file, []byte(yamlConf("  routing:\n    crm-prod: [tty]\n")), 0o644)
+		os.RemoveAll(filepath.Join(w.dir, "run")) // a reboot
+		before := snapshot(w)
 		f2 := &fake{keys: f.keys}
 		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = e })
-		if ne := needs(t, err, f2, out); !strings.Contains(ne.Why, "lock crm-prod routed only to tty") {
+		if ne := needs(t, err, f2, out); !strings.Contains(ne.Why, "lockfamily.yaml") {
 			t.Errorf("why: %s", ne.Why)
 		}
+		early(t, w, before, f2)
 		ab, _ := os.ReadFile(filepath.Join(w.dir, "state", "applied.json"))
 		if !strings.Contains(string(ab), e.Fingerprint) {
 			t.Error("applied.json was rewritten")
@@ -159,9 +204,47 @@ func TestUpEnrolledRefusesAChange(t *testing.T) {
 		f := newFake()
 		e := w.enrol(t, f)
 		os.WriteFile(filepath.Join(w.dir, "projects", ".locksql", "config.toml"), []byte("[profiles.prod]\nhost = \"other.internal\"\n"), 0o644)
+		before := snapshot(w)
 		f2 := &fake{keys: f.keys}
 		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = e })
 		needs(t, err, f2, out)
+		early(t, w, before, f2)
+	})
+	t.Run("a device paired since", func(t *testing.T) {
+		w := newWS(t, yamlConf(""))
+		f := newFake()
+		e := w.enrol(t, f)
+		e2 := *e
+		e2.Inputs = "sha256:" + strings.Repeat("0", 64) // as if the devices file had changed
+		before := snapshot(w)
+		f2 := &fake{keys: f.keys}
+		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = &e2 })
+		needs(t, err, f2, out)
+		early(t, w, before, f2)
+	})
+	t.Run("an enrolment without the files' digest", func(t *testing.T) {
+		w := newWS(t, yamlConf(""))
+		f := newFake()
+		e := w.enrol(t, f)
+		e2 := *e
+		e2.Inputs = ""
+		before := snapshot(w)
+		f2 := &fake{keys: f.keys}
+		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = &e2 })
+		needs(t, err, f2, out)
+		early(t, w, before, f2)
+	})
+	// What only the engine tells (a lock's key in its volume) is compared
+	// after it was read: nothing is applied, started or stopped then either.
+	t.Run("a lock key that changed in its volume", func(t *testing.T) {
+		w := newWS(t, yamlConf(""))
+		f := newFake()
+		e := w.enrol(t, f)
+		f2 := &fake{keys: map[string]string{"hub": f.keys["hub"], "crm-prod": pubKey(), "events": f.keys["events"]}}
+		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = e })
+		if ne := needs(t, err, f2, out); !strings.Contains(ne.Why, "lock crm-prod key") {
+			t.Errorf("why: %s", ne.Why)
+		}
 	})
 	t.Run("an image not verified at enrolment", func(t *testing.T) {
 		w := newWS(t, yamlConf(""))
@@ -169,14 +252,20 @@ func TestUpEnrolledRefusesAChange(t *testing.T) {
 		e := w.enrol(t, f)
 		other := "ghcr.io/davidgodefroid/locksql@sha256:" + strings.Repeat("9", 64)
 		os.WriteFile(w.file, []byte(strings.Replace(yamlConf(""), sqlImg, other, 1)), 0o644)
+		// Even enrolled files: an image the enrolment did not verify.
+		_, pu, _ := w.upLive(&fake{keys: f.keys}, func(u *Up) { u.Probe = true })
+		e2 := *e
+		if pu.Inputs == "" {
+			t.Fatal("a probe did not digest the files")
+		}
+		e2.Inputs = pu.Inputs
+		before := snapshot(w)
 		f2 := &fake{keys: f.keys}
-		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = e })
+		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = &e2 })
 		if ne := needs(t, err, f2, out); !strings.Contains(ne.Why, other) {
 			t.Errorf("why: %s", ne.Why)
 		}
-		if f2.ran("cosign") {
-			t.Error("cosign ran: an unattended start verifies nothing online")
-		}
+		early(t, w, before, f2)
 	})
 	t.Run("applied again by a human, not enrolled again", func(t *testing.T) {
 		w := newWS(t, yamlConf(""))
@@ -186,19 +275,47 @@ func TestUpEnrolledRefusesAChange(t *testing.T) {
 		if out, err := w.up("y\n", &fake{keys: f.keys}); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
+		before := snapshot(w)
 		f2 := &fake{keys: f.keys}
 		out, _, err := w.upLive(f2, func(u *Up) { u.Enrolled = e })
-		if ne := needs(t, err, f2, out); !strings.Contains(ne.Why, "enrol") {
-			t.Errorf("why: %s", ne.Why)
-		}
+		needs(t, err, f2, out)
+		early(t, w, before, f2)
 	})
 	t.Run("nothing applied yet", func(t *testing.T) {
 		w := newWS(t, yamlConf(""))
 		f := newFake()
-		out, _, err := w.upLive(f, func(u *Up) { u.Enrolled = &Enrolment{Version: 1, Fingerprint: "sha256:x"} })
+		before := snapshot(w)
+		out, _, err := w.upLive(f, func(u *Up) { u.Enrolled = &Enrolment{Version: 1, Fingerprint: "sha256:x", Inputs: "sha256:y"} })
 		needs(t, err, f, out)
-		if len(f.calls) != 0 {
-			t.Errorf("commands ran in a workspace never applied: %v", f.calls)
-		}
+		early(t, w, before, f)
 	})
+}
+
+// Everything that applies takes the workspace's lock: nothing is applied
+// under a serving lox live, which holds it alone.
+func TestUpRefusedUnderLoxLive(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	if out, err := w.up("y\n", f); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	release, err := servelock.Acquire(filepath.Join(w.dir, "state"), servelock.Live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(w.file, []byte(yamlConf("  routing:\n    crm-prod: [tty]\n")), 0o644)
+	f2 := &fake{keys: f.keys}
+	out, err := w.up("y\n", f2)
+	var he *servelock.HeldError
+	if !errors.As(err, &he) || len(f2.calls) != 0 || strings.Contains(out, "Apply?") {
+		t.Fatalf("an apply under lox live: %v, calls %v\n%s", err, f2.calls, out)
+	}
+	// A probe and a dry run apply nothing: allowed (lox live enrol, lox doctor).
+	if _, u, err := w.upLive(&fake{keys: f.keys}, func(u *Up) { u.Probe = true }); err != nil || u.Same {
+		t.Errorf("a probe under lox live: same %v err %v", u.Same, err)
+	}
+	release()
+	if out, err := w.up("y\n", &fake{keys: f.keys}); err != nil {
+		t.Fatalf("once lox live stopped: %v\n%s", err, out)
+	}
 }

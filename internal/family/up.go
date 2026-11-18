@@ -26,6 +26,7 @@ import (
 	"github.com/DavidGodefroid/lockhub/internal/chatconf"
 	"github.com/DavidGodefroid/lockhub/internal/keys"
 	"github.com/DavidGodefroid/lockhub/internal/route"
+	"github.com/DavidGodefroid/lockhub/internal/servelock"
 )
 
 // Runner runs a command (docker, cosign) and returns its stdout.
@@ -154,16 +155,26 @@ type Up struct {
 	// sockets with group write (nil: confine.RuntimeGIDs).
 	RuntimeGIDs func() []int
 	// Reviewed is a probe's other answer, when it is Same: what is
-	// applied, for lox live enrol to record (enrol.go).
+	// applied, for lox live enrol to record (enrol.go). Inputs is the
+	// digest of the files a probe read (inputsDigest), Same or not.
 	Reviewed *Reviewed
+	Inputs   string
+	// Config is Do's answer once it applied: the configuration it
+	// validated and started (the locks it did not start left out), for
+	// what serves it next (lox live) not to read the workspace again.
+	Config *Config
 	// Enrolled makes Do lox live's unattended start (enrol.go): the
 	// runtime directory is made again and the stack brought up exactly
 	// as a human applied and enrolled it, with no question (In is never
 	// read), no upgrade and no online verification of the images cosign
-	// verified at the enrolment. Anything else (a configuration, a
-	// profile, a key or an image that differs, nothing applied yet) is
-	// not applied: nothing is started nor stopped, and Do returns a
-	// *NeedsEnrolmentError.
+	// verified at the enrolment. Files that differ from the enrolled
+	// ones (lockfamily.yaml, a profile, the CA, the devices), an image
+	// not verified at the enrolment, or nothing applied yet: Do returns
+	// a *NeedsEnrolmentError before it runs one command or makes one
+	// directory. What only the engine tells (a key in a lock's volume, a
+	// mount plan) is compared with the review's fingerprint once read,
+	// by setup containers that start nothing: a difference there applies,
+	// starts and stops nothing either.
 	Enrolled *Enrolment
 }
 
@@ -426,12 +437,27 @@ func (u *Up) Do(ctx context.Context) error {
 	appliedPath := filepath.Join(u.State, "applied.json")
 	facadesPath := filepath.Join(u.State, FacadesFile)
 	facadeMade := false
+	if u.Probe || u.Enrolled != nil {
+		if u.Inputs, err = u.inputsDigest(raw, c, profiles); err != nil {
+			return err
+		}
+	}
 	if u.Enrolled != nil {
-		// Before anything is made or run: a workspace no human applied
-		// has nothing to start unattended.
+		// Before anything is made or run. A workspace no human applied
+		// has nothing to start unattended; files that are not the
+		// enrolled ones, or an image the enrolment did not verify, are
+		// not even looked at through the engine.
 		for _, f := range []string{appliedPath, hubPubPath, facadesPath} {
 			if _, err := os.Stat(f); err != nil {
 				return needsEnrolment("nothing was applied in this workspace yet (no %s)", filepath.Base(f))
+			}
+		}
+		if u.Enrolled.Inputs == "" || u.Enrolled.Inputs != u.Inputs {
+			return needsEnrolment("the workspace's files are not the enrolled ones (lockfamily.yaml, a lock's profile, the Vault CA or the paired devices changed)")
+		}
+		for _, ref := range append([]string{c.Hub.Image}, lockImages(c)...) {
+			if _, ok := u.Enrolled.Images[ref]; !ok {
+				return needsEnrolment("image %s was not verified at the enrolment", ref)
 			}
 		}
 	}
@@ -443,6 +469,15 @@ func (u *Up) Do(ctx context.Context) error {
 			return nil
 		}
 	} else {
+		if !u.DryRun && u.Enrolled == nil {
+			// Nothing is applied under a serving lox live: it holds the
+			// workspace alone (it holds it for its own start).
+			release, err := servelock.Acquire(u.State, servelock.Run)
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
 		for _, d := range []string{u.State, hubData, facadeKeys} {
 			if err := privateDir(d); err != nil {
 				return err
@@ -793,6 +828,12 @@ func (u *Up) Do(ctx context.Context) error {
 				return cerr
 			}
 			pl.Rules = &LogRules{Profile: pl.Profile, Unknown: "locklog profile rules failed"}
+			// An unattended start: the profile is the enrolled one, so
+			// the rules applied from it hold. A command that failed this
+			// once does not undo an enrolment.
+			if ap, aerr := ReadLogPlan(u.State, n); u.Enrolled != nil && aerr == nil && ap.Rules != nil {
+				pl.Rules = ap.Rules
+			}
 		} else {
 			pl.Rules = DeriveLogRules(ro, pl.Profile)
 		}
@@ -827,6 +868,10 @@ func (u *Up) Do(ctx context.Context) error {
 				return cerr
 			}
 			sshRules[n] = map[string]*LogRules{l.Profile: {Lock: l.Type, Profile: l.Profile, Unknown: l.Type + " profile rules failed"}}
+			// As for locklog above: the applied rules of the enrolled profile.
+			if ap, aerr := readProfileRules(u.State, l.Type, n); u.Enrolled != nil && aerr == nil {
+				sshRules[n] = ap
+			}
 		} else {
 			sshRules[n] = DeriveProfileRules(ro, l.Type, l.Profile)
 		}
@@ -943,7 +988,7 @@ func (u *Up) Do(ctx context.Context) error {
 	if u.Probe {
 		u.Same = prev.Fingerprint == fp && prev.ManagedFingerprint == m.Fingerprint()
 		if u.Same {
-			u.Reviewed = &Reviewed{Fingerprint: fp, Images: tags, Production: productionProfiles(c, profiles)}
+			u.Reviewed = &Reviewed{Fingerprint: fp, Inputs: u.Inputs, Images: tags, Production: productionProfiles(c, profiles)}
 		}
 		return nil
 	}
@@ -1343,10 +1388,20 @@ func (u *Up) Do(ctx context.Context) error {
 	for _, l := range devNotes {
 		fmt.Fprintln(u.Out, l)
 	}
+	u.Config = c
 	if len(c.Locks) > 0 {
 		fmt.Fprintln(u.Out, "Each lock's console asks for its policy (first start, or loosened) and the credentials it does not take from Vault: lox run shows each question in a card and types your answer at the console's terminal (lox attach NAME reaches it too)")
 	}
 	return nil
+}
+
+// lockImages are the images of c's locks, by instance order.
+func lockImages(c *Config) []string {
+	var out []string
+	for _, n := range c.Instances() {
+		out = append(out, c.Locks[n].Image)
+	}
+	return out
 }
 
 // productionProfiles are the locks of c that serve a production profile,
