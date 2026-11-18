@@ -421,7 +421,10 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 		}
 	}
 	// Start over when the enrolment changes or on SIGHUP.
+	watched := make(chan struct{})
+	defer func() { cancel(); <-watched }()
 	go func() {
+		defer close(watched)
 		poll := time.NewTicker(liveEnrolPoll)
 		defer poll.Stop()
 		for {

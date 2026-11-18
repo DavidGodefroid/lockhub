@@ -1,0 +1,60 @@
+# lox live as a system service, under a Unix user of its own.
+# docs/lox-live.md explains every line; adapt the paths, then:
+#
+#   sudo install -m 0644 contrib/systemd/lox-live.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now lox-live
+#
+# Before the first start, as that user, at a terminal: lox run (review and
+# apply, answer the consoles), then lox live enrol.
+
+[Unit]
+Description=lox live: unattended decisions for the Lock Family (rules only, fail closed)
+Documentation=https://github.com/DavidGodefroid/lockhub/blob/main/docs/lox-live.md
+# The stack runs in the container engine: after it, and after the network
+# (the locks' backends, Vault). A rootless engine: its own unit instead.
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Its own user: whoever can open the hub's facade socket can decide, so
+# nothing else runs as it. It owns the workspace and reaches the engine.
+User=lox-live
+Group=lox-live
+# The group of the status socket's reader (the DutyDesk daemon's user is a
+# member; lox-live too, to give the socket to it).
+SupplementaryGroups=docker lox-status
+WorkingDirectory=/srv/lockfamily/workspace
+
+# The runtime directory (the hub's facade socket lives in its lockhub/,
+# 0700) and the status socket's own directory, made again at each start:
+# /run is wiped at reboot. Kept across restarts for a maintenance shell.
+RuntimeDirectory=lox-live lox-live-status
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+Environment=XDG_RUNTIME_DIR=/run/lox-live
+Environment=HOME=/var/lib/lox-live
+# Only the status group enters the status socket's directory.
+ExecStartPre=/usr/bin/chgrp lox-status /run/lox-live-status
+
+ExecStart=/usr/local/bin/lox live --status-socket /run/lox-live-status/status.sock --status-group lox-status
+# SIGHUP: check the enrolment and start over.
+ExecReload=/bin/kill -HUP $MAINPID
+# SIGTERM ends it cleanly (exit 0): nothing is decided any more, the stack
+# stays up, tickets wait at the hub. It comes back after a failure.
+Restart=on-failure
+RestartSec=10
+
+# It needs the engine's socket, its home (state, ~/.vault-token) and the
+# workspace: little else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lox-live /srv/lockfamily/workspace
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

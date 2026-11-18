@@ -128,5 +128,10 @@ gateway forwards to its database, broker or source, and its Vault when it has
 port). The review shows the allowlist; `lox doctor` checks it. See
 [lox-run.md](lox-run.md#egress-each-lock-reaches-its-reviewed-endpoints-only).
 
+On an unattended host, [`lox live`](lox-live.md) is `lox run` without the
+terminal: a service that decides what the written rules decide (facade
+`live` in the audit) and leaves every other ticket to you, on the phone or
+in `lox approve`.
+
 `lox up` is deprecated: it prints "use lox run" and only starts the hub and
 the locks. See [lox-run.md](lox-run.md).

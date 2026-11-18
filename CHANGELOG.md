@@ -5,6 +5,60 @@ digest).
 
 ## Unreleased
 
+### Added
+
+- `lox live`: `lox run` without a human, for a service (systemd, no
+  terminal, back by itself after a reboot). It starts the stack exactly as
+  a human applied and enrolled it (`lox live enrol`, at a terminal, after
+  `lox run`): no review answered, no upgrade, no cosign for the images
+  verified at the enrolment; a configuration that differs, or no enrolment,
+  applies nothing: it says `needs_enrolment` and waits (the enrolment file,
+  `SIGHUP`, every ten minutes). It serves the decisions the profiles' auto
+  rules take, under a facade of its own, `live`, and leaves every other
+  ticket pending for a human's facade (the phone, `lox approve`). It answers
+  no console question but a `vault_token: cli` lock's Vault token (again at
+  each expiry or restart; run Vault Agent with AppRole and a `~/.vault-token`
+  sink). Fail closed: stopped, nothing is decided. `docs/lox-live.md`,
+  `contrib/systemd/lox-live.service`.
+- The hub takes decisions of facade `live`: an approval only by an auto
+  rule, routed where the terminal is, never for a never-auto ticket, a typed
+  name, typed values or a version-1 ticket, never a reveal nor a renewal; a
+  withdrawal in `lox live`. `GET /v1/hub` answers `"live": true`; lox live
+  serves no hub that does not (an older image: `lox run` upgrades it).
+  `lox audit show` and `lox audit --json` name the facade of a rule's
+  decision (`tty`, `live`).
+- lox live's status socket (`--status-socket`, `--status-group`; HTTP/1.1
+  JSON on a unix socket, 0660), read-only, for another Unix user: `GET
+  /v1/health`, `GET /v1/tickets/{instance}/{id}`, and `POST
+  /v1/tickets/{instance}/{id}/withdraw` for a pending ticket raised by a
+  `dutydesk:` agent (else 403), audited. Nothing on it decides. `lox live
+  status [--json]` prints the same health (exit 0: serving).
+- `lox run` reads the per-profile auto rules of locksql and lockmq
+  (locksql#185, lockmq#49), as it read locklog's and lockssh's: `<type>
+  profile rules --json` in the lock's image, on the reviewed copy, shown in
+  the review and applied in its engine (locksql: `connect`, `read`, `write`,
+  `ddl`; lockmq: `connect` and each action by its ticket's verb). Rules it
+  cannot read leave the defaults for these two locks.
+
+### Changed
+
+- The first `lox run` after this release shows the auto rules of the
+  locksql and lockmq locks as new lines of the review and asks `Apply?`
+  once: they are now part of what is reviewed.
+- `lox run` refuses to start while `lox live` serves the workspace, and
+  `lox live` while a `lox run` does (`serve.lock` in the state directory).
+  Several `lox run` still serve together.
+- `lox tickets --json` names each verified ticket's agent (`Agent`).
+
+### Security
+
+- No rule approves a write on production: a profile's `auto` on a ticket of
+  risk `prod-write`, or on a write, a DDL, a lockmq
+  `get`/`publish`/`purge`/`delete` or any non-read action of a production
+  ticket, is asked (a human decides; lox live leaves it pending), for every
+  lock type, in the engine. Reads, and a production profile's connect, keep
+  their rule.
+
 ### Fixed
 
 - Docs and `lox` help texts say what the code does (lockhub#220): a host
