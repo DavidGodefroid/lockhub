@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,45 +27,51 @@ import (
 )
 
 // The health: serving only when it is enrolled, the hub answers and every
-// lock of the workspace serves.
+// lock of the workspace serves. Its detail is one fixed word: nothing of
+// the configuration, a console's prompt or a command's error reaches the
+// status socket.
 func TestTrackerHealth(t *testing.T) {
 	tr := NewTracker()
-	if h := tr.Health(); h.Serving || h.Locks == nil || h.Detail == "" {
+	if h := tr.Health(); h.Serving || h.Locks == nil || h.Detail != DetailStarting {
 		t.Fatalf("before the start: %+v", h)
 	}
-	tr.NeedsEnrolment([]string{"db", "mq"}, "the configuration differs")
+	tr.NeedsEnrolment([]string{"db", "mq"})
 	h := tr.Health()
-	if h.Serving || h.Locks["db"] != NeedsEnrolment || h.Locks["mq"] != NeedsEnrolment || !strings.Contains(h.Detail, "the configuration differs") {
+	if h.Serving || h.Locks["db"] != NeedsEnrolment || h.Locks["mq"] != NeedsEnrolment || h.Detail != DetailEnrolment {
 		t.Fatalf("needs enrolment: %+v", h)
 	}
+	tr.Failed([]string{"db", "mq"})
+	if h := tr.Health(); h.Serving || h.Locks["db"] != Down || h.Detail != DetailStartFailed {
+		t.Fatalf("start failed: %+v", h)
+	}
 	tr.Started([]string{"db", "mq"})
-	if h := tr.Health(); h.Serving || h.Locks["db"] != Down {
+	if h := tr.Health(); h.Serving || h.Locks["db"] != Down || h.Detail != DetailHubDown {
 		t.Fatalf("started, nothing known yet: %+v", h)
 	}
-	tr.Hub(nil)
+	tr.Hub("")
 	tr.Console("db", loxrun.ConsoleStatus{State: loxrun.ConsoleServing})
-	tr.Console("mq", loxrun.ConsoleStatus{State: loxrun.ConsoleWaiting, Blocked: loxrun.BlockedSecret, Detail: "its console asks a password"})
+	tr.Console("mq", loxrun.ConsoleStatus{State: loxrun.ConsoleWaiting, Blocked: loxrun.BlockedSecret, Detail: "its console asks Password for app@db.internal:"})
 	h = tr.Health()
-	if h.Serving || h.Locks["db"] != Serving || h.Locks["mq"] != MissingSecret || !strings.Contains(h.Detail, "mq") {
+	if h.Serving || h.Locks["db"] != Serving || h.Locks["mq"] != MissingSecret || h.Detail != DetailLocks {
 		t.Fatalf("one lock blocked: %+v", h)
 	}
 	tr.Console("mq", loxrun.ConsoleStatus{State: loxrun.ConsoleServing})
-	if h := tr.Health(); !h.Serving || h.Detail != "serving" {
+	if h := tr.Health(); !h.Serving || h.Detail != DetailServing {
 		t.Fatalf("all serving: %+v", h)
 	}
 	// A lock pinned to a state whatever its console says (credentials: ask).
-	tr.Fixed("db", MissingSecret, "its profile's credentials are asked")
+	tr.Fixed("db", MissingSecret)
 	tr.Console("db", loxrun.ConsoleStatus{State: loxrun.ConsoleServing})
 	if h := tr.Health(); h.Serving || h.Locks["db"] != MissingSecret {
 		t.Fatalf("fixed: %+v", h)
 	}
 	tr.Started([]string{"db", "mq"})
 	tr.Console("db", loxrun.ConsoleStatus{State: loxrun.ConsoleServing})
-	tr.Console("mq", loxrun.ConsoleStatus{State: loxrun.ConsoleStopped, Detail: "exit 1"})
-	tr.Hub(errors.New("connection refused"))
+	tr.Console("mq", loxrun.ConsoleStatus{State: loxrun.ConsoleStopped, Detail: "exit 1: dial tcp 10.0.0.7:5432"})
+	tr.Hub(DetailHubOld)
 	h = tr.Health()
-	if h.Serving || h.Locks["mq"] != Down || !strings.Contains(h.Detail, "hub") {
-		t.Fatalf("hub down: %+v", h)
+	if h.Serving || h.Locks["mq"] != Down || h.Detail != DetailHubOld {
+		t.Fatalf("hub too old: %+v", h)
 	}
 	for _, c := range []struct {
 		st   loxrun.ConsoleStatus
@@ -82,9 +89,14 @@ func TestTrackerHealth(t *testing.T) {
 			t.Errorf("%+v: %s, want %s", c.st, got, c.want)
 		}
 	}
-	tr.Stopped("lox live is stopping")
-	if h := tr.Health(); h.Serving || h.Locks["db"] != Down {
+	tr.Stopped()
+	if h := tr.Health(); h.Serving || h.Locks["db"] != Down || h.Detail != DetailStopped {
 		t.Fatalf("stopped: %+v", h)
+	}
+	// Whatever it was told, the detail is one of the fixed words.
+	words := []string{DetailServing, DetailStarting, DetailEnrolment, DetailStartFailed, DetailStopped, DetailHubDown, DetailHubOld, DetailLocks}
+	if !slices.Contains(words, tr.Health().Detail) {
+		t.Errorf("detail %q", tr.Health().Detail)
 	}
 }
 
@@ -191,7 +203,7 @@ func TestStatusSocket(t *testing.T) {
 	near := h.push(t, priv, pub, "dutydesk")
 	tr := NewTracker()
 	tr.Started([]string{"shop"})
-	tr.Hub(nil)
+	tr.Hub("")
 	tr.Console("shop", loxrun.ConsoleStatus{State: loxrun.ConsoleServing})
 	c, sock := serve(t, &Status{Tracker: tr, Hub: h, LockKeys: func() map[string]ed25519.PublicKey { return map[string]ed25519.PublicKey{"shop": pub} }})
 
@@ -205,7 +217,7 @@ func TestStatusSocket(t *testing.T) {
 	}
 	var got Health
 	json.Unmarshal([]byte(body), &got)
-	if !got.Serving || got.Locks["shop"] != "serving" || got.Pending != 3 || got.Detail == "" {
+	if !got.Serving || got.Locks["shop"] != "serving" || got.Pending != 3 || got.Detail != "serving" {
 		t.Fatalf("health: %s", body)
 	}
 	for _, k := range []string{"serving", "locks", "pending", "detail"} {
@@ -222,6 +234,20 @@ func TestStatusSocket(t *testing.T) {
 	}
 	if code, _ := do(t, c, "GET", "/v1/tickets/shop/NOPE"); code != 404 {
 		t.Errorf("unknown ticket: %d", code)
+	}
+
+	// A path that is not an instance and an id never reaches the hub.
+	h.mu.Lock()
+	h.states["a/b/x"], h.states["../shop/"+mine], h.states["shop/a b"] = "pending", "pending", "pending"
+	h.mu.Unlock()
+	for _, p := range []string{"/v1/tickets/a%2Fb/x", "/v1/tickets/..%2Fshop/" + mine, "/v1/tickets/shop/a%20b", "/v1/tickets/shop/%2E%2E",
+		"/v1/tickets/shop/" + mine + "%2Fwithdraw", "/v1/tickets/shop/" + mine + "%3Fx=1", "/v1/tickets/%00/x", "/v1/tickets/shop/" + strings.Repeat("a", 200)} {
+		if code, body := do(t, c, "GET", p); code != 404 {
+			t.Errorf("GET %s: %d %s", p, code, body)
+		}
+		if code, body := do(t, c, "POST", p+"/withdraw"); code != 404 {
+			t.Errorf("POST %s/withdraw: %d %s", p, code, body)
+		}
 	}
 
 	// Only a pending ticket of a dutydesk: agent is withdrawn.
@@ -267,7 +293,7 @@ func TestStatusSocket(t *testing.T) {
 	h.mu.Unlock()
 	code, body = do(t, c, "GET", "/v1/health")
 	json.Unmarshal([]byte(body), &got)
-	if code != 200 || got.Serving || !strings.Contains(got.Detail, "hub") {
+	if code != 200 || got.Serving || got.Detail != DetailHubDown {
 		t.Errorf("health with the hub down: %d %s", code, body)
 	}
 	if code, _ := do(t, c, "GET", "/v1/tickets/shop/"+mine); code != 503 {
@@ -295,6 +321,32 @@ func TestListen(t *testing.T) {
 		t.Fatalf("over a stale socket: %v", err)
 	}
 	ln.Close()
+	// A directory others can write, or a link to one, is refused: the
+	// socket could be swapped there.
+	open := filepath.Join(dir, "open")
+	os.Mkdir(open, 0o700)
+	os.Chmod(open, 0o777)
+	if _, err := Listen(filepath.Join(open, "s.sock"), ""); err == nil {
+		t.Error("a world-writable directory was accepted")
+	}
+	os.Chmod(open, 0o770)
+	if _, err := Listen(filepath.Join(open, "s.sock"), ""); err == nil {
+		t.Error("a group-writable directory was accepted")
+	}
+	os.Symlink(filepath.Join(dir, "sub"), filepath.Join(dir, "link"))
+	if _, err := Listen(filepath.Join(dir, "link", "s.sock"), ""); err == nil {
+		t.Error("a link as the socket's directory was accepted")
+	}
+	// A link where the socket goes is not followed nor replaced.
+	target := filepath.Join(dir, "target")
+	os.WriteFile(target, []byte("x"), 0o600)
+	os.Symlink(target, filepath.Join(dir, "sub", "l.sock"))
+	if _, err := Listen(filepath.Join(dir, "sub", "l.sock"), ""); err == nil {
+		t.Error("a link at the socket's path was accepted")
+	}
+	if fi, _ := os.Stat(target); fi == nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("the link's target changed: %v", fi)
+	}
 	f := filepath.Join(dir, "file")
 	os.WriteFile(f, []byte("x"), 0o600)
 	if _, err := Listen(f, ""); err == nil {

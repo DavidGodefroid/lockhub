@@ -56,6 +56,9 @@ var (
 	// tried again after liveRetry, doubled up to liveRetryMax.
 	liveRetry    = 15 * time.Second
 	liveRetryMax = 2 * time.Minute
+	// liveHubOldRetry is how often a hub that does not take facade live
+	// is asked again whether it does (lox run upgrades it).
+	liveHubOldRetry = time.Minute
 )
 
 func liveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
@@ -113,20 +116,21 @@ func liveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 
 	out := &lineWriter{w: stdout}
 	l := &live{abs: abs, state: state, project: project, sock: *sock, keysDir: *keysDir, out: out, stderr: stderr,
-		tracker: loxlive.NewTracker(), hub: approve.Dial(*sock), managed: mf, reload: hup}
-	l.start = func(ctx context.Context, e *family.Enrolment) error {
+		tracker: loxlive.NewTracker(), hub: approve.Dial(*sock), reload: hup, loadManaged: family.LoadManaged, vaultStamp: vaultTokenStamp}
+	l.start = func(ctx context.Context, e *family.Enrolment) (*family.Config, error) {
 		u := &family.Up{File: abs, State: state, Runtime: runtimeDir(), Facades: family.FacadeKeysDir(stateHome()),
 			User: hubUser(ctx, family.Exec{Stderr: io.Discard}), Run: family.QuietExec{Verbose: *verbose, Stderr: stderr},
 			Out: prefixWriter{out, "lox live: start: "}, Enrolled: e}
-		return u.Do(ctx)
+		if err := u.Do(ctx); err != nil {
+			return nil, err
+		}
+		return u.Config, nil
 	}
 	l.consoles = func(ctx context.Context, locks []lockconsoles.Lock) (loxrun.Consoles, func()) {
 		b := lockconsoles.Start(ctx, lockconsoles.Exec{Compose: composeArgs(project, state)}, locks)
 		return b, b.Close
 	}
-	if mf != nil {
-		l.logf("%s", mf.File.Describe())
-	}
+	_ = mf // read again at each start (cycle): this one only refuses a bad file early
 
 	// The status socket answers from now on, whatever state lox live is in.
 	st := &loxlive.Status{Tracker: l.tracker, Hub: l.hub, Log: l.logf, LockKeys: func() map[string]ed25519.PublicKey {
@@ -150,7 +154,7 @@ func liveCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	l.logf("status socket %s (read-only: health, ticket states, withdrawal of %s tickets)", *statusSock, loxlive.AgentPrefix)
 
 	l.loop(ctx)
-	l.tracker.Stopped("lox live stopped")
+	l.tracker.Stopped()
 	l.logf("stopped: no decision is served any more; tickets wait at the hub (fail closed)")
 	return 0
 }
@@ -193,13 +197,22 @@ type live struct {
 	stderr              io.Writer
 	tracker             *loxlive.Tracker
 	hub                 *approve.Client
-	managed             *family.Managed
 	// reload ticks on SIGHUP: check and start again.
 	reload <-chan os.Signal
-	// start brings the enrolled stack up (family.Up with Enrolled);
-	// consoles follows the locks' consoles until its stop is called.
-	start    func(ctx context.Context, e *family.Enrolment) error
+	// start brings the enrolled stack up (family.Up with Enrolled) and
+	// returns the configuration it validated and started: what is
+	// served, never the workspace's file read again. consoles follows
+	// the locks' consoles until its stop is called.
+	start    func(ctx context.Context, e *family.Enrolment) (*family.Config, error)
 	consoles func(ctx context.Context, locks []lockconsoles.Lock) (loxrun.Consoles, func())
+	// loadManaged reads the company's managed file (family.LoadManaged):
+	// again at each start and at each look for a change, so that a
+	// tightened ceiling is served at once. vaultStamp tells one host
+	// Vault token from the next.
+	loadManaged func(ctx context.Context) (*family.Managed, error)
+	vaultStamp  func() string
+	// hubOld is when the hub last said it does not take facade live.
+	hubOld time.Time
 	// lastWhy is the last state logged: said once, not at every check.
 	lastWhy string
 }
@@ -216,13 +229,37 @@ func (l *live) say(why string) {
 	}
 }
 
-// enrolStamp tells one enrolment file from the next.
-func enrolStamp(state string) string {
-	fi, err := os.Stat(filepath.Join(state, family.EnrolmentFile))
+// fileStamp tells one version of a file from the next.
+func fileStamp(path string) string {
+	fi, err := os.Lstat(path)
 	if err != nil {
 		return "none"
 	}
-	return fmt.Sprintf("%d/%d", fi.ModTime().UnixNano(), fi.Size())
+	return fmt.Sprintf("%d/%d/%v", fi.ModTime().UnixNano(), fi.Size(), fi.Mode())
+}
+
+// vaultTokenStamp tells one host Vault token file from the next (Vault
+// Agent's sink, ~/.vault-token).
+func vaultTokenStamp() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "none"
+	}
+	return fileStamp(filepath.Join(home, ".vault-token"))
+}
+
+// stamp tells one state of what lox live serves from the next: the
+// enrolment (lox live enrol), what is applied (a lox at a terminal
+// applied again: the enrolment is checked again), and the company's
+// managed file (its ceilings on the auto rules).
+func (l *live) stamp(ctx context.Context) string {
+	managed := "none"
+	if m, err := l.loadManaged(ctx); err != nil {
+		managed = "refused"
+	} else if m != nil {
+		managed = m.Fingerprint()
+	}
+	return fileStamp(filepath.Join(l.state, family.EnrolmentFile)) + " " + fileStamp(filepath.Join(l.state, "applied.json")) + " " + managed
 }
 
 // loop checks, starts and serves until ctx ends: a workspace that needs
@@ -233,7 +270,7 @@ func enrolStamp(state string) string {
 func (l *live) loop(ctx context.Context) {
 	retry := liveRetry
 	for ctx.Err() == nil {
-		stamp := enrolStamp(l.state)
+		stamp := l.stamp(ctx)
 		wait, err := l.cycle(ctx, stamp)
 		if ctx.Err() != nil {
 			return
@@ -270,23 +307,29 @@ func (l *live) waitChange(ctx context.Context, stamp string, max time.Duration) 
 			l.logf("SIGHUP: checking again")
 			return
 		case <-poll.C:
-			if enrolStamp(l.state) != stamp {
-				l.logf("the enrolment changed: checking again")
+			if l.stamp(ctx) != stamp {
+				l.logf("the enrolment, what is applied or the managed file changed: checking again")
 				return
 			}
 		}
 	}
 }
 
-// instances are the workspace's lock instances, for the health (nil
-// when lockfamily.yaml does not load).
+// instances are the lock instances last applied in this workspace, for
+// the health of a lox live that started nothing: from the host-only
+// applied state, never from the workspace's file.
 func (l *live) instances() []string {
-	c, err := family.Load(l.abs)
-	if err != nil {
-		return nil
+	facts, _ := family.AppliedFacts(l.state)
+	out := make([]string, 0, len(facts))
+	for n := range facts {
+		out = append(out, n)
 	}
-	return c.Instances()
+	slices.Sort(out)
+	return out
 }
+
+// errHubOld is a hub that does not take facade live.
+var errHubOld = errors.New("the hub's image predates lox live (it takes no decision of facade live): upgrade it with lox run at a terminal, then lox live enrol")
 
 // cycle is one check, start and service. It returns nil when the
 // session ended to start over, a *family.NeedsEnrolmentError when
@@ -295,15 +338,21 @@ func (l *live) instances() []string {
 func (l *live) cycle(ctx context.Context, stamp string) (time.Duration, error) {
 	insts := l.instances()
 	fail := func(err error) (time.Duration, error) {
+		// Why goes to the journal; the health names the state only.
 		var ne *family.NeedsEnrolmentError
 		if errors.As(err, &ne) {
-			l.tracker.NeedsEnrolment(insts, ne.Why)
+			l.tracker.NeedsEnrolment(insts)
 			l.say("needs enrolment, nothing started: " + ne.Why + " (lox run at a terminal, then lox live enrol)")
 		} else {
-			l.tracker.Failed(insts, err.Error())
+			l.tracker.Failed(insts)
 			l.say("not started: " + err.Error())
 		}
 		return 0, err
+	}
+	// The company's managed file, as it is now: refused, nothing runs.
+	mf, err := l.loadManaged(ctx)
+	if err != nil {
+		return fail(err)
 	}
 	enrol, err := family.ReadEnrolment(l.state)
 	if err != nil {
@@ -316,14 +365,18 @@ func (l *live) cycle(ctx context.Context, stamp string) (time.Duration, error) {
 	if err := family.CheckFacadeHub(ctx, l.hub, l.sock, l.state); errors.As(err, &fe) {
 		return fail(err)
 	}
-	if err := l.start(ctx, enrol); err != nil {
+	c, err := l.start(ctx, enrol)
+	if err != nil {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
 		}
 		return fail(err)
 	}
+	if c == nil {
+		return fail(errors.New("the start returned no configuration"))
+	}
 	l.lastWhy = ""
-	err = l.serve(ctx, stamp)
+	err = l.serve(ctx, stamp, c, mf)
 	if ctx.Err() != nil {
 		return 0, nil
 	}
@@ -335,19 +388,39 @@ func (l *live) cycle(ctx context.Context, stamp string) (time.Duration, error) {
 
 // serve runs the unattended session on the stack just started, until
 // ctx ends, the enrolment changes or a SIGHUP comes (nil: start over).
-func (l *live) serve(ctx context.Context, stamp string) error {
-	c, err := family.Load(l.abs)
-	if err != nil {
-		return err
-	}
+func (l *live) serve(ctx context.Context, stamp string, c *family.Config, mf *family.Managed) error {
 	l.tracker.Started(c.Instances())
+	if mf != nil {
+		l.logf("%s", mf.File.Describe())
+	}
 	var vault *loxrun.VaultCLI
 	if v, err := family.AppliedVaultCLI(l.state); err != nil {
 		l.logf("vault_token: cli is not served: %v", err)
 	} else if v != nil {
 		vault = vaultCLI(v, c)
 	}
-	rules := profileRules(family.AppliedLogRules(l.state, c), family.AppliedProfileRules(l.state, c))
+	logRules := family.AppliedLogRules(l.state, c)
+	profRules, ruleErrs := family.ReadAppliedRules(l.state, c)
+	rules := profileRules(logRules, profRules)
+	// A lock whose applied rules cannot be read, or were not known when
+	// they were applied, gets no decision from lox live (it approves by a
+	// written rule only): said, and not reported as serving.
+	noRules := map[string]string{}
+	for n, err := range ruleErrs {
+		noRules[n] = "its applied auto rules cannot be read (" + err.Error() + ")"
+	}
+	for n, r := range logRules {
+		if r == nil || r.Unknown != "" {
+			noRules[n] = "its auto rules were not known when it was applied"
+		}
+	}
+	for n, m := range profRules {
+		for _, r := range m {
+			if r.Unknown != "" {
+				noRules[n] = "its auto rules were not known when it was applied (" + r.Unknown + ")"
+			}
+		}
+	}
 	ns, err := family.ReadNotStarted(l.state)
 	if err != nil {
 		l.logf("%v", err)
@@ -361,7 +434,8 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 	for _, name := range c.Instances() {
 		if why, skip := ns[name]; skip {
 			notStarted = append(notStarted, loxrun.LockConsole{Instance: name, Lock: c.Locks[name].Type, Err: why})
-			l.tracker.Fixed(name, loxlive.Down, "not started: "+why)
+			l.tracker.Fixed(name, loxlive.Down)
+			l.logf("lock %s: down: not started: %s", name, why)
 			continue
 		}
 		consoleLocks = append(consoleLocks, lockconsoles.Lock{Instance: name, Type: c.Locks[name].Type})
@@ -369,8 +443,11 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 		// credentials a human types is not served, and says so, rather
 		// than serve until its first connection asks for a password.
 		if f := facts[name]; f.Credentials == "ask" || f.Odd["credentials"] != "" {
-			l.tracker.Fixed(name, loxlive.MissingSecret, "its profile's credentials are typed by a human (credentials = \"ask\"): lox live takes them from Vault only")
+			l.tracker.Fixed(name, loxlive.MissingSecret)
 			l.logf("lock %s: missing_secret: its profile's credentials are typed by a human; lox live takes them from Vault only", name)
+		} else if why, bad := noRules[name]; bad {
+			l.tracker.Fixed(name, loxlive.NeedsEnrolment)
+			l.logf("lock %s: needs_enrolment: %s: lox live decides none of its tickets (lox run at a terminal, then lox live enrol)", name, why)
 		}
 	}
 	lockKeys, err := keys.LoadLocks(filepath.Join(l.keysDir, family.LockKeysFile))
@@ -382,16 +459,27 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 	defer cancel()
 	s := &loxrun.Session{Hub: l.hub, Out: l.out, Style: loxrun.Style{}, Workspace: tildeHome(family.Workspace(l.abs)), Locks: len(consoleLocks),
 		LockKeys: lockKeys, Display: "lox live", Mode: loxrun.Auto, Rules: rules, NotStarted: notStarted, Vault: vault,
-		Caps: managedCaps(l.managed), Unattended: true, Facade: route.Live}
+		Caps: managedCaps(mf), Unattended: true, Facade: route.Live, VaultStamp: l.vaultStamp}
 	// Only this workspace's hub, and only one that takes facade live.
 	s.CheckHub = func(ctx context.Context) error {
+		// A hub that said it is too old is not asked again at every
+		// retry of the session (nor is anything started again for it):
+		// once a minute is enough to see it replaced.
+		if !l.hubOld.IsZero() && time.Since(l.hubOld) < liveHubOldRetry {
+			return errHubOld
+		}
 		if err := checkHub(ctx, l.hub, l.sock, l.state); err != nil {
 			return err
 		}
 		info, err := l.hub.HubInfo(ctx)
-		if err != nil || !info.Live {
-			return errors.New("the hub's image predates lox live (it takes no decision of facade live): upgrade it with lox run, then lox live enrol")
+		if err != nil {
+			return err
 		}
+		if !info.Live {
+			l.hubOld = time.Now()
+			return errHubOld
+		}
+		l.hubOld = time.Time{}
 		return nil
 	}
 	if len(consoleLocks) > 0 {
@@ -409,7 +497,14 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 	s.Observe = func(e loxrun.Event) {
 		switch e.Kind {
 		case loxrun.EvHub:
-			l.tracker.Hub(e.Err)
+			switch {
+			case e.Err == nil:
+				l.tracker.Hub("")
+			case errors.Is(e.Err, errHubOld):
+				l.tracker.Hub(loxlive.DetailHubOld)
+			default:
+				l.tracker.Hub(loxlive.DetailHubDown)
+			}
 		case loxrun.EvConsole:
 			if e.Console != nil {
 				l.tracker.Console(e.Instance, *e.Console)
@@ -437,8 +532,8 @@ func (l *live) serve(ctx context.Context, stamp string) error {
 				cancel()
 				return
 			case <-poll.C:
-				if enrolStamp(l.state) != stamp {
-					l.logf("the enrolment changed: starting over from the enrolment check")
+				if l.stamp(sctx) != stamp {
+					l.logf("the enrolment, what is applied or the managed file changed: starting over from the enrolment check")
 					cancel()
 					return
 				}
@@ -473,6 +568,9 @@ func liveStatusCmd(args []string, stdout, stderr io.Writer) int {
 			word = "serving"
 		}
 		fmt.Fprintf(stdout, "lox live: %s: %s\n", word, h.Detail)
+		if h.Detail == liveNotRunning {
+			fmt.Fprintf(stdout, "  no lox live answers on %s\n", *sock)
+		}
 		names := make([]string, 0, len(h.Locks))
 		for n := range h.Locks {
 			names = append(names, n)
@@ -489,6 +587,10 @@ func liveStatusCmd(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
+// liveNotRunning is the health's detail when no lox live answers on the
+// status socket.
+const liveNotRunning = "not_running"
+
 // liveHealth asks the lox live on sock for its health; one that does not
 // answer is not serving.
 func liveHealth(sock string) loxlive.Health {
@@ -496,8 +598,8 @@ func liveHealth(sock string) loxlive.Health {
 		var d net.Dialer
 		return d.DialContext(ctx, "unix", sock)
 	}}}
-	down := func(why string) loxlive.Health {
-		return loxlive.Health{Locks: map[string]string{}, Detail: "lox live does not answer on " + sock + ": " + why}
+	down := func(string) loxlive.Health {
+		return loxlive.Health{Locks: map[string]string{}, Detail: liveNotRunning}
 	}
 	resp, err := c.Get("http://lox-live/v1/health")
 	if err != nil {

@@ -103,8 +103,8 @@ func (s *Status) CurrentHealth(ctx context.Context) Health {
 	defer cancel()
 	q, err := s.Hub.QueueAll(ctx, 0, 0)
 	if err != nil {
-		if h.Serving || h.Detail == "" {
-			h.Detail = "the hub does not answer: " + approve.Explain(err)
+		if h.Serving {
+			h.Detail = DetailHubDown
 		}
 		h.Serving = false
 		return h
@@ -132,6 +132,12 @@ func stateOf(hubState string) string {
 // lookup asks the hub for a ticket's state: 404 when it knows none, 503
 // when it does not answer.
 func (s *Status) lookup(w http.ResponseWriter, r *http.Request) (string, bool) {
+	// Only what a lock instance and a ticket id look like goes to the
+	// hub: nothing a path could smuggle (a slash, a dot-dot, a query).
+	if !validName(r.PathValue("instance")) || !validName(r.PathValue("id")) {
+		writeErr(w, http.StatusNotFound, "no such ticket")
+		return "", false
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), hubTimeout)
 	defer cancel()
 	st, err := s.Hub.State(ctx, r.PathValue("instance"), r.PathValue("id"))
@@ -214,7 +220,9 @@ func (s *Status) withdraw(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var he *approve.HubError
 		if errors.As(err, &he) {
-			refuse("the hub refused: " + he.Message)
+			// Why goes to the journal, not to the socket's reader.
+			s.logf("lox live: status socket: the hub refused the withdrawal of %s/%s: %s", instance, id, he.Message)
+			refuse("the hub refused the withdrawal")
 			return
 		}
 		writeErr(w, http.StatusServiceUnavailable, "the hub does not answer")
@@ -224,10 +232,28 @@ func (s *Status) withdraw(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validName reports a lock instance or a ticket id as the hub names
+// them: 1 to 128 of [A-Za-z0-9._-], and not a dot name.
+func validName(s string) bool {
+	if s == "" || len(s) > 128 || s == "." || s == ".." {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // Listen opens the status socket at path, mode 0660, of group (a name or
 // a gid; "": the user's own group). Its directory is made 0700 when
-// missing and left as it is otherwise. A socket nobody answers on (a lox
-// live that died) is replaced; anything else at path is refused.
+// missing; it must be a real directory of this user's that group and
+// others cannot write: anywhere else another account could swap the
+// socket for one of its own, or for a link. A socket nobody answers on (a
+// lox live that died) is replaced; anything else at path is refused. The
+// socket is created with its mode (the umask) and given its group
+// without following a link (lchown): no chmod of a path.
 func Listen(path, group string) (net.Listener, error) {
 	gid := -1
 	if group != "" {
@@ -243,8 +269,17 @@ func Listen(path, group string) (net.Listener, error) {
 			}
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
+	}
+	di, err := os.Lstat(dir)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := di.Sys().(*syscall.Stat_t)
+	if !di.IsDir() || !ok || int(st.Uid) != os.Geteuid() || di.Mode().Perm()&0o022 != 0 {
+		return nil, fmt.Errorf("%s (the status socket's directory) must be a directory of yours that group and others cannot write (mode %v): another account could replace the socket there", dir, di.Mode())
 	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
@@ -260,24 +295,18 @@ func Listen(path, group string) (net.Listener, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	// Nobody connects before the mode and the group are set.
-	old := syscall.Umask(0o177)
+	// Created 0660 at once: nobody connects before its mode is set.
+	old := syscall.Umask(0o117)
 	ln, err := net.Listen("unix", path)
 	syscall.Umask(old)
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (net.Listener, error) {
-		ln.Close()
-		return nil, err
-	}
 	if gid >= 0 {
-		if err := os.Chown(path, -1, gid); err != nil {
-			return fail(fmt.Errorf("--status-group %s: %w (lox live's user must be a member of the group)", group, err))
+		if err := os.Lchown(path, -1, gid); err != nil {
+			ln.Close()
+			return nil, fmt.Errorf("--status-group %s: %w (lox live's user must be a member of the group)", group, err)
 		}
-	}
-	if err := os.Chmod(path, 0o660); err != nil {
-		return fail(err)
 	}
 	return ln, nil
 }

@@ -1,7 +1,6 @@
 package loxlive
 
 import (
-	"slices"
 	"sync"
 
 	"github.com/DavidGodefroid/lockhub/internal/loxrun"
@@ -24,9 +23,24 @@ const (
 	Down = "down"
 )
 
+// What the health's detail says: one fixed word, never a configuration
+// line, a console's prompt or a command's error (those go to lox live's
+// journal, which its operator reads; the status socket is read by another
+// Unix user).
+const (
+	DetailServing     = "serving"
+	DetailStarting    = "starting"
+	DetailEnrolment   = "needs_enrolment"   // nothing started: not what was enrolled
+	DetailStartFailed = "start_failed"      // the start failed (the engine?): tried again
+	DetailStopped     = "stopped"           // lox live is stopping
+	DetailHubDown     = "hub_unreachable"   // the hub does not answer
+	DetailHubOld      = "hub_too_old"       // the hub's image predates lox live
+	DetailLocks       = "locks_not_serving" // a lock is not serving: see locks
+)
+
 // Health is GET /v1/health of the status socket, and lox live status
 // --json. Serving: the hub answers and every lock of the workspace
-// serves.
+// serves. Detail is one of the Detail words.
 type Health struct {
 	Serving bool              `json:"serving"`
 	Locks   map[string]string `json:"locks"`
@@ -35,79 +49,72 @@ type Health struct {
 }
 
 type lockState struct {
-	state, detail string
-	fixed         bool
+	state string
+	fixed bool
 }
 
 // Tracker is lox live's health as it goes, safe for concurrent use.
 type Tracker struct {
 	mu    sync.Mutex
 	locks map[string]*lockState
-	// phase is why nothing serves yet ("" once started).
-	phase  string
-	hubOK  bool
-	hubErr string
+	// phase is why nothing serves yet ("" once started); hub is why the
+	// hub does not serve lox live ("" when it does).
+	phase, hub string
 }
 
 // NewTracker is a tracker of a lox live that has not started anything.
 func NewTracker() *Tracker {
-	return &Tracker{locks: map[string]*lockState{}, phase: "lox live is starting"}
+	return &Tracker{locks: map[string]*lockState{}, phase: DetailStarting, hub: DetailHubDown}
 }
 
-func (t *Tracker) reset(instances []string, state, detail, phase string) {
+func (t *Tracker) reset(instances []string, state, phase string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.locks = map[string]*lockState{}
 	for _, n := range instances {
-		t.locks[n] = &lockState{state: state, detail: detail}
+		t.locks[n] = &lockState{state: state}
 	}
-	t.phase, t.hubOK, t.hubErr = phase, false, ""
+	t.phase, t.hub = phase, DetailHubDown
 }
 
-// NeedsEnrolment: nothing was started, why says what differs from the
-// enrolment; every lock of instances waits for it.
-func (t *Tracker) NeedsEnrolment(instances []string, why string) {
-	t.reset(instances, NeedsEnrolment, why, "needs enrolment: "+why)
+// NeedsEnrolment: nothing was started for want of an enrolment; every
+// lock of instances waits for it.
+func (t *Tracker) NeedsEnrolment(instances []string) {
+	t.reset(instances, NeedsEnrolment, DetailEnrolment)
 }
 
-// Failed: the start failed for another reason (why): nothing serves.
-func (t *Tracker) Failed(instances []string, why string) {
-	t.reset(instances, Down, why, "not started: "+why)
-}
+// Failed: the start failed for another reason: nothing serves.
+func (t *Tracker) Failed(instances []string) { t.reset(instances, Down, DetailStartFailed) }
 
 // Started: the stack was brought up for instances; nothing is known of
 // the hub and the consoles yet.
-func (t *Tracker) Started(instances []string) {
-	t.reset(instances, Down, "its console is not reached yet", "")
-}
+func (t *Tracker) Started(instances []string) { t.reset(instances, Down, "") }
 
-// Stopped: lox live serves no more (why).
-func (t *Tracker) Stopped(why string) {
+// Stopped: lox live serves no more.
+func (t *Tracker) Stopped() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, l := range t.locks {
-		l.state, l.detail, l.fixed = Down, why, false
+		l.state, l.fixed = Down, false
 	}
-	t.phase, t.hubOK = why, false
+	t.phase, t.hub = DetailStopped, DetailHubDown
 }
 
-// Hub records whether the hub answers lox live (err: why not).
-func (t *Tracker) Hub(err error) {
+// Hub records whether the hub serves lox live: why not (DetailHubDown,
+// DetailHubOld), "" when it does.
+func (t *Tracker) Hub(why string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.hubOK, t.hubErr = err == nil, ""
-	if err != nil {
-		t.hubErr = err.Error()
-	}
+	t.hub = why
 }
 
 // Fixed pins instance to state whatever its console says (a lock lox
 // live knows it cannot serve: credentials a human types, a lock not
-// started).
-func (t *Tracker) Fixed(instance, state, detail string) {
+// started, rules it could not read).
+func (t *Tracker) Fixed(instance, state string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.locks[instance] = &lockState{state: state, detail: detail, fixed: true}
+	t.locks[instance] = &lockState{state: state, fixed: true}
 }
 
 // Console records instance's console as the session saw it.
@@ -122,10 +129,9 @@ func (t *Tracker) Console(instance string, c loxrun.ConsoleStatus) {
 	if l.fixed {
 		return
 	}
-	l.detail = c.Detail
 	switch {
 	case c.State == loxrun.ConsoleServing:
-		l.state, l.detail = Serving, ""
+		l.state = Serving
 	case c.State == loxrun.ConsoleWaiting && c.Blocked == loxrun.BlockedSecret:
 		l.state = MissingSecret
 	case c.State == loxrun.ConsoleWaiting && c.Blocked == loxrun.BlockedEnrolment:
@@ -134,9 +140,6 @@ func (t *Tracker) Console(instance string, c loxrun.ConsoleStatus) {
 		l.state = Refused
 	default:
 		l.state = Down
-		if l.detail == "" {
-			l.detail = "its console is " + string(c.State)
-		}
 	}
 }
 
@@ -144,37 +147,21 @@ func (t *Tracker) Console(instance string, c loxrun.ConsoleStatus) {
 func (t *Tracker) Health() Health {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	h := Health{Locks: map[string]string{}}
-	names := make([]string, 0, len(t.locks))
+	h := Health{Locks: map[string]string{}, Detail: DetailServing}
+	all := true
 	for n, l := range t.locks {
 		h.Locks[n] = l.state
-		names = append(names, n)
+		all = all && l.state == Serving
 	}
-	slices.Sort(names)
 	switch {
 	case t.phase != "":
 		h.Detail = t.phase
-	case !t.hubOK:
-		h.Detail = "the hub does not answer"
-		if t.hubErr != "" {
-			h.Detail = "the hub does not answer lox live: " + t.hubErr
-		}
+	case t.hub != "":
+		h.Detail = t.hub
+	case !all:
+		h.Detail = DetailLocks
 	default:
-		for _, n := range names {
-			if l := t.locks[n]; l.state != Serving {
-				h.Detail = "lock " + n + " " + l.state
-				if l.detail != "" {
-					h.Detail += ": " + l.detail
-				}
-				break
-			}
-		}
-		if h.Detail == "" {
-			h.Serving, h.Detail = true, "serving"
-		}
-	}
-	if len(h.Detail) > 400 {
-		h.Detail = h.Detail[:400]
+		h.Serving = true
 	}
 	return h
 }
