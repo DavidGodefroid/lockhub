@@ -12,9 +12,11 @@ digest).
   a human applied and enrolled it (`lox live enrol`, at a terminal, after
   `lox run`): no review answered, no upgrade, no cosign for the images
   verified at the enrolment; a configuration that differs, or no enrolment,
-  applies nothing: it says `needs_enrolment` and waits (the enrolment file,
-  `SIGHUP`, every ten minutes). It serves the decisions the profiles' auto
-  rules take, under a facade of its own, `live`, and leaves every other
+  applies nothing: it says `needs_enrolment` and waits (a change of the
+  enrolment, of what is applied or of the managed file, `SIGHUP`, every ten
+  minutes). `lox mobile pair`/`revoke` need `lox run` and a new enrolment.
+  It serves the decisions the profiles' written auto rules take, under a
+  facade of its own, `live`, and leaves every other
   ticket pending for a human's facade (the phone, `lox approve`). It answers
   no console question but a `vault_token: cli` lock's Vault token (again at
   each expiry or restart; run Vault Agent with AppRole and a `~/.vault-token`
@@ -42,22 +44,54 @@ digest).
 
 ### Changed
 
-- The first `lox run` after this release shows the auto rules of the
-  locksql and lockmq locks as new lines of the review and asks `Apply?`
-  once: they are now part of what is reviewed.
-- `lox run` refuses to start while `lox live` serves the workspace, and
-  `lox live` while a `lox run` does (`serve.lock` in the state directory).
-  Several `lox run` still serve together.
-- `lox tickets --json` names each verified ticket's agent (`Agent`).
+**For `lox run` users, three things change even if you never use lox live:**
+
+- **One review after the upgrade.** The first `lox run` shows the auto
+  rules of your locksql and lockmq locks as new lines (`lock <n> auto rules
+  of profile <p>: …`) and asks `Apply?` once: they enter the fingerprint.
+- **locksql and lockmq `auto` rules are now honoured by `lox run`, off
+  production.** A profile that sets `connect = "auto"`, `write = "auto"`,
+  `ddl = "auto"` (locksql) or `peek`/`get`/`publish`/`purge`/`delete =
+  "auto"` (lockmq) was asked before, whatever it said; `lox run` now
+  approves those tickets without a question, as the lock's documentation
+  describes. **A question you were asked before may no longer be asked.**
+  Read the new review lines; set `ask` where you want the question back.
+  A `deny` there is now also refused by `lox run`'s engine.
+- **The production floor is stricter.** On a ticket flagged production, or
+  of risk `prod-write`, the auto mode (a rule or a default) approves only a
+  connect, a read of risk `read`/`read-pii`, and an action of such a risk
+  whose verb its lock only reads with (lockmq `list`/`read`/`peek`, lockssh
+  `run`). Everything else is asked whatever the profile says, in the engine
+  and again in the hub (`needs_human`): a production action with another
+  verb that a default approved before (`default:action`) is now asked.
+
+Also:
+
+- `lox run`, `lox add`, `lox remove`, `lox up` and `lox init` are refused
+  while `lox live` serves the workspace, and `lox live` while one of them
+  holds it (`serve.lock` in the state directory, a `flock`). Several `lox
+  run` still serve together.
+- `lox tickets --json` names each ticket's agent (`Agent`) when the ticket
+  verified under its pinned lock key.
 
 ### Security
 
-- No rule approves a write on production: a profile's `auto` on a ticket of
-  risk `prod-write`, or on a write, a DDL, a lockmq
-  `get`/`publish`/`purge`/`delete` or any non-read action of a production
-  ticket, is asked (a human decides; lox live leaves it pending), for every
-  lock type, in the engine. Reads, and a production profile's connect, keep
-  their rule.
+- lox live approves by a written rule of the ticket's profile only
+  (`profile:*`), never by an engine default: a lock whose rules are unknown
+  or unreadable, a ticket for another profile and the lock types without
+  rules (lockfile, lockhttp) get no decision from it.
+- The hub has a floor of its own under an auto rule's approval, from any
+  facade and whatever the lock flagged: never a grant, a policy loosening
+  or a policy ticket; on production only a connect, a read or an action of
+  a read risk (at the terminal, also an endpoint).
+- An unattended start compares the workspace's files and images with the
+  enrolment before it runs any command: a configuration that is not the
+  enrolled one costs no `docker` call.
+- The status socket's health carries fixed state words only, its directory
+  must be the service user's and closed to writes by others, and its
+  withdrawal reads the agent label only from a ticket verified under the
+  pinned lock key (see docs/lox-live.md for what that label does and does
+  not prove).
 
 ### Fixed
 

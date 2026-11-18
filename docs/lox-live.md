@@ -24,9 +24,10 @@ lox live status --json  # its health (exit 0: serving)
 | A review (`Apply? [y/N]`) | never answered: a configuration that differs from the enrolment is not applied |
 | Image upgrades | none: the pins stay; an upgrade is a maintenance (`lox run`, then enrol) |
 | cosign | not run: the images were verified at the enrolment; one that was not is not started |
-| A ticket a rule decides (the profile's auto rule is `auto`, or `deny`) | decided, as facade `live`, the rule named in the signed decision |
+| A ticket a **written rule of its profile** decides (`auto`: approved as `profile:<action>`; `deny`: refused) | decided, as facade `live`, the rule named in the signed decision |
+| A ticket only an engine default would approve (`default:read`, `default:action` in `lox run`): its lock's rules are unknown or unreadable, it names another profile than the one the rules were read for, or its lock type has no rules (lockfile, lockhttp) | **left pending**: lox live approves by a profile's written rule only, for every lock type |
 | Any other ticket: a write or DDL its rule asks, a first connection with no `connect = "auto"`, a grant, an unmask, a never-auto ticket, a typed name, typed values, a policy loosening, a ticket the hub wants a human for | left pending at the hub, for a human's facade: the paired phone, or `lox approve` in a terminal |
-| **A write on production** (risk `prod-write`, or a write, DDL, lockmq get/publish/purge/delete, or any non-read action on a production ticket) | **never by a rule**, whatever the profile says (`write = "auto"` included): left to a human. The floor is the engine's, for every lock type, in `lox run` too. A production read, and a production profile's connect, follow their rule |
+| **Anything but a read on production** (the ticket is flagged production, or its risk is `prod-write`) | **never by a rule**, whatever the profile says (`write = "auto"` included): left to a human. The floor is a whitelist, read from the ticket itself (kind, risk, verb): on production a rule approves only a connect (opening the profile writes nothing), a read whose risk is `read` or `read-pii`, and an action of such a risk whose verb its lock only reads with (lockmq `list`, `read`, `peek`; lockssh `run`). A write, a DDL, an endpoint, lockmq `get`/`publish`/`purge`/`delete`, an unknown verb, a read whose risk is a write's: asked. It holds in the engine (`lox run` too) and again in the hub, which refuses such an approval by a rule whoever sends it |
 | A console's Vault token question, lock with `vault_token: cli` | answered with the host's Vault token, again each time the console asks (a restart, an expiry) |
 | Any other console question: a password, a passphrase, a policy to review, a production profile's name, an SSH host key | never answered; the lock is reported `missing_secret`, `needs_enrolment` or `refused` |
 | A ticket that does not verify under the pinned lock key | refused with the reason (as `lox run`), so its lock ends the plan |
@@ -35,7 +36,11 @@ lox live status --json  # its health (exit 0: serving)
 The hub enforces its side whatever a client of the facade socket sends
 under the name `live`: an approval without a rule is refused, and so is a
 rule's approval of a never-auto ticket, of one that needs a typed name or
-typed values, or of a version-1 ticket. The locks enforce theirs: a ticket
+typed values, or of a version-1 ticket. It also has a floor of its own
+under every rule's approval, whatever the lock flagged: never a grant, a
+policy loosening or a policy ticket; on production (the flag, or risk
+`prod-write`) only a connect, a read or an action of a read risk (and, at
+the terminal only, an endpoint its human approved once). The locks enforce theirs: a ticket
 their own rule does not leave to the auto mode is signed never-auto, and a
 `deny` is refused before any ticket.
 
@@ -59,7 +64,10 @@ this workspace for lox live? [y/N]`. It writes
 
 - `fingerprint`: the one the review uses (every line that can change what
   the hub or a lock accepts: images by digest, keys, routing, each profile's
-  content, egress, auto rules, Vault);
+  content, egress, auto rules, Vault, the paired devices);
+- `inputs`: a digest of the files that fingerprint is read from, all on the
+  host: the bytes of `lockfamily.yaml`, each lock type's profile directory,
+  the Vault CA, the paired devices;
 - `images`: the pinned images cosign verified at that moment;
 - `production`: the locks that serve a production profile, with the name
   typed.
@@ -67,20 +75,45 @@ this workspace for lox live? [y/N]`. It writes
 **2. The service: `lox live`.** At each start (and after a reboot) it
 
 1. makes the runtime directory again (`$XDG_RUNTIME_DIR/lockhub`, a tmpfs);
-2. compares the current fingerprint with the enrolled one. Equal: it goes
-   on with no question. Different, an image not verified at the enrolment,
-   or no enrolment: **nothing is applied, started or stopped**; it logs
-   why, its health says `needs_enrolment`, and it keeps running so that the
-   status socket answers. It checks again when the enrolment file changes
-   (`lox live enrol`), on `SIGHUP`, and every ten minutes;
-3. brings the stack up as `lox run` does (same compose file, the hub
+2. compares, **before it runs one command or makes one directory**, the
+   digest of the files with the enrolled one, and the pinned images with
+   those verified at the enrolment. Different, or no enrolment: not one
+   `docker` call, nothing made, applied, started or stopped; it logs why,
+   its health says `needs_enrolment`, and it keeps running so that the
+   status socket answers. It checks again when the enrolment, what is
+   applied or the managed file changes, on `SIGHUP`, and every ten minutes;
+3. with the enrolled files, reads what only the engine tells (each lock's
+   key in its volume, a locklog mount plan) through the same one-shot setup
+   containers as `lox run` (no network, they start nothing), and compares
+   the review's fingerprint with the applied and enrolled one. A difference
+   there (a lock's key changed in its volume) applies, starts and stops
+   nothing either: `needs_enrolment`. A `profile rules` command that fails
+   this once does not undo the enrolment: the rules applied from the same
+   enrolled profile hold;
+4. brings the stack up as `lox run` does (same compose file, the hub
    created again on the new runtime directory), without upgrade and
    without cosign;
-4. serves decisions.
+5. serves decisions, on the configuration it just validated and started:
+   the workspace's file is not read again.
 
 A change of the company's managed file alone is applied without an
 enrolment, as `lox run` applies it without a question: it is the admin's and
-only tightens.
+only tightens. lox live reads it again at every start and looks at it every
+15 seconds: a changed file (new `auto_max` ceilings) starts it over; one
+that is refused stops it serving until it is accepted.
+
+**Paired phones.** `lox mobile pair` and `lox mobile revoke` change who may
+approve, and the locks pin the devices only once `lox run` applied them: the
+devices are part of the fingerprint and of the files' digest on purpose, so
+pairing or revoking a phone needs `lox run` and a new enrolment. They were
+not left out of the enrolment: a device nobody reviewed must not become an
+approver of an unattended production host by a file change alone.
+
+**Nothing is applied under a serving lox live.** `lox run`, and `lox add`,
+`lox remove`, `lox up` and `lox init`, which apply as it does, take the
+workspace's lock (below) and are refused while lox live serves. If the
+applied state changes all the same, lox live notices (`applied.json`),
+starts over, and needs a new enrolment.
 
 **Production profiles.** With the locks this lox ships (lockkit v0.20.0), a
 console asks its production profile's name only when a policy review was
@@ -106,9 +139,11 @@ In live mode every secret comes from **Vault**:
   reads the token again and answers again. A connect ticket of a lock whose
   token expired is approved by its `connect = "auto"` rule with the token
   sealed to the lock's one-use key;
-- a token the host cannot give, or one the lock refused, is not typed in a
-  loop: the lock is `missing_secret`, and lox live tries again every 30
-  seconds;
+- a token the host cannot give is read again every 30 seconds; one the lock
+  **refused** is typed again after 30 seconds, then 1, 2, 4 minutes… up to
+  30, not for ever at the same pace: the lock is `missing_secret` meanwhile.
+  A new token file (`~/.vault-token` changed: Vault Agent wrote one) or a
+  `SIGHUP` tries at once and starts the delay over;
 - a profile with `credentials = "ask"` is not served: `missing_secret`, said
   at start and by `lox live enrol`. Move it to Vault.
 
@@ -143,7 +178,12 @@ has them, from the reviewed copy of its profile (`<type> profile rules
 **locksql** (`connect`, `read`, `write`, `ddl`; its `unmask` stays the
 console's own never-auto) and **lockmq** (`connect`, `list`, `read`, `peek`,
 `get`, `publish`, `purge`, `delete`). They are lines of the review, hence of
-the fingerprint: loosening one needs `lox run` and a new enrolment.
+the fingerprint: loosening one needs `lox run` and a new enrolment. A lock
+whose applied rules cannot be read, or were unknown when applied (an image
+before `profile rules`), gets no decision from lox live and is reported
+`needs_enrolment`, not `serving`. lockfile and lockhttp have no per-profile
+rules: lox live decides none of their tickets (a human does), and they are
+`serving` when their console is.
 
 For an unattended production profile, a typical setting:
 
@@ -154,6 +194,9 @@ read    = "auto"
 write   = "deny"   # refused at the lock, no ticket
 ddl     = "deny"
 ```
+
+Every action lox live is to approve must be written `auto` there: it never
+falls back on a default.
 
 `ask` leaves the ticket to a human's facade. The managed file's `[lox]
 auto_max` and `production_auto_max` cap these rules as in `lox run`.
@@ -166,14 +209,17 @@ terminal on the host as lox live's user, or, off production, a chat facade.
 `lox approve`, `lox tickets`, `lox withdraw` and `lox audit` work next to
 lox live.
 
-**`lox run` and lox live never serve one workspace together**: both would
-race for every ticket, with different rules about who is asked. Each takes a
-lock in the state directory (`serve.lock`, `flock`: it goes with its
-process), and the second is refused:
+**`lox run` and lox live never work on one workspace together**: both would
+race for every ticket, with different rules about who is asked, and lox live
+serves exactly what was enrolled. `lox run` and every command that applies
+(`lox add`, `remove`, `up`, `init`) take a shared lock in the state
+directory (`serve.lock`, `flock`: it goes with its process), lox live an
+exclusive one, and the second is refused. Who holds it is read from the lock
+itself, not from the file's text:
 
 ```
-lox run: lox live serves this workspace's decisions (lox live pid 4242): answer the tickets it leaves to a human with lox approve (or the phone), or stop it first (systemctl stop lox-live) to run lox run
-lox live: lox run serves this workspace's decisions in a terminal: quit it (q q) before lox live starts
+lox run: lox live serves this workspace's decisions (pid 4242): answer the tickets it leaves to a human with lox approve (or the phone); to run or apply anything here, stop it first (systemctl stop lox-live), then lox live enrol what you applied
+lox live: a lox at a terminal holds this workspace (lox run serving its decisions, or a command applying it): quit it (q q in lox run) before lox live starts
 ```
 
 Maintenance (a new profile, a looser rule, an upgrade): `systemctl stop
@@ -198,7 +244,10 @@ what became of a ticket, and must not be able to decide one. It runs under
 live's status socket: HTTP/1.1, JSON, on a unix socket, mode `0660`, group
 `--status-group`. Default path `$XDG_RUNTIME_DIR/lockhub/live-status.sock`;
 that directory is `0700`, so for another user give `--status-socket` a
-directory its group can enter (the unit below does).
+directory its group can enter (the unit below does). The directory must be
+lox live's user's and not writable by group or others (else it is refused:
+another account could swap the socket); the socket is created `0660` and
+given its group without following a link.
 
 | Request | Answer |
 |---|---|
@@ -208,7 +257,14 @@ directory its group can enter (the unit below does).
 
 - `serving` is true only when lox live is enrolled and started, the hub
   answers it, and every lock of the workspace is `serving`. `pending` counts
-  the tickets waiting at the hub. `detail` names the first thing in the way.
+  the tickets waiting at the hub.
+- `detail` is one fixed word: `serving`, `starting`, `needs_enrolment`,
+  `start_failed`, `hub_unreachable`, `hub_too_old`, `locks_not_serving`
+  (see `locks`), `stopped`; `lox live status` adds `not_running`. Nothing
+  of the configuration, a console's prompt or a command's error is sent on
+  the socket: the reasons are in lox live's journal, for its operator.
+- Instance and id are 1 to 128 of `[A-Za-z0-9._-]`; anything else is `404`
+  and never reaches the hub.
 - A lock is `needs_enrolment` (nothing started for want of an enrolment, or
   its console asks a policy review or a production name), `missing_secret`
   (a password or passphrase a human types, a Vault token the host cannot
@@ -218,10 +274,19 @@ directory its group can enter (the unit below does).
   `withdrawn`.
 - A withdrawal is taken only for a ticket still pending whose requester's
   agent label starts with `dutydesk:`, read from the ticket its lock signed
-  and lox live verified under the pinned lock key (an unverifiable ticket
-  names nobody). It goes through the hub's withdrawal (the lock is told and
-  frees its queue) and is audited: facade `live`, reason `withdrawn by uid
-  <caller's uid> (status socket) in lox live`.
+  and lox live verified under the pinned lock key (a ticket that does not
+  verify, or whose lock has no pinned key, names nobody). It goes through
+  the hub's withdrawal (the lock is told and frees its queue) and is
+  audited: facade `live`, reason `withdrawn by uid <caller's uid> (status
+  socket) in lox live`.
+- **What that restriction guarantees, and what it does not.** The socket
+  can only *end* a pending ticket, never approve one. The `dutydesk:` label
+  is what the agent declared to its lock: the lock signs it, it does not
+  prove who the agent is. So: **any member of the status group can end any
+  pending ticket that carries a `dutydesk:` label**, whoever raised it, and
+  an agent that declares such a label exposes its own tickets to that. It
+  cannot touch a ticket without the label. Keep the status group to the one
+  daemon it is for.
 - **No route decides, reveals or renews a ticket.** Anything else is `404`
   or `405`.
 
@@ -273,15 +338,17 @@ value in clear nor a secret.
 - The host's Vault token is the service's standing secret: scope its policy
   to the locks' `vault_path`s, give the AppRole secret-id to Vault Agent
   through systemd credentials, and keep the token file `0600`.
-- The status socket is read-only by construction; its one write (a
-  withdrawal) only ends a ticket, never approves one, and only the caller's
-  own agents' tickets.
+- The status socket decides nothing by construction; its one write (a
+  withdrawal) only ends a pending ticket labelled `dutydesk:`, never
+  approves one (see above for what the label does not prove), and its
+  health carries states, not reasons.
 
 ## Requirements
 
 - A hub image of the lockhub release that ships lox live or later: an older
   hub refuses facade `live`. lox live asks the hub (`GET /v1/hub`, `"live":
-  true`) and, with an older one, says so and serves nothing: `lox run`
-  upgrades it, then enrol.
+  true`) and, with an older one, says so once, reports `hub_too_old`, serves
+  nothing, starts nothing again for it and asks it again once a minute:
+  `lox run` upgrades it, then enrol.
 - No lock-side change: lockkit's decisions name any facade, and its
   production-name confirmation already persists across restarts (v0.20.0).

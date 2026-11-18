@@ -53,11 +53,15 @@ session), lockmq's `connect` and each action by its ticket's verb (`list`,
 locks that lox run cannot read (an image before `profile rules`) leave the
 defaults above. A `deny` rule holds in both modes.
 
-**No rule approves a write on production.** A rule's `auto` on a ticket of
-risk `prod-write`, or on a write, a DDL, a lockmq `get`/`publish`/`purge`/
-`delete` or any non-read action of a production ticket, is asked all the
-same, for every lock type. A production read keeps its rule, and so does a
-production profile's connect.
+**On production the auto mode only reads.** On a ticket flagged production,
+or of risk `prod-write`, a rule or a default approves only a connect, a read
+whose risk is `read` or `read-pii`, or an action of such a risk whose verb
+its lock only reads with (lockmq `list`, `read`, `peek`; lockssh `run`). A
+write, a DDL, an endpoint by a rule, a lockmq `get`/`publish`/`purge`/
+`delete`, an action with another or no verb: asked, whatever the profile's
+rule says, for every lock type. The hub holds the same floor under every
+rule's approval (`needs_human`), and never lets a rule approve a grant or a
+policy change.
 
 **Connections.** A lock starts disconnected (lockkit `lazyconn`): an agent's
 first request for a profile reaches the lock over its socket, the lock sends a
@@ -226,7 +230,8 @@ dropped until Enter or Esc, never read as keys on the next card.
 
 **Unattended.** On a host nobody sits at, [`lox live`](lox-live.md) serves
 the rule decisions as a service and leaves the rest to a human's facade;
-`lox run` refuses to start while it serves the workspace.
+`lox run`, and every command that applies (`lox add`, `remove`, `up`,
+`init`), is refused while it serves the workspace.
 
 **Quitting fails closed.** Once `lox run` ends, nothing decides: pending and
 new tickets wait at the hub until the next `lox run` (or another facade), and
