@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockhub/internal/approve"
 	"github.com/DavidGodefroid/lockhub/internal/hub"
@@ -303,17 +305,46 @@ func Listen(path, group string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if gid >= 0 {
-		if err := os.Lchown(path, -1, gid); err != nil {
-			ln.Close()
+	// Group and mode are set relative to the checked directory's descriptor,
+	// never by path: a parent swapped for a link cannot redirect them, and
+	// only the directory's owner (lox live) can replace the entry itself.
+	if err := setSocketAccess(dir, filepath.Base(path), gid); err != nil {
+		ln.Close()
+		if gid >= 0 {
 			return nil, fmt.Errorf("--status-group %s: %w (lox live's user must be a member of the group)", group, err)
 		}
-	}
-	// The directory was checked above (ours, not writable by others), so the
-	// path cannot have been swapped for a link: the mode goes on our socket.
-	if err := os.Chmod(path, 0o660); err != nil {
-		ln.Close()
 		return nil, err
 	}
 	return ln, nil
+}
+
+// setSocketAccess gives the socket name in dir its group (gid >= 0) and the
+// mode 0660, through a descriptor of dir opened without following a link.
+func setSocketAccess(dir, name string, gid int) error {
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("%s: %w", dir, err)
+	}
+	defer unix.Close(dfd)
+	var ds unix.Stat_t
+	if err := unix.Fstat(dfd, &ds); err != nil {
+		return err
+	}
+	if int(ds.Uid) != os.Geteuid() || ds.Mode&0o022 != 0 {
+		return fmt.Errorf("%s changed under lox live: not a directory of yours closed to group and others", dir)
+	}
+	var st unix.Stat_t
+	if err := unix.Fstatat(dfd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	if st.Mode&unix.S_IFMT != unix.S_IFSOCK || int(st.Uid) != os.Geteuid() {
+		return fmt.Errorf("%s/%s is not the socket lox live made", dir, name)
+	}
+	if gid >= 0 {
+		if err := unix.Fchownat(dfd, name, -1, gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			return err
+		}
+	}
+	// The entry was just checked to be our socket, not a link.
+	return unix.Fchmodat(dfd, name, 0o660, 0)
 }
