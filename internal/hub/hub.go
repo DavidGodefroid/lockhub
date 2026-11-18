@@ -479,8 +479,13 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if len(v.Secret) > 0 && !v.Approved {
 		return nil, fmt.Errorf("%w: only an approval carries a secret", ErrBadRequest)
 	}
-	if v.Rule != "" && v.Facade != route.TTY {
-		return nil, fmt.Errorf("%w: an auto rule decides at the terminal (lox run), never on another facade", ErrBadRequest)
+	if v.Rule != "" && !route.ByRule(v.Facade) {
+		return nil, fmt.Errorf("%w: an auto rule decides at the terminal (lox run) or in lox live, never on another facade", ErrBadRequest)
+	}
+	if v.Facade == route.Live && v.Approved && v.Rule == "" {
+		// lox live has no human: it approves nothing a written rule does
+		// not name.
+		return nil, fmt.Errorf("%w: lox live approves only by an auto rule", ErrBadRequest)
 	}
 	onDevice := v.Facade == route.Mobile
 	if onDevice != (len(v.Device) > 0) || onDevice != (len(v.DeviceRecord) > 0) || onDevice != (v.Nonce != "") || onDevice != !v.At.IsZero() {
@@ -569,7 +574,8 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		}
 		// Production tickets are answered where the human can see them:
 		// never on a chat facade, whatever the facade itself checks.
-		if info.Production && !route.CanReveal(v.Facade) {
+		// lox live's rule decisions follow the terminal's.
+		if info.Production && !route.CanReveal(v.Facade) && v.Facade != route.Live {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
 		// A production approval needs the instance name typed when the
