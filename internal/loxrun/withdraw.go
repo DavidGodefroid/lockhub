@@ -299,6 +299,9 @@ type PendingTicket struct {
 	// Answerable: routed to the terminal (lox run may decide it).
 	Answerable bool
 	Summary    string
+	// Agent is the requester's agent label, as its lock signed it (""
+	// for a ticket that does not verify: never read from it).
+	Agent string `json:",omitempty"`
 }
 
 // Pending reads the hub's pending tickets as lox run does, oldest first.
@@ -310,7 +313,7 @@ func Pending(items []api.QueueItem, keys map[string]ed25519.PublicKey) []Pending
 		if tk, _, err := parseTicket(it, keys); err != nil {
 			p.Unverifiable, p.Error, p.Summary = true, shortNote(err.Error()), unreadableSummary
 		} else {
-			p.Lock, p.Summary = clean(tk.Source.Lock), summary(tk)
+			p.Lock, p.Summary, p.Agent = clean(tk.Source.Lock), summary(tk), clean(tk.Requester.Agent)
 		}
 		out = append(out, p)
 	}

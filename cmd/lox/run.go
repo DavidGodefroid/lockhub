@@ -82,6 +82,14 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "lox run:", err)
 		return 1
 	}
+	// lox live serves this workspace: lox run would race it for every
+	// ticket and restart the consoles it answers. Refused, before anything
+	// starts (--no-start too).
+	release, ok := serveLock(abs, stderr)
+	if !ok {
+		return 1
+	}
+	defer release()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if mf != nil {

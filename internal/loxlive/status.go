@@ -1,0 +1,283 @@
+package loxlive
+
+import (
+	"context"
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/DavidGodefroid/lockhub/internal/api"
+	"github.com/DavidGodefroid/lockhub/internal/approve"
+	"github.com/DavidGodefroid/lockhub/internal/hub"
+	"github.com/DavidGodefroid/lockhub/internal/loxrun"
+	"github.com/DavidGodefroid/lockhub/internal/peer"
+	"github.com/DavidGodefroid/lockhub/internal/route"
+)
+
+// The status socket is what lox live shows another Unix user: a daemon
+// that makes agents raise tickets and must know whether the locks serve
+// and what became of a ticket, but must never decide one. That user is
+// kept off the facade socket (whoever opens it can decide); here it gets,
+// over HTTP/1.1 on a unix socket (0660, its group):
+//
+//	GET  /v1/health                          the Health
+//	GET  /v1/tickets/{instance}/{id}         {"state": "pending|approved|denied|expired|withdrawn|consumed"}
+//	POST /v1/tickets/{instance}/{id}/withdraw  204
+//
+// A withdrawal is taken only for a pending ticket whose requester's
+// agent label, as its lock signed it and lox live verified it under the
+// pinned lock key, starts with AgentPrefix: the tickets that daemon's
+// own agents raised. It goes through the hub's withdrawal of a human's
+// facade (audited, the lock told), under facade live. No route decides,
+// reveals or renews a ticket.
+
+// AgentPrefix starts the agent label of the tickets a client of the
+// status socket may withdraw.
+const AgentPrefix = "dutydesk:"
+
+// StatusHub is what the status socket needs of the hub's facade socket
+// (approve.Client).
+type StatusHub interface {
+	QueueAll(ctx context.Context, since uint64, wait time.Duration) (api.QueueResult, error)
+	State(ctx context.Context, instance, id string) (api.TicketState, error)
+	Withdraw(ctx context.Context, instance, id string, req api.WithdrawRequest) (api.WithdrawResult, error)
+}
+
+// Status serves the status socket.
+type Status struct {
+	Tracker *Tracker
+	Hub     StatusHub
+	// LockKeys reads the lock keys lox run pinned (again at each
+	// withdrawal: a later lox run may pin others): a ticket's agent label
+	// is read only from a ticket that verifies under its lock's.
+	LockKeys func() map[string]ed25519.PublicKey
+	// Log, if set, is told each withdrawal and refusal (one plain line).
+	Log func(format string, args ...any)
+}
+
+// hubTimeout bounds a question to the hub on behalf of a client.
+const hubTimeout = 5 * time.Second
+
+// Server is the HTTP server of the status socket (Serve it on Listen's
+// listener).
+func (s *Status) Server() *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/health", s.health)
+	mux.HandleFunc("GET /v1/tickets/{instance}/{id}", s.ticket)
+	mux.HandleFunc("POST /v1/tickets/{instance}/{id}/withdraw", s.withdraw)
+	return &http.Server{Handler: mux, ConnContext: peer.ConnContext, ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, MaxHeaderBytes: 16 << 10}
+}
+
+func (s *Status) logf(format string, args ...any) {
+	if s.Log != nil {
+		s.Log(format, args...)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, code int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// CurrentHealth is the tracker's health with the hub's pending tickets
+// counted now; a hub that does not answer is not serving.
+func (s *Status) CurrentHealth(ctx context.Context) Health {
+	h := s.Tracker.Health()
+	ctx, cancel := context.WithTimeout(ctx, hubTimeout)
+	defer cancel()
+	q, err := s.Hub.QueueAll(ctx, 0, 0)
+	if err != nil {
+		if h.Serving || h.Detail == "" {
+			h.Detail = "the hub does not answer: " + approve.Explain(err)
+		}
+		h.Serving = false
+		return h
+	}
+	h.Pending = len(q.Tickets)
+	return h
+}
+
+func (s *Status) health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.CurrentHealth(r.Context()))
+}
+
+// stateOf is a hub ticket state in the status socket's six: a ticket
+// whose lock was removed ended without a decision, as one withdrawn.
+func stateOf(hubState string) string {
+	switch hubState {
+	case "pending", "approved", "denied", "expired", "withdrawn", "consumed":
+		return hubState
+	case "lock_removed":
+		return "withdrawn"
+	}
+	return ""
+}
+
+// lookup asks the hub for a ticket's state: 404 when it knows none, 503
+// when it does not answer.
+func (s *Status) lookup(w http.ResponseWriter, r *http.Request) (string, bool) {
+	ctx, cancel := context.WithTimeout(r.Context(), hubTimeout)
+	defer cancel()
+	st, err := s.Hub.State(ctx, r.PathValue("instance"), r.PathValue("id"))
+	var he *approve.HubError
+	switch {
+	case errors.As(err, &he) && (he.Status == http.StatusNotFound || he.Status == http.StatusBadRequest):
+		writeErr(w, http.StatusNotFound, "no such ticket")
+		return "", false
+	case err != nil:
+		writeErr(w, http.StatusServiceUnavailable, "the hub does not answer")
+		return "", false
+	}
+	state := stateOf(st.State)
+	if state == "" {
+		writeErr(w, http.StatusServiceUnavailable, "the hub gave a state lox live does not know")
+		return "", false
+	}
+	return state, true
+}
+
+func (s *Status) ticket(w http.ResponseWriter, r *http.Request) {
+	if state, ok := s.lookup(w, r); ok {
+		writeJSON(w, http.StatusOK, map[string]string{"state": state})
+	}
+}
+
+func (s *Status) withdraw(w http.ResponseWriter, r *http.Request) {
+	instance, id := r.PathValue("instance"), r.PathValue("id")
+	p := peer.From(r.Context())
+	if !p.Known {
+		writeErr(w, http.StatusForbidden, "the status socket cannot identify this connection's user")
+		return
+	}
+	state, ok := s.lookup(w, r)
+	if !ok {
+		return
+	}
+	refuse := func(why string) {
+		s.logf("lox live: status socket: withdrawal of %s/%s by uid %d refused: %s", instance, id, p.UID, why)
+		writeErr(w, http.StatusForbidden, why)
+	}
+	if state != "pending" {
+		refuse("the ticket is " + state + ", not pending")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), hubTimeout)
+	defer cancel()
+	q, err := s.Hub.QueueAll(ctx, 0, 0)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "the hub does not answer")
+		return
+	}
+	var items []api.QueueItem
+	for _, it := range q.Tickets {
+		if it.Instance == instance && it.ID == id {
+			items = append(items, it)
+		}
+	}
+	if len(items) != 1 {
+		refuse("the ticket is not pending any more")
+		return
+	}
+	// The agent label, from the ticket its lock signed, checked under the
+	// pinned lock key: never from an unverified one.
+	var pinnedKeys map[string]ed25519.PublicKey
+	if s.LockKeys != nil {
+		pinnedKeys = s.LockKeys()
+	}
+	if _, pinned := pinnedKeys[instance]; !pinned {
+		refuse("no pinned key for its lock: its requester cannot be checked")
+		return
+	}
+	t := loxrun.Pending(items, pinnedKeys)[0]
+	if t.Unverifiable || !strings.HasPrefix(t.Agent, AgentPrefix) {
+		refuse("only a ticket raised by a " + AgentPrefix + " agent is withdrawn here")
+		return
+	}
+	res, err := s.Hub.Withdraw(ctx, instance, id, api.WithdrawRequest{Facade: route.Live,
+		Display: fmt.Sprintf("uid %d (status socket)", p.UID), Via: hub.ViaLive})
+	if err != nil {
+		var he *approve.HubError
+		if errors.As(err, &he) {
+			refuse("the hub refused: " + he.Message)
+			return
+		}
+		writeErr(w, http.StatusServiceUnavailable, "the hub does not answer")
+		return
+	}
+	s.logf("lox live: status socket: %s/%s of agent %s withdrawn for uid %d (%s)", instance, id, t.Agent, p.UID, res.Reason)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Listen opens the status socket at path, mode 0660, of group (a name or
+// a gid; "": the user's own group). Its directory is made 0700 when
+// missing and left as it is otherwise. A socket nobody answers on (a lox
+// live that died) is replaced; anything else at path is refused.
+func Listen(path, group string) (net.Listener, error) {
+	gid := -1
+	if group != "" {
+		if n, err := strconv.Atoi(group); err == nil && n >= 0 {
+			gid = n
+		} else {
+			g, err := user.LookupGroup(group)
+			if err != nil {
+				return nil, fmt.Errorf("--status-group %s: %w", group, err)
+			}
+			if gid, err = strconv.Atoi(g.Gid); err != nil {
+				return nil, fmt.Errorf("--status-group %s: gid %q", group, g.Gid)
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	if fi, err := os.Lstat(path); err == nil {
+		if fi.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("%s exists and is not a socket: remove it, or pick another --status-socket", path)
+		}
+		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
+			c.Close()
+			return nil, fmt.Errorf("%s: another lox live answers on it", path)
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	// Nobody connects before the mode and the group are set.
+	old := syscall.Umask(0o177)
+	ln, err := net.Listen("unix", path)
+	syscall.Umask(old)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (net.Listener, error) {
+		ln.Close()
+		return nil, err
+	}
+	if gid >= 0 {
+		if err := os.Chown(path, -1, gid); err != nil {
+			return fail(fmt.Errorf("--status-group %s: %w (lox live's user must be a member of the group)", group, err))
+		}
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		return fail(err)
+	}
+	return ln, nil
+}

@@ -117,3 +117,49 @@ func shortDiff(d []string) string {
 	}
 	return strings.Join(d, "; ")
 }
+
+// AppliedFacts are the facts of the profile each applied lock serves, by
+// instance, read from the summary the last confirmed lox run applied
+// (applied.json, never the workspace's files, which agents can write):
+// lox live reads there which locks take credentials a human types.
+func AppliedFacts(state string) (map[string]Facts, error) {
+	b, err := os.ReadFile(filepath.Join(state, "applied.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var a Applied
+	if err := json.Unmarshal(b, &a); err != nil {
+		return nil, fmt.Errorf("applied.json: %w", err)
+	}
+	typ, prof := map[string]string{}, map[string]string{}
+	lines := map[string][]string{} // by lock type
+	for _, l := range a.Summary {
+		if rest, ok := strings.CutPrefix(l, "profile "); ok {
+			if t, line, ok := strings.Cut(rest, " "); ok {
+				lines[t] = append(lines[t], line)
+			}
+			continue
+		}
+		rest, ok := strings.CutPrefix(l, "lock ")
+		if !ok {
+			continue
+		}
+		n, what, ok := strings.Cut(rest, " ")
+		if !ok {
+			continue
+		}
+		if t, ok := strings.CutPrefix(what, "type "); ok {
+			typ[n] = t
+		} else if p, ok := strings.CutPrefix(what, "profile "); ok {
+			prof[n] = p
+		}
+	}
+	out := map[string]Facts{}
+	for n, t := range typ {
+		out[n] = ProfileFacts(&Profile{Lines: lines[t]}, t, LockProfile(Lock{Type: t, Profile: prof[n]}))
+	}
+	return out, nil
+}
