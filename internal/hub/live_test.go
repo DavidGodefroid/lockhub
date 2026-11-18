@@ -56,6 +56,10 @@ func TestDecideFacadeLive(t *testing.T) {
 
 	human := live
 	human.Rule = ""
+	plain := func(kind string) func(*hubtest.Ticket) { return func(tk *hubtest.Ticket) { tk.Kind = kind } }
+	prod := func(kind string) func(*hubtest.Ticket) {
+		return func(tk *hubtest.Ticket) { tk.Kind, tk.Production = kind, true }
+	}
 	for _, c := range []struct {
 		name string
 		raw  []byte
@@ -64,11 +68,21 @@ func TestDecideFacadeLive(t *testing.T) {
 	}{
 		{"an approval without a rule", v2("L2", "read", nil), human, hub.ErrBadRequest},
 		{"never auto", v2("L3", "read", func(tk *hubtest.Ticket) { tk.NeverAuto = true }), live, hub.ErrNotAuto},
-		{"a grant", v2("L4", "grant", func(tk *hubtest.Ticket) { tk.NeverAuto = true }), live, hub.ErrNotAuto},
 		{"a typed name", v2("L5", "prod-write", func(tk *hubtest.Ticket) { tk.Production, tk.Retype, tk.Kind = true, "r", "write" }), live, hub.ErrNotAuto},
 		{"typed values", v2("L6", "write", func(tk *hubtest.Ticket) { tk.AskInputs, tk.Kind = true, "write" }), live, hub.ErrNotAuto},
 		{"version 1", a.Ticket("L7", "read", e.Clock.T, time.Hour), live, hub.ErrBadRequest},
-		{"a policy loosening it is not routed for", v2("L8", "policy-loosen", func(tk *hubtest.Ticket) { tk.NeverAuto, tk.Kind = true, "policy" }), live, hub.ErrNotAuto},
+		// The hub's own floor, whatever the lock flagged (none of these
+		// is never-auto): a rule never approves these classes.
+		{"a grant, not flagged never-auto", v2("L4", "grant", nil), live, hub.ErrNotAuto},
+		{"a policy loosening, not flagged", v2("L8", "policy-loosen", plain("policy")), live, hub.ErrNotAuto},
+		{"a policy ticket of another risk", v2("L9", "write", plain("policy")), live, hub.ErrNotAuto},
+		{"a production write", v2("L10", "prod-write", prod("write")), live, hub.ErrNotAuto},
+		{"a production write, flag only", v2("L11", "write", prod("write")), live, hub.ErrNotAuto},
+		{"a prod-write risk, not flagged", v2("L12", "prod-write", plain("write")), live, hub.ErrNotAuto},
+		{"a production ddl", v2("L13", "write", prod("ddl")), live, hub.ErrNotAuto},
+		{"a production action that writes", v2("L14", "write", prod("action")), live, hub.ErrNotAuto},
+		{"a production read of a write risk", v2("L15", "write", prod("read")), live, hub.ErrNotAuto},
+		{"a production endpoint, by lox live", v2("L16", "read", prod("endpoint")), live, hub.ErrNotAuto},
 	} {
 		push(c.raw)
 		var tk hubtest.Ticket
@@ -79,6 +93,34 @@ func TestDecideFacadeLive(t *testing.T) {
 		}
 		if got, _ := e.Store.Tickets(ctx, state.Pending); !pendingHas(got, tk.ID) {
 			t.Errorf("%s: the ticket no longer waits for a human", c.name)
+		}
+	}
+	// The floor holds for the terminal's rules too; a human there decides.
+	tty := hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: route.TTY, Rule: "profile:write"}
+	for _, id := range []string{"L4", "L8", "L10", "L13", "L14"} {
+		if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "shop", ID: id}, tty); !errors.Is(err, hub.ErrNotAuto) {
+			t.Errorf("%s by a rule at the terminal: %v", id, err)
+		}
+	}
+	if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "shop", ID: "L10"}, hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: route.TTY}); err != nil {
+		t.Errorf("a human's approval of the production write at the terminal: %v", err)
+	}
+	// What a rule may approve on production: a connect, a read, an action
+	// that reads; at the terminal, an endpoint the human approved once.
+	for _, c := range []struct {
+		id, risk string
+		mod      func(*hubtest.Ticket)
+		v        hub.Verdict
+	}{
+		{"P1", "prod-write", prod("connect"), live},
+		{"P2", "read-pii", prod("read"), live},
+		{"P3", "read", prod("action"), live},
+		{"P4", "read", prod("endpoint"), hub.Verdict{Approved: true, ApproverID: "host:uid:1000", Facade: route.TTY, Rule: "session:endpoint"}},
+		{"P5", "write", plain("write"), live}, // off production: its rule decides
+	} {
+		push(v2(c.id, c.risk, c.mod))
+		if _, err := e.Hub.Decide(ctx, store.Ref{Instance: "shop", ID: c.id}, c.v); err != nil {
+			t.Errorf("%s (%s): %v", c.id, c.risk, err)
 		}
 	}
 	// A denial needs no rule (a ticket lox live cannot verify): it only narrows.
@@ -142,8 +184,22 @@ func TestWithdrawViaLive(t *testing.T) {
 	if _, err := e.Hub.WithdrawByHuman(ctx, ref, human, hub.ViaLive); !errors.Is(err, hub.ErrBadRequest) {
 		t.Errorf("the terminal in lox live: %v", err)
 	}
-	// Clear values and renewals stay the human's facades'.
-	if _, err := e.Hub.Renew(ctx, ref, asker); err == nil {
-		t.Error("facade live renewed a ticket")
+	// Clear values and renewals stay the human's facades': refused to
+	// facade live as not routed, on a ticket the terminal may ask them for.
+	if _, err := e.Hub.Reveal(ctx, ref, asker, []byte(`{"ticket":"W2","facade":"live"}`)); !errors.Is(err, hub.ErrNotRouted) {
+		t.Errorf("facade live asked a clear value: %v", err)
+	}
+	e.Clock.T = e.Clock.T.Add(2 * time.Hour)
+	if err := e.Hub.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if exp, _ := e.Hub.Expired(ctx); len(exp) != 1 || exp[0].ID != "W2" {
+		t.Fatalf("expired = %v", exp)
+	}
+	if _, err := e.Hub.Renew(ctx, ref, asker); !errors.Is(err, hub.ErrNotRouted) {
+		t.Errorf("facade live renewed an expired ticket: %v", err)
+	}
+	if exp, _ := e.Hub.Expired(ctx); len(exp) != 1 {
+		t.Errorf("the expired ticket is no longer offered: %v", exp)
 	}
 }

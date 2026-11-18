@@ -552,6 +552,10 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 				return fmt.Errorf("%w: ticket %s is never decided by an auto rule", ErrNotAuto, ref.ID)
 			case v.Approved && needsRetype(info):
 				return fmt.Errorf("%w: approving ticket %s needs its instance name typed", ErrNotAuto, ref.ID)
+			case v.Approved:
+				if why := ruleFloor(info, v.Facade); why != "" {
+					return fmt.Errorf("%w: ticket %s is %s: a human decides it", ErrNotAuto, ref.ID, why)
+				}
 			}
 		}
 		if len(v.Secret) > 0 && !info.AskSecret {
@@ -610,6 +614,33 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	h.notify(instance)
 	h.notify(queueKey)
 	return raw, nil
+}
+
+// ruleFloor is the hub's own floor under an auto rule's approval,
+// whatever the lock flagged and whatever the deciding client's engine
+// concluded: "" when a rule may approve the ticket, else what it is. No
+// rule approves a grant, a policy loosening or a policy ticket. On
+// production (the ticket's flag, or the risk prod-write) a rule approves
+// only a connect (opening the profile writes nothing), a read of a read
+// risk, an action of a read risk, and, at the terminal only, an endpoint
+// (lox run's session rule for one its human approved): never a write, a
+// schema change or an action that is not a read, and nothing else for lox
+// live.
+func ruleFloor(info Info, facade string) string {
+	read := info.Risk == route.Read || info.Risk == route.ReadPII
+	switch {
+	case info.Risk == route.Grant:
+		return "a grant"
+	case info.Risk == route.PolicyLoosen || info.Kind == "policy":
+		return "a policy change"
+	case !info.Production && info.Risk != route.ProdWrite:
+		return ""
+	case info.Kind == "connect", info.Kind == "read" && read, info.Kind == "action" && read:
+		return ""
+	case info.Kind == "endpoint" && facade != route.Live:
+		return ""
+	}
+	return "a " + info.Kind + " on production (risk " + info.Risk + ")"
 }
 
 // needsRetype: approving the ticket needs its instance name typed. Only
