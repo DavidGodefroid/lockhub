@@ -153,6 +153,18 @@ type Up struct {
 	// RuntimeGIDs are the gids owning this host's container runtime
 	// sockets with group write (nil: confine.RuntimeGIDs).
 	RuntimeGIDs func() []int
+	// Reviewed is a probe's other answer, when it is Same: what is
+	// applied, for lox live enrol to record (enrol.go).
+	Reviewed *Reviewed
+	// Enrolled makes Do lox live's unattended start (enrol.go): the
+	// runtime directory is made again and the stack brought up exactly
+	// as a human applied and enrolled it, with no question (In is never
+	// read), no upgrade and no online verification of the images cosign
+	// verified at the enrolment. Anything else (a configuration, a
+	// profile, a key or an image that differs, nothing applied yet) is
+	// not applied: nothing is started nor stopped, and Do returns a
+	// *NeedsEnrolmentError.
+	Enrolled *Enrolment
 }
 
 // Project is the compose project of a workspace: one per workspace.
@@ -295,6 +307,9 @@ var ErrNotConfirmed = errors.New("not applied: the change was not confirmed")
 
 // Do runs lox up.
 func (u *Up) Do(ctx context.Context) error {
+	if u.Enrolled != nil && (u.Pin != "" || len(u.Rotate) > 0 || u.Upgrade != nil || u.Probe || u.DryRun || u.Review || u.Focus != "" || u.OfferCopy) {
+		return errors.New("an unattended start applies what was enrolled only: no pin, rotation, upgrade, probe nor review")
+	}
 	if err := CheckWorkspace(Workspace(u.File)); err != nil {
 		return err
 	}
@@ -356,7 +371,8 @@ func (u *Up) Do(ctx context.Context) error {
 	// down and runs again, once (reconcile.go).
 	if _, ok := u.Run.(endpointRetry); !ok {
 		run := u.Run
-		u.Run = endpointRetry{Runner: run, project: project, out: u.Out, apply: !u.Probe && !u.DryRun}
+		// An unattended start takes nothing down either: it says why.
+		u.Run = endpointRetry{Runner: run, project: project, out: u.Out, apply: !u.Probe && !u.DryRun && u.Enrolled == nil}
 		defer func() { u.Run = run }()
 	}
 	// Each lock's console reads its own profile, from the workspace: a
@@ -410,6 +426,15 @@ func (u *Up) Do(ctx context.Context) error {
 	appliedPath := filepath.Join(u.State, "applied.json")
 	facadesPath := filepath.Join(u.State, FacadesFile)
 	facadeMade := false
+	if u.Enrolled != nil {
+		// Before anything is made or run: a workspace no human applied
+		// has nothing to start unattended.
+		for _, f := range []string{appliedPath, hubPubPath, facadesPath} {
+			if _, err := os.Stat(f); err != nil {
+				return needsEnrolment("nothing was applied in this workspace yet (no %s)", filepath.Base(f))
+			}
+		}
+	}
 	if u.Probe {
 		// A probe creates nothing: whatever is missing (a directory, a
 		// key, the applied state, a lock never applied) is a change, not
@@ -498,15 +523,28 @@ func (u *Up) Do(ctx context.Context) error {
 	// The release each image was signed for, from its certificate.
 	tags := map[string]string{}
 	for _, im := range images {
+		if u.Enrolled != nil {
+			// Verified with cosign at the enrolment: not again, online.
+			tag, ok := u.Enrolled.Images[im.ref]
+			if !ok {
+				return needsEnrolment("image %s was not verified at the enrolment", im.ref)
+			}
+			tags[im.ref] = tag
+			continue
+		}
 		out, err := verifyImage(ctx, u.Run, im.ref, "^"+regexp.QuoteMeta("https://github.com/DavidGodefroid/"+im.repo+"/.github/workflows/release.yml@refs/tags/v"))
 		if err != nil {
 			return fmt.Errorf("image %s is not signed by its release: %w", im.ref, err)
 		}
 		tags[im.ref] = signedTag(out, im.repo)
 	}
-	fmt.Fprintln(u.Out, "hub image verified")
-	for _, n := range c.Instances() {
-		fmt.Fprintf(u.Out, "lock %s: image verified\n", n)
+	if u.Enrolled != nil {
+		fmt.Fprintf(u.Out, "%d image(s) verified at the enrolment: not verified again\n", len(images))
+	} else {
+		fmt.Fprintln(u.Out, "hub image verified")
+		for _, n := range c.Instances() {
+			fmt.Fprintf(u.Out, "lock %s: image verified\n", n)
+		}
 	}
 	// lox run: the images older than this lox's releases are replaced by
 	// theirs, verified; the configuration reviewed and applied is the
@@ -587,7 +625,9 @@ func (u *Up) Do(ctx context.Context) error {
 	// A stack an earlier lox made (left up, or brought back by the
 	// engine) whose networks this file declares differently is taken
 	// down before the first compose call (lockhub#199).
-	if !u.Probe {
+	// An unattended start takes nothing down before it knows it starts
+	// what was enrolled: no compose call below needs it then.
+	if !u.Probe && u.Enrolled == nil {
 		if err := u.reconcile(ctx, project, composeYAML, nets, upgradeWhy(ups)); err != nil {
 			return err
 		}
@@ -902,7 +942,27 @@ func (u *Up) Do(ctx context.Context) error {
 	}
 	if u.Probe {
 		u.Same = prev.Fingerprint == fp && prev.ManagedFingerprint == m.Fingerprint()
+		if u.Same {
+			u.Reviewed = &Reviewed{Fingerprint: fp, Images: tags, Production: productionProfiles(c, profiles)}
+		}
 		return nil
+	}
+	if u.Enrolled != nil {
+		// Never a review: what differs from the enrolment is not applied.
+		// (The managed file is the admin's and only tightens: a change of
+		// it alone is applied, as lox run applies it without a question.)
+		switch {
+		case first:
+			return needsEnrolment("nothing was applied in this workspace yet")
+		case prev.Fingerprint != fp:
+			return needsEnrolment("the configuration differs from the one applied: %s", shortDiff(diff(prev.Summary, sum)))
+		case u.Enrolled.Fingerprint != fp:
+			return needsEnrolment("the configuration applied was not enrolled (it changed since the last lox live enrol)")
+		}
+		if err := u.reconcile(ctx, project, composeYAML, nets, "its networks changed"); err != nil {
+			return err
+		}
+		fmt.Fprintln(u.Out, "configuration unchanged since it was enrolled: started without a question")
 	}
 	// The managed file is the admin's: shown, never asked about. A change
 	// of it alone recreates the locks (their label) without a question.
@@ -999,6 +1059,9 @@ func (u *Up) Do(ctx context.Context) error {
 				if copies, err = u.askCopies(ctx, u.Focus, homeMissing[u.Focus]); err != nil {
 					return err
 				}
+			}
+			if u.Enrolled != nil {
+				return needsEnrolment("the configuration is to be reviewed")
 			}
 			fmt.Fprint(u.Out, "Apply? [y/N] ")
 			a, err := readAnswer(ctx, u.In)
@@ -1284,6 +1347,25 @@ func (u *Up) Do(ctx context.Context) error {
 		fmt.Fprintln(u.Out, "Each lock's console asks for its policy (first start, or loosened) and the credentials it does not take from Vault: lox run shows each question in a card and types your answer at the console's terminal (lox attach NAME reaches it too)")
 	}
 	return nil
+}
+
+// productionProfiles are the locks of c that serve a production profile,
+// by instance, with its name, as their reviewed copies say it. A
+// production value the review cannot read as a boolean counts as one.
+func productionProfiles(c *Config, profiles map[string]*Profile) map[string]string {
+	out := map[string]string{}
+	for _, n := range c.Instances() {
+		l := c.Locks[n]
+		name := LockProfile(l)
+		f := ProfileFacts(profiles[l.Type], l.Type, name)
+		if _, odd := f.Odd["production"]; f.Production || odd {
+			if _, order := profileSections(profiles[l.Type]); name == "" && len(order) == 1 {
+				name = order[0] // the only one, as ProfileFacts read it
+			}
+			out[n] = name
+		}
+	}
+	return out
 }
 
 var lockLine = regexp.MustCompile(`^lock \S+ type \S+$`)

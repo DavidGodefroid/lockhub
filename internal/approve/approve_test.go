@@ -220,7 +220,7 @@ func TestFacadeSocketOnlyLocalFacades(t *testing.T) {
 	e := setup(t)
 	id := e.push(t, ticket.RiskRead, false, "q")
 	err := approve.Dial(e.sock).Decide(context.Background(), "crm", id, api.DecideRequest{Approved: true, Facade: "slack"})
-	if err == nil || !strings.Contains(err.Error(), "tty or deck") {
+	if err == nil || !strings.Contains(err.Error(), "tty, deck or live") {
 		t.Errorf("slack facade on the host socket: %v", err)
 	}
 	if e.state(t, id) != state.Pending {
