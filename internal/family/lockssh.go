@@ -24,14 +24,42 @@ import (
 // shows them (its config.AutoActions).
 var SSHRuleActions = []string{"connect", "run", "exec", "unmask"}
 
-// DeriveSSHRules reads the output of `lockssh profile rules --json`: the
-// rules of profile, or of every profile it lists when the lock names none
-// (the human picks one at the console), by profile. Output it cannot read
-// gives one entry, "", whose rules are unknown: lox run asks every ticket
-// of the lock (fail closed).
-func DeriveSSHRules(out []byte, profile string) map[string]*LogRules {
+// RuleActions are the auto-rule actions of each lock type whose profile
+// rules lox run reads (`<type> profile rules --json`), in the order the
+// review shows them: locklog's and lockssh's (LogRuleActions,
+// SSHRuleActions), locksql's (its config.AutoActions, locksql#185) and
+// lockmq's (its config.AutoActions, lockmq#49).
+var RuleActions = map[string][]string{
+	"locklog": LogRuleActions,
+	"lockssh": SSHRuleActions,
+	"locksql": {"connect", "read", "write", "ddl", "unmask"},
+	"lockmq":  {"connect", "list", "read", "peek", "get", "publish", "purge", "delete"},
+}
+
+// asksUnknown reports a lock type whose tickets lox run asks, every one,
+// when its rules are unknown (locklog, lockssh: the engine's defaults
+// would approve their reads). The others keep the engine's defaults, as
+// before lox run read their rules.
+func asksUnknown(typ string) bool { return typ == "locklog" || typ == "lockssh" }
+
+// UnknownEffect is what lox run does with the tickets of a lock of type
+// typ whose rules it could not read.
+func UnknownEffect(typ string) string {
+	if asksUnknown(typ) {
+		return "lox run asks every ticket of this lock"
+	}
+	return "lox run keeps its defaults for this lock (the console enforces its own rules)"
+}
+
+// DeriveProfileRules reads the output of `<typ> profile rules --json`:
+// the rules of profile, or of every profile it lists when the lock names
+// none (the human picks one at the console), by profile. Output it cannot
+// read gives one entry, "", whose rules are unknown (UnknownEffect; fail
+// closed for the types whose reads the defaults would approve).
+func DeriveProfileRules(out []byte, typ, profile string) map[string]*LogRules {
+	acts := RuleActions[typ]
 	if profile != "" {
-		return map[string]*LogRules{profile: deriveRules(out, "lockssh", SSHRuleActions, profile)}
+		return map[string]*LogRules{profile: deriveRules(out, typ, acts, profile)}
 	}
 	var o struct {
 		Lock     string `json:"lock"`
@@ -40,24 +68,24 @@ func DeriveSSHRules(out []byte, profile string) map[string]*LogRules {
 		} `json:"profiles"`
 	}
 	line := lastJSONLine(out)
-	if len(out) > maxRules || line == nil || json.Unmarshal(line, &o) != nil || o.Lock != "lockssh" {
-		return map[string]*LogRules{"": deriveRules(out, "lockssh", SSHRuleActions, "")}
+	if len(out) > maxRules || line == nil || json.Unmarshal(line, &o) != nil || o.Lock != typ {
+		return map[string]*LogRules{"": deriveRules(out, typ, acts, "")}
 	}
 	m := map[string]*LogRules{}
 	for _, p := range o.Profiles {
 		if p.Profile != "" {
-			m[p.Profile] = deriveRules(out, "lockssh", SSHRuleActions, p.Profile)
+			m[p.Profile] = deriveRules(out, typ, acts, p.Profile)
 		}
 	}
 	if len(m) == 0 {
-		m[""] = &LogRules{Lock: "lockssh", Unknown: "lockssh profile rules lists no profile"}
+		m[""] = &LogRules{Lock: typ, Unknown: typ + " profile rules lists no profile"}
 	}
 	return m
 }
 
-// SSHRulesLines are the review's lines of a lockssh instance's rules, by
+// ProfileRulesLines are the review's lines of an instance's rules, by
 // profile name.
-func SSHRulesLines(n string, rules map[string]*LogRules) []string {
+func ProfileRulesLines(n string, rules map[string]*LogRules) []string {
 	names := make([]string, 0, len(rules))
 	for p := range rules {
 		names = append(names, p)
@@ -70,56 +98,73 @@ func SSHRulesLines(n string, rules map[string]*LogRules) []string {
 	return out
 }
 
-func sshDir(state, inst string) string { return filepath.Join(state, "lockssh", inst) }
+func rulesDir(state, typ, inst string) string { return filepath.Join(state, typ, inst) }
 
-const sshRulesFile = "rules.json"
+const profileRulesFile = "rules.json"
 
-// writeSSHRules keeps the rules the last confirmed lox run applied to a
-// lockssh instance (lox run --no-start reads them), host only.
-func writeSSHRules(state, inst string, rules map[string]*LogRules) error {
-	for _, d := range []string{filepath.Join(state, "lockssh"), sshDir(state, inst)} {
+// writeProfileRules keeps the rules the last confirmed lox run applied to
+// an instance of type typ (lox run --no-start and lox live read them),
+// host only.
+func writeProfileRules(state, typ, inst string, rules map[string]*LogRules) error {
+	for _, d := range []string{filepath.Join(state, typ), rulesDir(state, typ, inst)} {
 		if err := privateDir(d); err != nil {
 			return err
 		}
 	}
 	b, _ := json.MarshalIndent(rules, "", "  ")
-	return writeAtomic(filepath.Join(sshDir(state, inst), sshRulesFile), append(b, '\n'), 0o600)
+	return writeAtomic(filepath.Join(rulesDir(state, typ, inst), profileRulesFile), append(b, '\n'), 0o600)
 }
 
-// readSSHRules are the rules the last confirmed lox run applied to inst.
-func readSSHRules(state, inst string) (map[string]*LogRules, error) {
-	if err := checkPrivate(sshDir(state, inst)); err != nil {
+// readProfileRules are the rules the last confirmed lox run applied to
+// inst, of type typ.
+func readProfileRules(state, typ, inst string) (map[string]*LogRules, error) {
+	if err := checkPrivate(rulesDir(state, typ, inst)); err != nil {
 		return nil, err
 	}
-	b, err := os.ReadFile(filepath.Join(sshDir(state, inst), sshRulesFile))
+	b, err := os.ReadFile(filepath.Join(rulesDir(state, typ, inst), profileRulesFile))
 	if err != nil {
 		return nil, err
 	}
 	var m map[string]*LogRules
 	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, fmt.Errorf("%s: %w", sshRulesFile, err)
+		return nil, fmt.Errorf("%s: %w", profileRulesFile, err)
 	}
 	for p, r := range m {
-		if r == nil || r.lockName() != "lockssh" {
-			return nil, fmt.Errorf("%s: profile %q holds no lockssh rules", sshRulesFile, p)
+		if r == nil || r.lockName() != typ {
+			return nil, fmt.Errorf("%s: profile %q holds no %s rules", profileRulesFile, p, typ)
 		}
 	}
 	return m, nil
 }
 
-// AppliedSSHRules are the auto rules of each lockssh lock of c, by
-// instance then profile, as the last confirmed lox run applied them. A
-// lock with none applied has none here: lox run asks its tickets.
-func AppliedSSHRules(state string, c *Config) map[string]map[string]*LogRules {
-	out := map[string]map[string]*LogRules{}
+// AppliedProfileRules are the auto rules of each lock of c whose rules
+// lox run reads from its reviewed copy (lockssh, locksql, lockmq;
+// locklog's are AppliedLogRules), by instance then profile, as the last
+// confirmed lox run applied them. A lock with none applied has none
+// here: lox run asks a lockssh lock's tickets, and keeps its defaults for
+// the others.
+func AppliedProfileRules(state string, c *Config) map[string]map[string]*LogRules {
+	out, _ := ReadAppliedRules(state, c)
+	return out
+}
+
+// ReadAppliedRules is AppliedProfileRules with, by instance, why a lock's
+// applied rules could not be read (none applied, a file that is not lox
+// run's): lox live approves nothing for such a lock and says so.
+func ReadAppliedRules(state string, c *Config) (map[string]map[string]*LogRules, map[string]error) {
+	out, errs := map[string]map[string]*LogRules{}, map[string]error{}
 	for _, n := range c.Instances() {
-		k := Kinds[c.Locks[n].Type]
+		t := c.Locks[n].Type
+		k := Kinds[t]
 		if !k.Rules || k.Mounts {
 			continue
 		}
-		if m, err := readSSHRules(state, n); err == nil {
-			out[n] = m
+		m, err := readProfileRules(state, t, n)
+		if err != nil {
+			errs[n] = err
+			continue
 		}
+		out[n] = m
 	}
-	return out
+	return out, errs
 }

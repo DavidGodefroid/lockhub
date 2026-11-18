@@ -146,7 +146,7 @@ type Kind struct {
 	// files (tls_ca, ssh.key; key, known_hosts) the console reads, "~/"
 	// being its home volume; lox run checks them there (homefiles.go).
 	HomeFiles bool
-	// Rules is locklog and lockssh: lox run reads the profiles' auto
+	// Rules is locklog, lockssh, locksql and lockmq: lox run reads the profiles' auto
 	// rules with `<type> profile rules --json`, run in the image as Agent
 	// (the image's agent account, uid:gid) on the reviewed copy, and
 	// applies them in its engine (locklog_rules.go, lockssh.go).
@@ -156,8 +156,11 @@ type Kind struct {
 
 // Kinds are the lock types' images (their Dockerfiles).
 var Kinds = map[string]Kind{
-	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256, HomeFiles: true},
-	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256},
+	// locksql's and lockmq's images have an agent account too (10002 in
+	// locksql-clients, 10012 in lockmq-clients): their profile rules are
+	// read as it.
+	"locksql":  {UID: "10001", GID: "10000", Project: true, Mem: "1g", Pids: 256, HomeFiles: true, Rules: true, Agent: "10002:10000"},
+	"lockmq":   {UID: "10011", GID: "10010", Project: true, Mem: "1g", Pids: 256, Rules: true, Agent: "10012:10010"},
 	"lockfile": {UID: "10031", GID: "10030", Mem: "4g", Pids: 512, HomeFiles: true},
 	"lockhttp": {UID: "10021", GID: "10020", Gate: true, Mem: "1g", Pids: 256},
 	// locklog's console scans and masks the logs itself: at most two of

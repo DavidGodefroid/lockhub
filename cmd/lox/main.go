@@ -63,6 +63,19 @@ Usage:
                                           (not lea's), again every 60s while it waits; s toggles it.
                                           LOX_SOUND=0 off, LOX_SOUND_QUESTION=FILE|0, LOX_SOUND_PRODUCTION=FILE|0,
                                           LOX_SOUND_REMIND=DURATION (0 once), LOX_NOTIFY=1 desktop notification
+  lox live [--file lockfamily.yaml] [--status-socket PATH] [--status-group GROUP] [-v]
+                                          lox run without a human, for a service (systemd, no terminal): start
+                                          the stack exactly as enrolled (no review, no upgrade, no cosign again)
+                                          and serve the decisions the profiles' auto rules take, as facade live;
+                                          every other ticket waits for a human (lox approve, the phone). It
+                                          answers no console question but a vault_token: cli lock's Vault token.
+                                          Not enrolled or changed: nothing starts, it says needs_enrolment and
+                                          waits. Not next to lox run. docs/lox-live.md
+  lox live enrol [--file lockfamily.yaml] [-v]
+                                          at a terminal, after lox run applied everything: record what is applied
+                                          (configuration, images verified now) as what lox live may start alone
+  lox live status [--json] [--status-socket PATH]
+                                          lox live's health, as its status socket serves it (exit 0: serving)
   lox up                                  deprecated: use lox run (it still starts the hub and the locks)
   lox add TYPE [--non-interactive --host H …] [--review] [-v] [--version vX.Y.Z] [--file lockfamily.yaml]
                                           one source (TYPE: locksql, lockmq, lockfile, lockhttp, locklog, lockssh), guided (or
@@ -150,6 +163,8 @@ func run(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return approveCmd(args[1:], stdin, stdout, stderr)
 	case "mobile":
 		return mobileCmd(args[1:], stdin, stdout, stderr)
+	case "live":
+		return liveCmd(args[1:], stdin, stdout, stderr)
 	case "run":
 		return runCmd(args[1:], stdin, stdout, stderr)
 	case "up":

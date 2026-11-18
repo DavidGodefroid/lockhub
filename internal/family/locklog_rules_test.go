@@ -1,6 +1,8 @@
 package family
 
 import (
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,9 +78,70 @@ func TestComposeRulesService(t *testing.T) {
 	if got := block(out, "rules-logs"); got != want {
 		t.Errorf("rules-logs:\n%s\nwant:\n%s", got, want)
 	}
-	c.Locks["crm-prod"] = Lock{Type: "locksql", Image: sqlImg}
-	if out := Compose(c, Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0"}); strings.Count(out, `"rules-`) != 1 {
-		t.Errorf("a rules service for another kind:\n%s", out)
+	// locksql and lockmq have profile rules too (locksql#185, lockmq#49),
+	// read as their image's agent; lockfile and lockhttp have none.
+	c.Locks["crm-prod"] = Lock{Type: "locksql", Image: sqlImg, Profile: "prod"}
+	c.Locks["files"] = Lock{Type: "lockfile", Image: "ghcr.io/davidgodefroid/lockfile@sha256:" + strings.Repeat("4", 64)}
+	out = Compose(c, Paths{Workspace: "/w", HubData: "/s/hub", FacadeDir: "/r/lockhub", User: "0:0"})
+	if strings.Count(out, `"rules-`) != 2 {
+		t.Errorf("want a rules service for the locklog and the locksql locks only:\n%s", out)
+	}
+	got := block(out, "rules-crm-prod")
+	for _, want := range []string{`user: "10002:10000"`, `exec locksql profile rules --json \"$@\"", "/w", "--profile", "prod"]`, "network_mode: none", `uid=10002,gid=10000`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rules-crm-prod lacks %s:\n%s", want, got)
+		}
+	}
+}
+
+// lox run reads a locksql and a lockmq lock's rules from their reviewed
+// copy, shows them in the review and keeps them for its engine; rules it
+// cannot read (an image before `profile rules`) leave the engine's
+// defaults, as before, and the stack starts.
+func TestUpSQLAndMQRules(t *testing.T) {
+	w := newWS(t, yamlConf(""))
+	f := newFake()
+	f.keys["rules/crm-prod"] = `{"lock":"locksql","profiles":[{"profile":"prod","production":true,"rules":{"connect":"auto","read":"auto","write":"deny","ddl":"deny","unmask":"ask"}}]}` + "\n"
+	out, err := w.up("y\n", f)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	c, err := Load(w.file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := filepath.Join(w.dir, "state")
+	m := AppliedProfileRules(st, c)
+	if r := m["crm-prod"]["prod"]; r == nil || r.Get("connect") != "auto" || r.Get("write") != "deny" || r.Unknown != "" {
+		t.Errorf("locksql rules applied as %+v", m["crm-prod"])
+	}
+	if r := m["events"]["default"]; r == nil || r.Get("list") != "auto" || r.Get("peek") != "ask" || r.Get("connect") != "ask" {
+		t.Errorf("lockmq rules applied as %+v", m["events"])
+	}
+	ab, _ := os.ReadFile(filepath.Join(st, "applied.json"))
+	for _, want := range []string{
+		"lock crm-prod auto rules of profile prod: connect auto · read auto · write deny · ddl deny · unmask ask (locksql profile rules, on the reviewed copy)",
+		"lock events auto rules of profile default: connect ask · list auto · read auto · peek ask · get ask · publish ask · purge ask · delete ask (lockmq profile rules, on the reviewed copy)",
+	} {
+		if !strings.Contains(string(ab), want) {
+			t.Errorf("the applied summary lacks %q:\n%s", want, ab)
+		}
+	}
+	// A change of rules is a change to confirm.
+	f2 := &fake{keys: maps.Clone(f.keys)}
+	f2.keys["rules/crm-prod"] = strings.Replace(f.keys["rules/crm-prod"], `"write":"deny"`, `"write":"auto"`, 1)
+	if out, err := w.up("n\n", f2); !errors.Is(err, ErrNotConfirmed) || !strings.Contains(out, "write auto") {
+		t.Errorf("loosened rules: %v\n%s", err, out)
+	}
+	// Unreadable: said, the defaults kept, nothing asked more than before.
+	f3 := &fake{keys: maps.Clone(f.keys)}
+	f3.keys["rules/crm-prod"] = "unknown command: profile rules\n"
+	out, err = w.up("y\n", f3)
+	if err != nil || !strings.Contains(out, "warning: lock crm-prod: auto rules unknown") || !strings.Contains(out, "lox run keeps its defaults for this lock") {
+		t.Errorf("unknown rules: %v\n%s", err, out)
+	}
+	if r := AppliedProfileRules(st, c)["crm-prod"][""]; r == nil || r.Unknown == "" {
+		t.Errorf("unknown rules applied as %+v", r)
 	}
 }
 

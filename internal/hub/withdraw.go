@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/DavidGodefroid/lockhub/internal/audit"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 	"github.com/DavidGodefroid/lockhub/internal/state"
 	"github.com/DavidGodefroid/lockhub/internal/store"
 )
@@ -13,6 +14,9 @@ import (
 const (
 	ViaRun = "lox run"
 	ViaCLI = "lox withdraw"
+	// ViaLive is lox live's status socket: a client of it (another Unix
+	// user's daemon) takes back a ticket its own agent raised.
+	ViaLive = "lox live"
 )
 
 // WithdrawPrefix starts the reason of every withdrawal by a human: the
@@ -39,11 +43,19 @@ type Withdrawal struct {
 // verify (its lock's key changed) is withdrawn all the same, without a
 // decision, and audited as such.
 func (h *Hub) WithdrawByHuman(ctx context.Context, ref store.Ref, a Asker, via string) (Withdrawal, error) {
-	if err := a.check(); err != nil {
+	if (a.Facade == route.Live) != (via == ViaLive) {
+		return Withdrawal{}, fmt.Errorf("%w: facade %s withdraws in %q, and only it does", ErrBadRequest, route.Live, ViaLive)
+	}
+	// lox live asks no clear value and no renewal: only this.
+	ca := a
+	if a.Facade == route.Live {
+		ca.Facade = route.TTY
+	}
+	if err := ca.check(); err != nil {
 		return Withdrawal{}, err
 	}
-	if via != ViaRun && via != ViaCLI {
-		return Withdrawal{}, fmt.Errorf("%w: a withdrawal is made in %q or %q", ErrBadRequest, ViaRun, ViaCLI)
+	if via != ViaRun && via != ViaCLI && via != ViaLive {
+		return Withdrawal{}, fmt.Errorf("%w: a withdrawal is made in %q, %q or %q", ErrBadRequest, ViaRun, ViaCLI, ViaLive)
 	}
 	who := a.ApproverDisplay
 	if who == "" {

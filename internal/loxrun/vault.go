@@ -74,6 +74,10 @@ func (st *state) onVaultToken(t *tracked, tok []byte, err error) {
 		st.answerConsole(t, tok, true)
 		return
 	}
+	if st.s.Unattended {
+		st.vaultRuled(t, tok, err)
+		return
+	}
 	if t.sending || t.card == nil || !slices.Contains(st.cards, t) {
 		return
 	}

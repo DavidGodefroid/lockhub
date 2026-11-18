@@ -24,8 +24,8 @@ var LogRuleActions = []string{"read", "unmask", "lookup"}
 // maxRules bounds the output of locklog profile rules.
 const maxRules = 64 << 10
 
-// LogRules are the auto rules lox run applies to a locklog or lockssh
-// lock's profile, by action (LogRuleActions, SSHRuleActions): "auto",
+// LogRules are the auto rules lox run applies to a lock's profile
+// (locklog, lockssh, locksql, lockmq), by action (RuleActions): "auto",
 // "ask" or "deny". Unknown says why they could not be read: lox run then
 // asks every ticket.
 type LogRules struct {
@@ -129,10 +129,7 @@ func (r *LogRules) lockName() string {
 
 // actions are the rules' actions, in the review's order.
 func (r *LogRules) actions() []string {
-	if r.lockName() == "lockssh" {
-		return SSHRuleActions
-	}
-	return LogRuleActions
+	return RuleActions[r.lockName()]
 }
 
 // lastJSONLine is the last line of out that is a JSON object.
@@ -154,6 +151,9 @@ func (r *LogRules) Line(n string) string {
 	}
 	pre := fmt.Sprintf("lock %s auto rules of profile %s: ", n, r.Profile)
 	if r.Unknown != "" {
+		if !asksUnknown(r.lockName()) {
+			return pre + "unknown (" + r.Unknown + "): lox run keeps its defaults"
+		}
 		return pre + "unknown (" + r.Unknown + "): lox run asks every ticket"
 	}
 	acts := r.actions()

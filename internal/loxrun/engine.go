@@ -11,6 +11,7 @@ package loxrun
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
@@ -252,6 +253,16 @@ func (e *Engine) ruleAction(r Request, a Action) Action {
 		}
 		return a
 	}
+	if r.Lock == LockLockmq && a == ActAction {
+		// lockmq's actions are its tickets' verbs (list, read, peek…):
+		// each ruled by its own name when the profile's rules are known.
+		if v := Action(r.verb()); v != "" {
+			if _, ok := e.rulesOf(r)[v]; ok {
+				return v
+			}
+		}
+		return a
+	}
 	if a == ActRead && r.Risk == ticket.RiskReadPII {
 		if _, ok := e.rulesOf(r)[ActReadPII]; ok {
 			return ActReadPII
@@ -304,6 +315,13 @@ func (e *Engine) Decide(r Request) Verdict {
 		// lockssh: output in clear is never auto, nor a write on
 		// production, whatever a rule says (the console signs both
 		// never-auto anyway).
+		v = Ask
+	}
+	if v == Allow && !productionAuto(r, a) {
+		// The production floor, for every lock, rule or default: on
+		// production the auto mode approves a read, a connect or an action
+		// known to only read, nothing else (productionAuto). The rest
+		// waits for a human, in lox run as in lox live.
 		v = Ask
 	}
 	// The company's ceiling: never looser than its action's cap.
@@ -365,21 +383,71 @@ func (e *Engine) Decide(r Request) Verdict {
 	return ask(string(ra), string(ra)+" is always asked")
 }
 
+// readVerbs are the verbs of an action ticket each lock is known to only
+// read with: lockmq's metadata and message reads (its get consumes),
+// lockssh's allow-listed command. A verb not listed, or of another lock,
+// is not known to be a read.
+var readVerbs = map[string][]string{
+	LockLockmq:  {"list", "read", "peek"},
+	LockLockssh: {"run"},
+}
+
+// productionAuto reports whether the auto mode may approve r at all: a
+// request off production (not flagged, and not of risk prod-write) always
+// may, as its rule says. On production it is a whitelist, read from the
+// ticket itself (its kind, its risk, its verb), never from the rule
+// action it maps to:
+//
+//   - a connect: opening a production profile's connection writes
+//     nothing; its lock gives it the prod-write risk class only to keep it
+//     off the chat facades (lockkit lazyconn), and signs it never-auto
+//     when its own connect rule is not auto;
+//   - a read (kind read) whose risk is a read's;
+//   - an action whose risk is a read's and whose verb is one of its
+//     lock's readVerbs.
+//
+// A write, a schema change, an endpoint, a policy change, an action that
+// consumes or changes anything (get, publish, purge, delete, exec, put),
+// one whose verb is unknown, and anything whose risk is not a read's are
+// never approved by the auto mode on production. The ticket's own flag
+// is trusted here: it only makes a decision stricter.
+func productionAuto(r Request, a Action) bool {
+	if !r.Production && r.Risk != ticket.RiskProdWrite {
+		return true
+	}
+	switch a {
+	case ActConnect:
+		return true
+	case ActRead:
+		return readRisk(r.Risk)
+	case ActAction:
+		return readRisk(r.Risk) && slices.Contains(readVerbs[r.Lock], r.verb())
+	}
+	return false
+}
+
+// profileRulePrefix starts the name of an auto approval decided by the
+// profile's own written rule (autoRule); every other approval's rule is a
+// default's or the session's.
+const profileRulePrefix = "profile:"
+
 // autoRule names the rule of an auto approval: the profile's own rule
 // when it set the action, the default otherwise.
 func autoRule(e *Engine, r Request, a Action) string {
 	ra := e.ruleAction(r, a)
 	if _, ok := e.rulesOf(r)[ra]; ok {
-		return "profile:" + string(ra)
+		return profileRulePrefix + string(ra)
 	}
 	return "default:" + string(a)
 }
 
-// LockLocklog and LockLockssh are locklog's and lockssh's product names,
-// as their tickets name their lock (Request.Lock).
+// LockLocklog, LockLockssh, LockLocksql and LockLockmq are the locks'
+// product names, as their tickets name their lock (Request.Lock).
 const (
 	LockLocklog = "locklog"
 	LockLockssh = "lockssh"
+	LockLocksql = "locksql"
+	LockLockmq  = "lockmq"
 )
 
 // rulesOf are the rules of r's profile. A locklog ticket fails closed:
@@ -450,6 +518,41 @@ func SSHRules(get func(action string) string) ProfileRules {
 		unmask = Ask
 	}
 	return ProfileRules{ActConnect: val("connect"), ActRead: val("run"), ActWrite: val("exec"), ActReadPII: unmask}
+}
+
+// ruleValue reads a lock's rule value: one that is not auto, ask or deny
+// is ask.
+func ruleValue(v string) Value {
+	switch v := Value(v); v {
+	case Allow, Ask, Deny:
+		return v
+	}
+	return Ask
+}
+
+// SQLRules are the engine's rules for a locksql profile whose auto rules
+// (`locksql profile rules`, locksql#185) give get(action) for connect,
+// read, write and ddl. Its fifth action, unmask (results in clear), is
+// not a ticket kind: the console signs never-auto every ticket its own
+// rule does not leave to the auto mode, which no rule here overrides.
+func SQLRules(get func(action string) string) ProfileRules {
+	return ProfileRules{ActConnect: ruleValue(get("connect")), ActRead: ruleValue(get("read")),
+		ActWrite: ruleValue(get("write")), ActDDL: ruleValue(get("ddl"))}
+}
+
+// MQActions are lockmq's auto-rule actions that are a ticket's verb
+// (lockmq#49); connect is its connect ticket.
+var MQActions = []string{"list", "read", "peek", "get", "publish", "purge", "delete"}
+
+// MQRules are the engine's rules for a lockmq profile whose auto rules
+// (`lockmq profile rules`) give get(action): connect, and each action by
+// its own name, as a lockmq ticket's verb names it.
+func MQRules(get func(action string) string) ProfileRules {
+	r := ProfileRules{ActConnect: ruleValue(get("connect"))}
+	for _, a := range MQActions {
+		r[Action(a)] = ruleValue(get(a))
+	}
+	return r
 }
 
 // Answered records the human's answer on r: an approved connection or

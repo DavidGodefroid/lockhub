@@ -107,3 +107,24 @@ func TestRisksAreLockkits(t *testing.T) {
 		t.Errorf("risks %v, lockkit %v", risks, want)
 	}
 }
+
+// lox live answers where the terminal may, is never listed among a
+// ticket's facades, and is no name a configuration takes.
+func TestLiveFollowsTTY(t *testing.T) {
+	var r Rules
+	for _, risk := range Risks() {
+		if err := r.Allowed("a", Live, risk); err != nil {
+			t.Errorf("%s: %v", risk, err)
+		}
+	}
+	if slices.Contains(r.Facades("a", Read), Live) || KnownFacade(Live) || CanReveal(Live) || OnDemand(Live) {
+		t.Error("live is listed, known as a configured facade, or may ask clear values")
+	}
+	r = Rules{Only: map[string][]string{"a": {Mobile}}}
+	if r.Allowed("a", Live, Read) == nil {
+		t.Error("live answers an instance the terminal does not")
+	}
+	if !ByRule(TTY) || !ByRule(Live) || ByRule(Deck) || ByRule(Mobile) {
+		t.Error("ByRule: the terminal and lox live only")
+	}
+}

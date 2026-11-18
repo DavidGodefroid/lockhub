@@ -479,8 +479,13 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	if len(v.Secret) > 0 && !v.Approved {
 		return nil, fmt.Errorf("%w: only an approval carries a secret", ErrBadRequest)
 	}
-	if v.Rule != "" && v.Facade != route.TTY {
-		return nil, fmt.Errorf("%w: an auto rule decides at the terminal (lox run), never on another facade", ErrBadRequest)
+	if v.Rule != "" && !route.ByRule(v.Facade) {
+		return nil, fmt.Errorf("%w: an auto rule decides at the terminal (lox run) or in lox live, never on another facade", ErrBadRequest)
+	}
+	if v.Facade == route.Live && v.Approved && v.Rule == "" {
+		// lox live has no human: it approves nothing a written rule does
+		// not name.
+		return nil, fmt.Errorf("%w: lox live approves only by an auto rule", ErrBadRequest)
 	}
 	onDevice := v.Facade == route.Mobile
 	if onDevice != (len(v.Device) > 0) || onDevice != (len(v.DeviceRecord) > 0) || onDevice != (v.Nonce != "") || onDevice != !v.At.IsZero() {
@@ -547,6 +552,10 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 				return fmt.Errorf("%w: ticket %s is never decided by an auto rule", ErrNotAuto, ref.ID)
 			case v.Approved && needsRetype(info):
 				return fmt.Errorf("%w: approving ticket %s needs its instance name typed", ErrNotAuto, ref.ID)
+			case v.Approved:
+				if why := ruleFloor(info, v.Facade); why != "" {
+					return fmt.Errorf("%w: ticket %s is %s: a human decides it", ErrNotAuto, ref.ID, why)
+				}
 			}
 		}
 		if len(v.Secret) > 0 && !info.AskSecret {
@@ -569,7 +578,8 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 		}
 		// Production tickets are answered where the human can see them:
 		// never on a chat facade, whatever the facade itself checks.
-		if info.Production && !route.CanReveal(v.Facade) {
+		// lox live's rule decisions follow the terminal's.
+		if info.Production && !route.CanReveal(v.Facade) && v.Facade != route.Live {
 			return fmt.Errorf("%w: production tickets are answered in the terminal or the deck", ErrNotRouted)
 		}
 		// A production approval needs the instance name typed when the
@@ -604,6 +614,33 @@ func (h *Hub) Decide(ctx context.Context, ref store.Ref, v Verdict) ([]byte, err
 	h.notify(instance)
 	h.notify(queueKey)
 	return raw, nil
+}
+
+// ruleFloor is the hub's own floor under an auto rule's approval,
+// whatever the lock flagged and whatever the deciding client's engine
+// concluded: "" when a rule may approve the ticket, else what it is. No
+// rule approves a grant, a policy loosening or a policy ticket. On
+// production (the ticket's flag, or the risk prod-write) a rule approves
+// only a connect (opening the profile writes nothing), a read of a read
+// risk, an action of a read risk, and, at the terminal only, an endpoint
+// (lox run's session rule for one its human approved): never a write, a
+// schema change or an action that is not a read, and nothing else for lox
+// live.
+func ruleFloor(info Info, facade string) string {
+	read := info.Risk == route.Read || info.Risk == route.ReadPII
+	switch {
+	case info.Risk == route.Grant:
+		return "a grant"
+	case info.Risk == route.PolicyLoosen || info.Kind == "policy":
+		return "a policy change"
+	case !info.Production && info.Risk != route.ProdWrite:
+		return ""
+	case info.Kind == "connect", info.Kind == "read" && read, info.Kind == "action" && read:
+		return ""
+	case info.Kind == "endpoint" && facade != route.Live:
+		return ""
+	}
+	return "a " + info.Kind + " on production (risk " + info.Risk + ")"
 }
 
 // needsRetype: approving the ticket needs its instance name typed. Only

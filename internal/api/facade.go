@@ -49,10 +49,13 @@ type facades struct{ h *hub.Hub }
 type HubInfo struct {
 	// Key is the hub's public signing key (base64, as hub.pub holds it).
 	Key string `json:"key"`
+	// Live: this hub takes lox live's decisions (facade live). A hub
+	// before lox live says nothing, and lox live does not serve it.
+	Live bool `json:"live,omitempty"`
 }
 
 func (f *facades) hubInfo(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, HubInfo{Key: keys.Public(f.h.PublicKey())})
+	writeJSON(w, http.StatusOK, HubInfo{Key: keys.Public(f.h.PublicKey()), Live: true})
 }
 
 // QueueItem is a pending ticket. Ticket is the lock's signed ticket,
@@ -151,11 +154,12 @@ type DecideRequest struct {
 	Approved bool   `json:"approved"`
 	Reason   string `json:"reason,omitempty"`
 	Retype   string `json:"retype,omitempty"`
-	// Facade is tty or deck: the local facades.
+	// Facade is tty or deck, the local facades, or live (lox live: an
+	// approval by a rule only).
 	Facade string `json:"facade"`
 	// Display is the human's name for screens (the facade's $USER).
 	Display string `json:"display,omitempty"`
-	// Rule, from lox run only (facade tty), is the id of the auto rule
+	// Rule, from lox run (facade tty) or lox live (facade live), is the id of the auto rule
 	// that decided: no human answered (the decision names it). Absent:
 	// the human at the facade decided.
 	Rule string `json:"rule,omitempty"`
@@ -181,8 +185,8 @@ func (f *facades) decide(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "body is not a decide request")
 		return
 	}
-	if req.Facade != route.TTY && req.Facade != route.Deck {
-		writeErr(w, http.StatusBadRequest, "bad_request", "facade must be tty or deck on this socket")
+	if req.Facade != route.TTY && req.Facade != route.Deck && req.Facade != route.Live {
+		writeErr(w, http.StatusBadRequest, "bad_request", "facade must be tty, deck or live on this socket")
 		return
 	}
 	// Every decision names its approver: a connection whose peer the
@@ -244,15 +248,17 @@ type RenewResult struct {
 	AutoApproved bool   `json:"auto_approved"`
 }
 
-// asker reads a facade request body and its human.
-func asker(w http.ResponseWriter, r *http.Request, v any, facade, display func() string) (hub.Asker, bool) {
+// asker reads a facade request body and its human. live: the route also
+// takes lox live (a withdrawal; never a reveal or a renewal, which are a
+// human's).
+func asker(w http.ResponseWriter, r *http.Request, v any, facade, display func() string, live ...bool) (hub.Asker, bool) {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 64<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "body is not a request of this route")
 		return hub.Asker{}, false
 	}
-	if f := facade(); f != route.TTY && f != route.Deck {
+	if f := facade(); f != route.TTY && f != route.Deck && !(f == route.Live && len(live) > 0 && live[0]) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "facade must be tty or deck on this socket")
 		return hub.Asker{}, false
 	}
@@ -299,8 +305,9 @@ func (f *facades) renew(w http.ResponseWriter, r *http.Request) {
 }
 
 // WithdrawRequest is POST /v1/tickets/{instance}/{id}/withdraw: the human
-// takes back a pending ticket (lox run, lox withdraw). Via is where:
-// "lox run" or "lox withdraw".
+// takes back a pending ticket (lox run, lox withdraw), or lox live does
+// for a client of its status socket. Via is where: "lox run", "lox
+// withdraw" or "lox live" (facade live, and only it).
 type WithdrawRequest struct {
 	Facade  string `json:"facade"`
 	Display string `json:"display,omitempty"`
@@ -317,7 +324,7 @@ type WithdrawResult struct {
 
 func (f *facades) withdraw(w http.ResponseWriter, r *http.Request) {
 	var req WithdrawRequest
-	a, ok := asker(w, r, &req, func() string { return req.Facade }, func() string { return req.Display })
+	a, ok := asker(w, r, &req, func() string { return req.Facade }, func() string { return req.Display }, true)
 	if !ok {
 		return
 	}

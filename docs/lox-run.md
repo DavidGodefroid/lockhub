@@ -39,12 +39,29 @@ applied to a version-2 ticket: the hub signs its decision with the rule
 (`rule: {by: auto, id}` in lockkit's decision, `"rule"` in the hub's audit
 record), refuses a rule's approval of a never-auto ticket or of one whose
 approval needs a typed name (`needs_human`), and accepts a rule from the
-terminal facade only. Per-profile auto rules (`auto`/`ask`/`deny` per action,
-`Engine.Rules`) are applied when a lock provides them: locklog's (below,
-[locklog: auto rules](#locklog-auto-rules)) and lockssh's
-([lockssh: auto rules](#lockssh-auto-rules)); for the other locks (locksql#185,
-lockmq) the defaults above hold until they do. A `deny` rule holds in both
-modes.
+terminal facade (and from `live`, [lox live](lox-live.md)'s) only.
+Per-profile auto rules (`auto`/`ask`/`deny` per action, `Engine.Rules`) are
+applied for the locks that have them: locklog's (below,
+[locklog: auto rules](#locklog-auto-rules)), lockssh's
+([lockssh: auto rules](#lockssh-auto-rules)), and locksql's and lockmq's,
+read the same way (`locksql profile rules --json`, `lockmq profile rules
+--json`, in the lock's image on the reviewed copy, shown in the review as
+`lock <n> auto rules of profile <p>: …`): locksql's `connect`, `read`,
+`write` and `ddl` (locksql#185; `connect = "auto"` drops the question per
+session), lockmq's `connect` and each action by its ticket's verb (`list`,
+`read`, `peek`, `get`, `publish`, `purge`, `delete`). Rules of these two
+locks that lox run cannot read (an image before `profile rules`) leave the
+defaults above. A `deny` rule holds in both modes.
+
+**On production the auto mode only reads.** On a ticket flagged production,
+or of risk `prod-write`, a rule or a default approves only a connect, a read
+whose risk is `read` or `read-pii`, or an action of such a risk whose verb
+its lock only reads with (lockmq `list`, `read`, `peek`; lockssh `run`). A
+write, a DDL, an endpoint by a rule, a lockmq `get`/`publish`/`purge`/
+`delete`, an action with another or no verb: asked, whatever the profile's
+rule says, for every lock type. The hub holds the same floor under every
+rule's approval (`needs_human`), and never lets a rule approve a grant or a
+policy change.
 
 **Connections.** A lock starts disconnected (lockkit `lazyconn`): an agent's
 first request for a profile reaches the lock over its socket, the lock sends a
@@ -211,6 +228,11 @@ away never approves the one that took its place. If a card goes away while its
 prompt (a password, the instance name) is being typed, what is typed next is
 dropped until Enter or Esc, never read as keys on the next card.
 
+**Unattended.** On a host nobody sits at, [`lox live`](lox-live.md) serves
+the rule decisions as a service and leaves the rest to a human's facade;
+`lox run`, and every command that applies (`lox add`, `remove`, `up`,
+`init`), is refused while it serves the workspace.
+
 **Quitting fails closed.** Once `lox run` ends, nothing decides: pending and
 new tickets wait at the hub until the next `lox run` (or another facade), and
 the locks close their connections once idle, so the next request asks again.
@@ -262,6 +284,7 @@ The engine takes per-profile rules through `Session.Rules`.
 | `$XDG_STATE_HOME/lockfamily/<project>/` | `lox run` | `lox` only (hub data, applied fingerprint, compose copy) |
 | `$XDG_STATE_HOME/lockfamily/facades/` (`tty.key`, `deck.key`: private, `0600`; `locks.json`: the lock keys lox run pinned, the union of every workspace's `locks.d/<project>.json`; an instance two workspaces pin with different keys, or a key two instances share, is left out with a warning naming both workspaces: rename it in one, or delete the `locks.d` file of a workspace that was moved or deleted) | `lox run` (one directory per user, shared by workspaces) | `lox run`, `lox approve` (tty), `lox audit`, `lox tickets`, `lox withdraw`, lea's deck: they sign a reveal's ephemeral key and verify the lock's signed answer |
 | `$XDG_STATE_HOME/lockfamily/<project>/facades.json` | `lox run` (public keys only) | the locks with `reveal: true`, mounted at `/run/lockfamily-facades/facades.json` (`--facade-keys-file`) |
+| `$XDG_STATE_HOME/lockfamily/<project>/serve.lock`, `live-enrolment.json` | `lox run`, `lox live` (the lock that keeps them from serving together); `lox live enrol` | `lox run`, `lox live` ([lox-live.md](lox-live.md)) |
 | `$XDG_RUNTIME_DIR/lockhub/facade.sock` | the hub | `lox run`, `lox approve`, `lox audit`, `lox tickets`, `lox withdraw`, lea's deck, and any process of your uid |
 
 `$XDG_RUNTIME_DIR/lockhub` is on a tmpfs wiped at logout and reboot. Every

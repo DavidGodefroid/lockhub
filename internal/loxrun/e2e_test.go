@@ -110,6 +110,8 @@ type worldCfg struct {
 	rateN  int
 	// later: lox run starts when the test calls startRun, not at once.
 	later bool
+	// session changes lox run's session before it starts (lox live's).
+	session func(*loxrun.Session)
 }
 
 func newWorldCfg(t *testing.T, cfg worldCfg) *world {
@@ -207,6 +209,9 @@ func newWorldCfg(t *testing.T, cfg worldCfg) *world {
 			return loxaudit.Load(context.Background(), loxaudit.Source{Data: dir, HubKeys: []ed25519.PublicKey{hubPub},
 				LockKeys: map[string]ed25519.PublicKey{inst: lockPub}})
 		}}
+	if cfg.session != nil {
+		cfg.session(s)
+	}
 	var once sync.Once
 	w.startRun = func() {
 		once.Do(func() {
@@ -604,7 +609,7 @@ func TestAuditE2E(t *testing.T) {
 		t.Fatalf("%d exchanges, want 4", len(xs))
 	}
 	want := map[string]struct{ decision, rule, facade string }{
-		conn: {"human", "", "tty"}, sel: {"auto", "default:read", ""}, upd: {"human", "", "tty"}, del: {"denied", "", "tty"},
+		conn: {"human", "", "tty"}, sel: {"auto", "default:read", "tty"}, upd: {"human", "", "tty"}, del: {"denied", "", "tty"},
 	}
 	for _, x := range xs {
 		wx, ok := want[x.ID]

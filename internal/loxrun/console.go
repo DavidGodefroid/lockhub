@@ -166,7 +166,11 @@ func (st *state) onConsole(e ConsoleEvent) {
 		}
 		cur.decided = true
 	}
-	if e.State == ConsoleWaiting && e.Question != nil && (cur == nil || cur.decided) {
+	asks := e.State == ConsoleWaiting && e.Question != nil
+	if !asks || !st.s.Unattended {
+		st.s.observe(Event{Kind: EvConsole, Instance: e.Instance, Console: &ConsoleStatus{State: e.State, Detail: lc.Err}})
+	}
+	if asks && (cur == nil || cur.decided) {
 		st.askConsole(e)
 	}
 }
@@ -197,10 +201,17 @@ func (st *state) askConsole(e ConsoleEvent) {
 			// Asked again right after the CLI's token: the lock refused it.
 			delete(st.vaultCLIAt, k)
 			why = "the lock refused it"
+			st.vaultRefused[e.Instance]++
 		} else {
+			delete(st.vaultRefused, e.Instance) // not a refusal in a row
+
 			t.vaultFetching = true
 			t.entry.Tag = "vault:cli"
 			st.vaultFetches = append(st.vaultFetches, t)
+			if st.s.Unattended {
+				st.s.observe(Event{Kind: EvConsole, Instance: e.Instance,
+					Console: &ConsoleStatus{State: ConsoleWaiting, Detail: "reading the host's Vault token for its console"}})
+			}
 			return
 		}
 	}
@@ -210,6 +221,10 @@ func (st *state) askConsole(e ConsoleEvent) {
 // showConsoleCard puts t's console question up as a card; vaultWhy, when
 // set, is why the host's Vault CLI token did not answer it.
 func (st *state) showConsoleCard(t *tracked, vaultWhy string) {
+	if st.s.Unattended {
+		st.blockConsole(t, vaultWhy)
+		return
+	}
 	cq := t.cq
 	prod := t.entry.Production
 	c := &Card{Instance: clean(t.instance), Lock: clean(cq.lock), Kind: KindPrompt, Production: prod, Console: true,

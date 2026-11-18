@@ -35,6 +35,13 @@ const (
 	Mobile   = "mobile"
 	Slack    = "slack"
 	Telegram = "telegram"
+	// Live is lox live, the terminal's unattended twin (a service, no
+	// human): it decides where the terminal may (Allowed follows tty) and
+	// only by a written rule, which the hub's Decide enforces. It is not
+	// a facade a configuration names (hub.facades, hub.routing) nor one a
+	// ticket lists: nothing is routed to it, it takes what its rules
+	// decide and leaves the rest to the human's facades.
+	Live = "live"
 )
 
 // Risk classes (lockkit ticket.Risk names).
@@ -91,6 +98,9 @@ type Rules struct {
 // Allowed reports whether facade f may decide a ticket of risk r from
 // instance inst, and why not.
 func (r Rules) Allowed(inst, f, risk string) error {
+	if f == Live {
+		f = TTY // lox live answers where the terminal may
+	}
 	switch {
 	case !KnownFacade(f):
 		return fmt.Errorf("unknown facade (want one of %s)", strings.Join(facades, ", "))
@@ -122,6 +132,10 @@ func (r Rules) On(f string) bool {
 	}
 	return slices.Contains(r.Enabled, f)
 }
+
+// ByRule reports whether facade f may send an auto rule's decision: the
+// terminal (lox run) and lox live.
+func ByRule(f string) bool { return f == TTY || f == Live }
 
 // CanReveal reports whether facade f may show a ticket's clear values
 // (end-to-end encrypted to it).

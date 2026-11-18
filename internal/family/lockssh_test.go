@@ -271,7 +271,7 @@ func TestUpLocksshProfileFiles(t *testing.T) {
 // actions, each auto, ask or deny; every profile when the lock names
 // none; anything else unknown (every ticket asked).
 func TestDeriveSSHRules(t *testing.T) {
-	m := DeriveSSHRules([]byte(sshRulesJSON("ask", "auto", "deny", "ask", "dev", "prod")), "prod")
+	m := DeriveProfileRules([]byte(sshRulesJSON("ask", "auto", "deny", "ask", "dev", "prod")), "lockssh", "prod")
 	r := m["prod"]
 	if len(m) != 1 || r == nil || r.Unknown != "" || r.Get("connect") != "ask" || r.Get("run") != "auto" || r.Get("exec") != "deny" || r.Get("unmask") != "ask" {
 		t.Fatalf("rules %+v", m)
@@ -279,11 +279,11 @@ func TestDeriveSSHRules(t *testing.T) {
 	if got := r.Line("web"); got != "lock web auto rules of profile prod: connect ask · run auto · exec deny · unmask ask (lockssh profile rules, on the reviewed copy)" {
 		t.Errorf("line %q", got)
 	}
-	m = DeriveSSHRules([]byte(sshRulesJSON("ask", "auto", "ask", "ask", "dev", "prod")), "")
+	m = DeriveProfileRules([]byte(sshRulesJSON("ask", "auto", "ask", "ask", "dev", "prod")), "lockssh", "")
 	if len(m) != 2 || m["dev"].Unknown != "" || m["prod"].Get("run") != "auto" {
 		t.Errorf("every profile: %+v", m)
 	}
-	if lines := SSHRulesLines("web", m); len(lines) != 2 || !strings.Contains(lines[0], "profile dev:") || !strings.Contains(lines[1], "profile prod:") {
+	if lines := ProfileRulesLines("web", m); len(lines) != 2 || !strings.Contains(lines[0], "profile dev:") || !strings.Contains(lines[1], "profile prod:") {
 		t.Errorf("lines %q", lines)
 	}
 	for name, out := range map[string]string{
@@ -294,7 +294,7 @@ func TestDeriveSSHRules(t *testing.T) {
 		"missing":      `{"lock":"lockssh","profiles":[{"profile":"prod","rules":{"run":"auto"}}]}`,
 	} {
 		for _, profile := range []string{"prod", ""} {
-			m := DeriveSSHRules([]byte(out), profile)
+			m := DeriveProfileRules([]byte(out), "lockssh", profile)
 			if len(m) != 1 {
 				t.Errorf("%s %q: %+v", name, profile, m)
 			}
@@ -342,7 +342,7 @@ func TestUpLockssh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := AppliedSSHRules(filepath.Join(w.dir, "state"), c)
+	m := AppliedProfileRules(filepath.Join(w.dir, "state"), c)
 	if r := m["web"]["prod"]; r == nil || r.Get("run") != "auto" || r.Get("connect") != "ask" {
 		t.Errorf("applied rules %+v", m)
 	}
@@ -368,7 +368,7 @@ func TestUpLockssh(t *testing.T) {
 	if out, err := w.up("y\n", f2); err != nil || !strings.Contains(out, "warning: lock web: auto rules unknown") {
 		t.Errorf("unknown rules: %v\n%s", err, out)
 	}
-	if r := AppliedSSHRules(filepath.Join(w.dir, "state"), c)["web"]["prod"]; r == nil || r.Unknown == "" || r.Get("run") != "ask" {
+	if r := AppliedProfileRules(filepath.Join(w.dir, "state"), c)["web"]["prod"]; r == nil || r.Unknown == "" || r.Get("run") != "ask" {
 		t.Errorf("unknown rules applied as %+v", r)
 	}
 	// Another workspace with no lockssh lock: no local risks.

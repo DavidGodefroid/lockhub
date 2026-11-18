@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/DavidGodefroid/lockkit/ticket"
+
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // SigStatus is what checking an exchange's signatures found: the
@@ -40,6 +42,8 @@ type Exchange struct {
 	Decided, Ended time.Time
 	// Facade and Approver are who signed a human decision: the facade
 	// (tty for lox run, telegram, mobile…) and the human's display name.
+	// A rule's decision names its facade too: tty (lox run) or live (lox
+	// live).
 	Facade, Approver string
 	// Reason is the signed decision's reason (a denial's; a human's
 	// withdrawal names the human and where: "withdrawn by …").
@@ -356,6 +360,9 @@ func auditDetail(x Exchange, loc *time.Location, w int, st Style) []line {
 	switch {
 	case x.Rule != "":
 		dec = dec.add("  by the auto rule ", sgrDim).add(x.Rule, sgrBold)
+		if x.Facade == route.Live {
+			dec = dec.add(" in ", sgrDim).add("lox live", sgrBold)
+		}
 	case x.ByHuman():
 		h := x.Approver
 		if h == "" {
