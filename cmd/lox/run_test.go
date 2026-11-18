@@ -93,3 +93,27 @@ func TestProfileRulesLockssh(t *testing.T) {
 		t.Errorf("exec denied: %+v", v)
 	}
 }
+
+// locksql and lockmq: the applied rules of the ticket's instance and
+// profile; unknown rules, another profile or none keep the defaults (the
+// console enforces its own rules either way).
+func TestProfileRulesSQLAndMQ(t *testing.T) {
+	r := profileRules(nil, map[string]map[string]*family.LogRules{
+		"db":  {"prod": {Lock: "locksql", Profile: "prod", Rules: map[string]string{"connect": "auto", "read": "auto", "write": "deny", "ddl": "deny", "unmask": "ask"}}},
+		"old": {"": {Lock: "locksql", Unknown: "locksql profile rules failed"}},
+		"q":   {"main": {Lock: "lockmq", Profile: "main", Rules: map[string]string{"connect": "auto", "list": "auto", "read": "auto", "peek": "auto", "get": "ask", "publish": "ask", "purge": "ask", "delete": "ask"}}},
+		"web": {"prod": {Lock: "lockssh", Profile: "prod", Rules: map[string]string{"connect": "auto", "run": "auto", "exec": "auto", "unmask": "ask"}}},
+	})
+	if got := r("locksql", "db", "prod"); got[loxrun.ActConnect] != loxrun.Allow || got[loxrun.ActWrite] != loxrun.Deny {
+		t.Errorf("db/prod: %v", got)
+	}
+	if got := r("lockmq", "q", "main"); got[loxrun.ActConnect] != loxrun.Allow || got["peek"] != loxrun.Allow || got["get"] != loxrun.Ask {
+		t.Errorf("q/main: %v", got)
+	}
+	for _, k := range [][3]string{{"locksql", "db", "other"}, {"locksql", "old", ""}, {"locksql", "old", "prod"}, {"locksql", "missing", "prod"},
+		{"lockmq", "q", "other"}, {"lockmq", "db", "prod"}, {"locksql", "web", "prod"}, {"lockfile", "db", "prod"}} {
+		if got := r(k[0], k[1], k[2]); got != nil {
+			t.Errorf("%s on %s/%s: %v, want the defaults", k[0], k[1], k[2], got)
+		}
+	}
+}

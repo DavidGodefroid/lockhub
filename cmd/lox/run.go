@@ -124,7 +124,7 @@ func runCmd(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		} else if v != nil {
 			vault = vaultCLI(v, c)
 		}
-		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedSSHRules(st, c))
+		rules = profileRules(family.AppliedLogRules(st, c), family.AppliedProfileRules(st, c))
 		// The locks the last lox run did not start: in the header, with
 		// their reason; the others are served.
 		ns, err := family.ReadNotStarted(st)
@@ -249,12 +249,14 @@ func checkHub(ctx context.Context, c family.HubKeyAsker, sock, state string) err
 
 // profileRules are the engine's per-profile rules from the locks' own
 // auto rules as lox run applied them: a locklog ticket's lock's (by
-// instance), for the profile its console serves; a lockssh ticket's
-// lock's, for its profile. A ticket on another profile, or on an
-// instance whose rules lox run could not read (the lock file no longer
-// loads, the instance left it), gets no rules here, and the engine asks
-// it (fail closed: a locklog lock's reads, every lockssh action). The
-// other locks keep the defaults (nil).
+// instance), for the profile its console serves; a lockssh, locksql or
+// lockmq ticket's lock's, for its profile. A ticket on another profile,
+// or on an instance whose rules lox run could not read (the lock file no
+// longer loads, the instance left it), gets no rules here: the engine
+// asks it for locklog and lockssh (fail closed: a locklog lock's reads,
+// every lockssh action) and keeps its defaults for locksql and lockmq,
+// whose consoles sign never-auto what their own rules ask. The other
+// locks keep the defaults (nil).
 func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*family.LogRules) func(lock, instance, profile string) loxrun.ProfileRules {
 	return func(lock, instance, profile string) loxrun.ProfileRules {
 		switch lock {
@@ -264,10 +266,18 @@ func profileRules(logs map[string]*family.LogRules, ssh map[string]map[string]*f
 				return nil
 			}
 			return loxrun.LocklogRules(r.Get)
-		case loxrun.LockLockssh:
+		case loxrun.LockLockssh, loxrun.LockLocksql, loxrun.LockLockmq:
+			// The rules lox run applied for this instance are its lock
+			// type's: a ticket naming another product gets none.
 			r, ok := ssh[instance][profile]
-			if !ok || profile == "" || r.Unknown != "" {
+			if !ok || profile == "" || r.Unknown != "" || r.Lock != lock {
 				return nil
+			}
+			switch lock {
+			case loxrun.LockLocksql:
+				return loxrun.SQLRules(r.Get)
+			case loxrun.LockLockmq:
+				return loxrun.MQRules(r.Get)
 			}
 			return loxrun.SSHRules(r.Get)
 		}

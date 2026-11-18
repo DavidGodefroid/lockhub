@@ -772,8 +772,9 @@ func (u *Up) Do(ctx context.Context) error {
 	if logSkipped {
 		drop(lockPubs)
 	}
-	// The auto rules of the lockssh locks, read the same way from their
-	// reviewed copy: rules lox run cannot read leave every ticket asked.
+	// The auto rules of the lockssh, locksql and lockmq locks, read the
+	// same way from their reviewed copy: rules lox run cannot read leave
+	// every lockssh ticket asked, and the other locks on the defaults.
 	sshRules := map[string]map[string]*LogRules{}
 	for _, n := range c.Instances() {
 		l := c.Locks[n]
@@ -787,11 +788,11 @@ func (u *Up) Do(ctx context.Context) error {
 			}
 			sshRules[n] = map[string]*LogRules{l.Profile: {Lock: l.Type, Profile: l.Profile, Unknown: l.Type + " profile rules failed"}}
 		} else {
-			sshRules[n] = DeriveSSHRules(ro, l.Profile)
+			sshRules[n] = DeriveProfileRules(ro, l.Type, l.Profile)
 		}
 		for _, r := range sshRules[n] {
 			if r.Unknown != "" {
-				fmt.Fprintf(u.Out, "warning: lock %s: auto rules unknown (%s): lox run asks every ticket of this lock\n", n, r.Unknown)
+				fmt.Fprintf(u.Out, "warning: lock %s: auto rules unknown (%s): %s\n", n, r.Unknown, UnknownEffect(l.Type))
 			}
 		}
 	}
@@ -846,7 +847,7 @@ func (u *Up) Do(ctx context.Context) error {
 			sum = append(sum, pl.Review(n)...)
 			sum = append(sum, logNetLine(project, n, pl))
 		}
-		sum = append(sum, SSHRulesLines(n, sshRules[n])...)
+		sum = append(sum, ProfileRulesLines(n, sshRules[n])...)
 	}
 	for _, n := range slices.Sorted(maps.Keys(notStarted)) {
 		sum = append(sum, notStartedLine(n, notStarted[n]))
@@ -1082,10 +1083,10 @@ func (u *Up) Do(ctx context.Context) error {
 	} else {
 		os.Remove(filepath.Join(u.State, lockfileSeccompFile))
 	}
-	// The applied lockssh rules, for lox run's engine.
+	// The applied lockssh, locksql and lockmq rules, for lox run's engine.
 	for _, n := range c.Instances() {
 		if r := sshRules[n]; r != nil {
-			if err := writeSSHRules(u.State, n, r); err != nil {
+			if err := writeProfileRules(u.State, c.Locks[n].Type, n, r); err != nil {
 				return err
 			}
 		}

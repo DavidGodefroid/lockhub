@@ -484,6 +484,76 @@ services:
     mem_limit: 512m
     volumes:
       - "web-b-gate:/g"
+  "rules-db-a":
+    image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    profiles: [setup]
+    user: "10002:10000"
+    environment:
+      HOME: "/tmp"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p \"$0/.locksql\" && head -c 526336 | tar -x -C \"$0/.locksql\" && cd \"$0\" && exec locksql profile rules --json \"$@\"", "/w/one"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m", "/w/one:size=2m,uid=10002,gid=10000,mode=0700"]
+    pids_limit: 64
+    mem_limit: 256m
+  "rules-db-b":
+    image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    profiles: [setup]
+    user: "10002:10000"
+    environment:
+      HOME: "/tmp"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p \"$0/.locksql\" && head -c 526336 | tar -x -C \"$0/.locksql\" && cd \"$0\" && exec locksql profile rules --json \"$@\"", "/w/one"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m", "/w/one:size=2m,uid=10002,gid=10000,mode=0700"]
+    pids_limit: 64
+    mem_limit: 256m
+  "rules-db-c":
+    image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    profiles: [setup]
+    user: "10002:10000"
+    environment:
+      HOME: "/tmp"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p \"$0/.locksql\" && head -c 526336 | tar -x -C \"$0/.locksql\" && cd \"$0\" && exec locksql profile rules --json \"$@\"", "/w/one"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m", "/w/one:size=2m,uid=10002,gid=10000,mode=0700"]
+    pids_limit: 64
+    mem_limit: 256m
+  "rules-mq-a":
+    image: "ghcr.io/davidgodefroid/lockmq@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    profiles: [setup]
+    user: "10012:10010"
+    environment:
+      HOME: "/tmp"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p \"$0/.lockmq\" && head -c 526336 | tar -x -C \"$0/.lockmq\" && cd \"$0\" && exec lockmq profile rules --json \"$@\"", "/w/one"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m", "/w/one:size=2m,uid=10012,gid=10010,mode=0700"]
+    pids_limit: 64
+    mem_limit: 256m
+  "rules-mq-b":
+    image: "ghcr.io/davidgodefroid/lockmq@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    profiles: [setup]
+    user: "10012:10010"
+    environment:
+      HOME: "/tmp"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p \"$0/.lockmq\" && head -c 526336 | tar -x -C \"$0/.lockmq\" && cd \"$0\" && exec lockmq profile rules --json \"$@\"", "/w/one"]
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=16m", "/w/one:size=2m,uid=10012,gid=10010,mode=0700"]
+    pids_limit: 64
+    mem_limit: 256m
   "homefiles-db-a":
     image: "ghcr.io/davidgodefroid/locksql@sha256:2222222222222222222222222222222222222222222222222222222222222222"
     profiles: [setup]

@@ -116,6 +116,12 @@ func (f *fake) Run(_ context.Context, stdin []byte, name string, args ...string)
 		if r, ok := f.keys["rules/"+line[i+len(" --no-deps rules-"):]]; ok {
 			return []byte(r), nil
 		}
+		// locksql, lockmq: their defaults, for the profiles the tests name.
+		for _, t := range []string{"locksql", "lockmq"} {
+			if strings.Contains(composeOf(args), "exec "+t+" profile rules") && strings.Contains(composeOf(args), `"rules-`+line[i+len(" --no-deps rules-"):]+`":`) && typeOfRules(composeOf(args), line[i+len(" --no-deps rules-"):]) == t {
+				return []byte(defaultRulesJSON(t, "default", "prod", "orders", "main", "a", "app")), nil
+			}
+		}
 		return []byte(rulesJSON("ask", "ask", "ask", "default", "a", "app", "ctr", "files", "rem")), nil
 	}
 	if strings.HasSuffix(line, " --no-deps profile-locklog") {
@@ -182,6 +188,52 @@ func (e exitStatus) ExitCode() int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// composeOf is the compose file a docker compose call names with -f (""
+// when it is on stdin).
+func composeOf(args []string) string {
+	for i, a := range args {
+		if a == "-f" && i+1 < len(args) && args[i+1] != "-" {
+			b, _ := os.ReadFile(args[i+1])
+			return string(b)
+		}
+	}
+	return ""
+}
+
+// typeOfRules is the lock type whose profile rules the service
+// rules-<inst> of a compose file reads.
+func typeOfRules(compose, inst string) string {
+	_, rest, ok := strings.Cut(compose, `"rules-`+inst+`":`)
+	if !ok {
+		return ""
+	}
+	_, rest, _ = strings.Cut(rest, "&& exec ")
+	t, _, _ := strings.Cut(rest, " ")
+	return t
+}
+
+// defaultRulesJSON is `<typ> profile rules --json` for profiles, each
+// with typ's default rules (locksql, lockmq).
+func defaultRulesJSON(typ string, profiles ...string) string {
+	rules := map[string]map[string]string{
+		"locksql": {"connect": "ask", "read": "auto", "write": "ask", "ddl": "ask", "unmask": "ask"},
+		"lockmq":  {"connect": "ask", "list": "auto", "read": "auto", "peek": "ask", "get": "ask", "publish": "ask", "purge": "ask", "delete": "ask"},
+	}[typ]
+	type pr struct {
+		Profile string            `json:"profile"`
+		Rules   map[string]string `json:"rules"`
+	}
+	o := struct {
+		Lock     string `json:"lock"`
+		Profiles []pr   `json:"profiles"`
+	}{Lock: typ}
+	for _, p := range profiles {
+		o.Profiles = append(o.Profiles, pr{p, rules})
+	}
+	b, _ := json.Marshal(o)
+	return string(b) + "\n"
 }
 
 // rulesJSON is locklog profile rules --json for profiles, each with the

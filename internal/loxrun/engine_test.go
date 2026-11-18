@@ -440,3 +440,102 @@ func TestSSHRules(t *testing.T) {
 		t.Errorf("lockmq action: %+v", v)
 	}
 }
+
+// locksql (locksql#185): SQLRules map connect, read, write and ddl onto
+// the engine's actions; unmask is the lock's own (it signs never-auto a
+// ticket its rule does not leave to the auto mode), so a masked read
+// that touches PII keeps the read rule.
+func TestSQLRules(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(a string) string { return m[a] } }
+	r := SQLRules(get(map[string]string{"connect": "auto", "read": "auto", "write": "deny", "ddl": "ask", "unmask": "auto"}))
+	want := ProfileRules{ActConnect: Allow, ActRead: Allow, ActWrite: Deny, ActDDL: Ask}
+	if len(r) != len(want) {
+		t.Fatalf("rules %v", r)
+	}
+	for k, v := range want {
+		if r[k] != v {
+			t.Errorf("%s: %s, want %s", k, r[k], v)
+		}
+	}
+	if r := SQLRules(func(string) string { return "yes" }); r[ActRead] != Ask || r[ActConnect] != Ask {
+		t.Errorf("odd values: %v", r)
+	}
+	e := NewEngine(Auto)
+	e.Rules = func(lock, instance, profile string) ProfileRules {
+		if lock == LockLocksql && instance == "db" && profile == "prod" {
+			return r
+		}
+		return nil
+	}
+	sql := func(kind ticket.Kind, risk ticket.Risk, mod func(*Request)) Verdict {
+		q := Request{Instance: "db", Lock: LockLocksql, V: ticket.VersionKinds, Kind: kind, Risk: risk,
+			Subject: &ticket.Subject{Profile: "prod"}, Production: true, Verified: true}
+		if mod != nil {
+			mod(&q)
+		}
+		return e.Decide(q)
+	}
+	// connect = auto: no question, not even the first of the session.
+	if v := sql(ticket.KindConnect, ticket.RiskRead, nil); v.Outcome != Approve || v.Rule != "profile:connect" {
+		t.Errorf("connect: %+v", v)
+	}
+	if v := sql(ticket.KindRead, ticket.RiskReadPII, nil); v.Outcome != Approve || v.Rule != "profile:read" {
+		t.Errorf("read: %+v", v)
+	}
+	if v := sql(ticket.KindWrite, ticket.RiskProdWrite, nil); v.Outcome != Refuse || v.Rule != "deny:write" {
+		t.Errorf("write: %+v", v)
+	}
+	if v := sql(ticket.KindDDL, ticket.RiskProdWrite, nil); v.Outcome != Question {
+		t.Errorf("ddl: %+v", v)
+	}
+	// What the lock keeps for a human stays a human's, whatever the rule.
+	if v := sql(ticket.KindRead, ticket.RiskRead, func(q *Request) { q.NeverAuto = true }); v.Outcome != Question {
+		t.Errorf("never-auto read: %+v", v)
+	}
+	if v := sql(ticket.KindRead, ticket.RiskGrant, nil); v.Outcome != Question {
+		t.Errorf("grant: %+v", v)
+	}
+	if v := sql(ticket.KindPolicy, ticket.RiskPolicyLoosen, nil); v.Outcome != Question {
+		t.Errorf("policy: %+v", v)
+	}
+}
+
+// lockmq (lockmq#49): its actions are a ticket's verb (list, read, peek,
+// get, publish, purge, delete); MQRules rule each by its own name.
+func TestMQRules(t *testing.T) {
+	r := MQRules(func(a string) string {
+		return map[string]string{"connect": "auto", "list": "auto", "read": "auto", "peek": "ask", "get": "deny", "publish": "ask", "purge": "ask", "delete": "bogus"}[a]
+	})
+	e := NewEngine(Auto)
+	e.Rules = func(lock, instance, profile string) ProfileRules {
+		if lock == LockLockmq {
+			return r
+		}
+		return nil
+	}
+	mq := func(kind ticket.Kind, risk ticket.Risk, verb string) Verdict {
+		return e.Decide(Request{Instance: "q", Lock: LockLockmq, V: ticket.VersionKinds, Kind: kind, Risk: risk,
+			Subject: &ticket.Subject{Profile: "p", Verb: verb}, Verified: true})
+	}
+	for _, c := range []struct {
+		kind ticket.Kind
+		risk ticket.Risk
+		verb string
+		want Outcome
+		rule string
+	}{
+		{ticket.KindConnect, ticket.RiskRead, "", Approve, "profile:connect"},
+		{ticket.KindAction, ticket.RiskRead, "list", Approve, "profile:list"},
+		{ticket.KindAction, ticket.RiskReadPII, "read", Approve, "profile:read"},
+		// A read by its risk, but its rule asks: not the default's auto.
+		{ticket.KindAction, ticket.RiskReadPII, "peek", Question, "ask:peek"},
+		{ticket.KindAction, ticket.RiskWrite, "get", Refuse, "deny:get"},
+		{ticket.KindAction, ticket.RiskWrite, "delete", Question, "ask:delete"},
+		// A verb the rules do not name keeps the defaults (by its risk).
+		{ticket.KindAction, ticket.RiskWrite, "shovel", Question, "ask:action"},
+	} {
+		if v := mq(c.kind, c.risk, c.verb); v.Outcome != c.want || v.Rule != c.rule {
+			t.Errorf("%s %s: %+v, want %v %s", c.kind, c.verb, v, c.want, c.rule)
+		}
+	}
+}

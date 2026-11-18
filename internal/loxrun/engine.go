@@ -252,6 +252,16 @@ func (e *Engine) ruleAction(r Request, a Action) Action {
 		}
 		return a
 	}
+	if r.Lock == LockLockmq && a == ActAction {
+		// lockmq's actions are its tickets' verbs (list, read, peek…):
+		// each ruled by its own name when the profile's rules are known.
+		if v := Action(r.verb()); v != "" {
+			if _, ok := e.rulesOf(r)[v]; ok {
+				return v
+			}
+		}
+		return a
+	}
 	if a == ActRead && r.Risk == ticket.RiskReadPII {
 		if _, ok := e.rulesOf(r)[ActReadPII]; ok {
 			return ActReadPII
@@ -375,11 +385,13 @@ func autoRule(e *Engine, r Request, a Action) string {
 	return "default:" + string(a)
 }
 
-// LockLocklog and LockLockssh are locklog's and lockssh's product names,
-// as their tickets name their lock (Request.Lock).
+// LockLocklog, LockLockssh, LockLocksql and LockLockmq are the locks'
+// product names, as their tickets name their lock (Request.Lock).
 const (
 	LockLocklog = "locklog"
 	LockLockssh = "lockssh"
+	LockLocksql = "locksql"
+	LockLockmq  = "lockmq"
 )
 
 // rulesOf are the rules of r's profile. A locklog ticket fails closed:
@@ -450,6 +462,41 @@ func SSHRules(get func(action string) string) ProfileRules {
 		unmask = Ask
 	}
 	return ProfileRules{ActConnect: val("connect"), ActRead: val("run"), ActWrite: val("exec"), ActReadPII: unmask}
+}
+
+// ruleValue reads a lock's rule value: one that is not auto, ask or deny
+// is ask.
+func ruleValue(v string) Value {
+	switch v := Value(v); v {
+	case Allow, Ask, Deny:
+		return v
+	}
+	return Ask
+}
+
+// SQLRules are the engine's rules for a locksql profile whose auto rules
+// (`locksql profile rules`, locksql#185) give get(action) for connect,
+// read, write and ddl. Its fifth action, unmask (results in clear), is
+// not a ticket kind: the console signs never-auto every ticket its own
+// rule does not leave to the auto mode, which no rule here overrides.
+func SQLRules(get func(action string) string) ProfileRules {
+	return ProfileRules{ActConnect: ruleValue(get("connect")), ActRead: ruleValue(get("read")),
+		ActWrite: ruleValue(get("write")), ActDDL: ruleValue(get("ddl"))}
+}
+
+// MQActions are lockmq's auto-rule actions that are a ticket's verb
+// (lockmq#49); connect is its connect ticket.
+var MQActions = []string{"list", "read", "peek", "get", "publish", "purge", "delete"}
+
+// MQRules are the engine's rules for a lockmq profile whose auto rules
+// (`lockmq profile rules`) give get(action): connect, and each action by
+// its own name, as a lockmq ticket's verb names it.
+func MQRules(get func(action string) string) ProfileRules {
+	r := ProfileRules{ActConnect: ruleValue(get("connect"))}
+	for _, a := range MQActions {
+		r[Action(a)] = ruleValue(get(a))
+	}
+	return r
 }
 
 // Answered records the human's answer on r: an approved connection or
