@@ -12,6 +12,7 @@ import (
 
 	"github.com/DavidGodefroid/lockhub/internal/api"
 	"github.com/DavidGodefroid/lockhub/internal/approve"
+	"github.com/DavidGodefroid/lockhub/internal/route"
 )
 
 // Hub is what lox run needs of the hub's facade socket
@@ -44,6 +45,11 @@ const (
 	// EvVaultToken: a Vault token went to a vault_token: cli lock
 	// (Instance; ID for a connect ticket's), VaultToken says how.
 	EvVaultToken EventKind = "vault-token"
+	// EvLeft: an unattended session (lox live) left a ticket pending for
+	// a human's facade (Why).
+	EvLeft EventKind = "left"
+	// EvConsole: a lock's console changed (Instance, Console).
+	EvConsole EventKind = "console"
 )
 
 // Event is one thing that happened in a session.
@@ -61,6 +67,10 @@ type Event struct {
 	// VaultToken is VaultFromCLI or VaultTyped (EvVaultToken), never the
 	// token.
 	VaultToken string
+	// Why is why a ticket was left to a human (EvLeft).
+	Why string
+	// Console is the console's state (EvConsole).
+	Console *ConsoleStatus
 }
 
 // Session is one `lox run`'s decision service: Run follows the hub's
@@ -147,6 +157,27 @@ type Session struct {
 	// QueueWait is the hub long-poll (default 25s); StatePoll how often
 	// decided tickets' results are fetched (default 2s).
 	QueueWait, StatePoll time.Duration
+	// Facade is the facade the session's decisions are sent under
+	// (default tty; lox live: live).
+	Facade string
+	// Unattended is lox live's session: no human is here (unattended.go).
+	// Only what a rule decides is decided; every ticket the engine would
+	// ask is left pending at the hub for a human's facade, and no
+	// console question is answered but the Vault token's of a lock with
+	// vault_token: cli. Nothing is drawn nor asked: plain log lines.
+	Unattended bool
+	// VaultRetry is how long an unattended session waits before it reads
+	// the host's Vault token again for a console's question it could not
+	// answer (default 30s).
+	VaultRetry time.Duration
+}
+
+// name is the command the session's log lines name.
+func (s *Session) name() string {
+	if s.Unattended {
+		return "lox live"
+	}
+	return "lox run"
 }
 
 // ForeignHub is CheckHub's answer when the facade socket is served by a
@@ -171,6 +202,7 @@ type tracked struct {
 	// cq is set on a console's question (no ticket: tk is nil).
 	cq *consoleQ
 	answer
+	unattendedT
 }
 
 // state is the session's state, owned by Run's loop.
@@ -298,6 +330,12 @@ func (s *Session) Run(ctx context.Context) error {
 	if s.ReconnectAsk == 0 {
 		s.ReconnectAsk = 30 * time.Second
 	}
+	if s.Facade == "" {
+		s.Facade = route.TTY
+	}
+	if s.VaultRetry == 0 {
+		s.VaultRetry = 30 * time.Second
+	}
 	st := newState(s)
 	defer st.wipe()
 
@@ -406,7 +444,10 @@ func (s *Session) Run(ctx context.Context) error {
 	statePoll := time.NewTicker(s.StatePoll)
 	defer statePoll.Stop()
 
-	if s.Size == nil {
+	switch {
+	case s.Unattended:
+		st.logf("lox live: serving the decisions its rules take (facade %s); every other ticket waits at the hub for a human's facade", s.Facade)
+	case s.Size == nil:
 		st.logf("lox run: serving decisions in %s mode (Shift+Tab switches; q q quits)", st.eng.Mode)
 	}
 	for {

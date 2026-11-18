@@ -221,7 +221,7 @@ func (st *state) draw() {
 
 func (st *state) setFlash(msg string) {
 	st.flash, st.flashTo = msg, st.s.now().Add(4*time.Second)
-	st.logf("lox run: %s", msg)
+	st.logf("%s: %s", st.s.name(), msg)
 }
 
 func (st *state) onQueue(res api.QueueResult, err error) {
@@ -271,9 +271,9 @@ func (st *state) onQueue(res api.QueueResult, err error) {
 func (st *state) observeHub(err error) {
 	st.s.observe(Event{Kind: EvHub, Err: err})
 	if err != nil {
-		st.logf("lox run: hub unreachable: %s", shortErr(err))
+		st.logf("%s: hub unreachable: %s", st.s.name(), shortErr(err))
 	} else {
-		st.logf("lox run: hub up")
+		st.logf("%s: hub up", st.s.name())
 	}
 }
 
@@ -313,8 +313,8 @@ func (st *state) add(it api.QueueItem) {
 		// Refused with the reason, so its lock ends the plan and frees
 		// its slot instead of waiting for an answer no facade gives.
 		t.unreadable = true
-		st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: route.TTY, Display: st.s.Display,
-			Reason: rejectReason(err)}})
+		st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: st.s.Facade, Display: st.s.Display,
+			Reason: rejectReason(st.s.name(), err)}})
 		return
 	}
 	t.tk = tk
@@ -411,8 +411,8 @@ const unreadableSummary = "unreadable ticket"
 
 // rejectReason is the reason of lox run's refusal of a ticket that does
 // not verify, as its lock returns it to the agent.
-func rejectReason(err error) string {
-	r := "ticket rejected by lox run: " + clean(err.Error())
+func rejectReason(by string, err error) string {
+	r := "ticket rejected by " + by + ": " + clean(err.Error())
 	if len(r) > 512 {
 		r = r[:512]
 	}
@@ -494,6 +494,9 @@ func (st *state) apply(t *tracked, v Verdict) {
 		var secret []byte
 		if needsSecret(t) {
 			if secret = st.cachedSecret(t); secret == nil {
+				if st.vaultByRule(t, v) {
+					return
+				}
 				st.ask(t, "the lock asks for the secret: "+v.Why, "ask:secret")
 				return
 			}
@@ -519,6 +522,10 @@ func (st *state) apply(t *tracked, v Verdict) {
 
 // ask puts t's question card up and calls the human (a sound, the bell).
 func (st *state) ask(t *tracked, why, tag string) {
+	if st.s.Unattended {
+		st.leave(t, why, tag)
+		return
+	}
 	tk := t.tk
 	c := &Card{ID: t.id, Instance: clean(t.instance), Lock: clean(tk.Source.Lock), Agent: clean(tk.Requester.Agent),
 		Profile: clean(t.req.Profile()), Kind: t.req.Kind, Risk: clean(string(tk.Risk)), Production: tk.Flags.Production,
@@ -595,7 +602,7 @@ func (st *state) pushEntry(t *tracked, group bool) {
 // verified under the pinned lock key: neither the hub nor the agent can
 // open it.
 func (st *state) send(t *tracked, approved bool, rule string, secret []byte) {
-	req := api.DecideRequest{Approved: approved, Facade: route.TTY, Display: st.s.Display, Rule: rule, Retype: t.retyped}
+	req := api.DecideRequest{Approved: approved, Facade: st.s.Facade, Display: st.s.Display, Rule: rule, Retype: t.retyped}
 	if rule == "" {
 		req.Asked = askedText(t.entry.Asked)
 	}
@@ -627,7 +634,7 @@ func (st *state) sendInputs(t *tracked) {
 		st.failed(t, "cannot seal the typed values: "+err.Error())
 		return
 	}
-	req := api.DecideRequest{Approved: true, Facade: route.TTY, Display: st.s.Display, Retype: t.retyped,
+	req := api.DecideRequest{Approved: true, Facade: st.s.Facade, Display: st.s.Display, Retype: t.retyped,
 		Asked: askedText(t.entry.Asked), Secret: raw}
 	st.pending = append(st.pending, effect{t, req})
 }
@@ -636,7 +643,7 @@ func (st *state) sendInputs(t *tracked) {
 func (st *state) denyTyped(t *tracked) {
 	t.wipeInputs()
 	t.card.Prompt = nil
-	st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: route.TTY, Display: st.s.Display,
+	st.pending = append(st.pending, effect{t, api.DecideRequest{Facade: st.s.Facade, Display: st.s.Display,
 		Reason: noValueReason, Asked: askedText(t.entry.Asked)}})
 }
 
@@ -845,6 +852,7 @@ func (st *state) onTick() {
 		st.loadAudit()
 	}
 	st.remind()
+	st.retryVault()
 	st.dirty = st.s.Size != nil
 }
 

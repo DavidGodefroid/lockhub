@@ -179,7 +179,9 @@ func Exchange(r store.Exchange, hubKeys []ed25519.PublicKey, lockKeys map[string
 			x.Decided = r.Decision.At
 		}
 		if d.Auto() {
-			x.Rule = clean(d.Rule.ID)
+			// The facade tells lox live's rule decisions (live) from the
+			// terminal's (tty).
+			x.Rule, x.Facade = clean(d.Rule.ID), clean(d.Facade)
 		} else {
 			x.Facade, x.Approver = clean(d.Facade), clean(d.Approver.Display)
 			if x.Approver == "" {
