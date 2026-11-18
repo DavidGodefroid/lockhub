@@ -295,8 +295,9 @@ func Listen(path, group string) (net.Listener, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	// Created 0660 at once: nobody connects before its mode is set.
-	old := syscall.Umask(0o117)
+	// Created 0600: until its group is set, only lox live's user can connect
+	// (0660 at once would open it to that user's primary group meanwhile).
+	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
 	syscall.Umask(old)
 	if err != nil {
@@ -307,6 +308,12 @@ func Listen(path, group string) (net.Listener, error) {
 			ln.Close()
 			return nil, fmt.Errorf("--status-group %s: %w (lox live's user must be a member of the group)", group, err)
 		}
+	}
+	// The directory was checked above (ours, not writable by others), so the
+	// path cannot have been swapped for a link: the mode goes on our socket.
+	if err := os.Chmod(path, 0o660); err != nil {
+		ln.Close()
+		return nil, err
 	}
 	return ln, nil
 }
