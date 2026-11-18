@@ -79,10 +79,18 @@ func TestLiveEnrol(t *testing.T) {
 func TestRunAndLiveExclude(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
-	ws := t.TempDir()
+	// The workspace is reached through a link, as a temporary directory is
+	// on macOS (/var -> /private/var): lox names a workspace by its real
+	// path, and so must the lock taken here by hand.
+	real := t.TempDir()
+	ws := filepath.Join(t.TempDir(), "ws")
+	if err := os.Symlink(real, ws); err != nil {
+		t.Fatal(err)
+	}
 	abs := filepath.Join(ws, family.Dir, family.FileName)
 	os.MkdirAll(filepath.Dir(abs), 0o755)
 	os.WriteFile(abs, []byte("version: 1\nhub:\n  image: ghcr.io/davidgodefroid/lockhub@sha256:"+strings.Repeat("1", 64)+"\n"), 0o644)
+	abs = family.Canonical(abs) // as lockFile does for every command
 	state := stateDir(family.Project(family.Workspace(abs)))
 
 	liveHeld, err := servelock.Acquire(state, servelock.Live)
@@ -100,7 +108,18 @@ func TestRunAndLiveExclude(t *testing.T) {
 		t.Fatal("lox run once lox live stopped")
 	}
 	var out, errb2 bytes.Buffer
-	code := run([]string{"live", "--file", abs, "--status-socket", filepath.Join(t.TempDir(), "s.sock")}, os.Stdin, &out, &errb2)
+	// Given the link, not the real path: lox live must find the same lock.
+	// A lox live that does not refuse would serve for ever: bound the wait.
+	done := make(chan int, 1)
+	go func() {
+		done <- run([]string{"live", "--file", filepath.Join(ws, family.Dir, family.FileName), "--status-socket", filepath.Join(t.TempDir(), "s.sock")}, os.Stdin, &out, &errb2)
+	}()
+	var code int
+	select {
+	case code = <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("lox live started next to a lox run instead of refusing")
+	}
 	if code != 1 || !strings.Contains(errb2.String(), "lox live: a lox at a terminal holds this workspace") {
 		t.Fatalf("lox live next to lox run: %d %q", code, errb2.String())
 	}
