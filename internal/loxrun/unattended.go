@@ -56,9 +56,9 @@ type unattendedT struct {
 	// autoRule and autoTag are the rule that approved a connect whose
 	// Vault token is being read (vaultByRule).
 	autoRule, autoTag string
-	// blockedAt is when a console's Vault token question could not be
-	// answered; vaultRetry: it is tried again after Session.VaultRetry.
-	blockedAt  time.Time
+	// vaultRetry: a console's Vault token question could not be answered
+	// and is tried again at retryAt.
+	retryAt    time.Time
 	vaultRetry bool
 }
 
@@ -108,7 +108,13 @@ func (st *state) blockConsole(t *tracked, vaultWhy string) {
 	if st.vaultPrompt(t.instance, t.cq.prompt) {
 		// Its own question: tried again later (Vault Agent may write a
 		// new token meanwhile).
-		t.vaultRetry, t.blockedAt = true, st.s.now()
+		// A token the lock refused: later and later (the same token is
+		// not typed for ever), until the host's token changes.
+		delay := st.s.VaultRetry
+		if n := st.vaultRefused[t.instance]; n > 1 {
+			delay = min(st.s.VaultRetry<<min(n-1, 16), st.s.VaultRetryMax)
+		}
+		t.vaultRetry, t.retryAt = true, st.s.now().Add(delay)
 		blocked = BlockedSecret
 		detail = "the host's Vault token cannot be used for its console"
 		if vaultWhy != "" {
@@ -129,8 +135,23 @@ func (st *state) retryVault() {
 		return
 	}
 	now := st.s.now()
+	changed := false
+	if st.s.VaultStamp != nil {
+		if s := st.s.VaultStamp(); s != st.vaultStamp || !st.vaultStampSet {
+			// Another token on the host: the refusals were the old one's.
+			changed = st.vaultStampSet
+			st.vaultStamp, st.vaultStampSet = s, true
+			if changed {
+				clear(st.vaultRefused)
+			}
+		}
+	}
 	for _, t := range st.consoleCards {
-		if t.vaultRetry && !t.vaultFetching && !t.decided && now.Sub(t.blockedAt) >= st.s.VaultRetry {
+		if t.vaultRetry && !t.vaultFetching && !t.decided && (changed || !now.Before(t.retryAt)) {
+			if changed {
+				// Not a refusal of this token: it is typed at once.
+				delete(st.vaultCLIAt, answerKey(t.instance, t.cq.prompt))
+			}
 			t.vaultRetry, t.vaultFetching = false, true
 			st.vaultFetches = append(st.vaultFetches, t)
 		}

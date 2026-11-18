@@ -426,12 +426,17 @@ func productionAuto(r Request, a Action) bool {
 	return false
 }
 
+// profileRulePrefix starts the name of an auto approval decided by the
+// profile's own written rule (autoRule); every other approval's rule is a
+// default's or the session's.
+const profileRulePrefix = "profile:"
+
 // autoRule names the rule of an auto approval: the profile's own rule
 // when it set the action, the default otherwise.
 func autoRule(e *Engine, r Request, a Action) string {
 	ra := e.ruleAction(r, a)
 	if _, ok := e.rulesOf(r)[ra]; ok {
-		return "profile:" + string(ra)
+		return profileRulePrefix + string(ra)
 	}
 	return "default:" + string(a)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -117,12 +118,83 @@ func TestUnattendedHubWantsAHuman(t *testing.T) {
 	hub.refuse = func(id string, req api.DecideRequest) error {
 		return &approve.HubError{Status: 409, Kind: "needs_human", Message: "never decided by an auto rule"}
 	}
-	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, unattended)
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
+		unattended(s)
+		s.Rules = func(string, string, string) ProfileRules { return ProfileRules{ActRead: Allow} }
+	})
 	it := lk.item(t, ticket.KindRead, ticket.RiskRead, "prod", "SELECT 1", nil)
 	hub.push(it)
 	h.waitLeft(it.ID)
 	if _, ok := hub.decision(it.ID); ok {
 		t.Fatal("decided")
+	}
+}
+
+// lox live approves by a written rule of the ticket's profile, never by
+// an engine default: a lock whose rules are unknown (not read, another
+// profile, a lock type that has none), a version-1 ticket and a
+// production write are left to a human, whatever lox run would approve
+// by default:read or default:action.
+func TestUnattendedNeverApprovesByDefault(t *testing.T) {
+	lk := newLockKey()
+	hub := newFakeHub()
+	var sent []api.DecideRequest
+	var mu sync.Mutex
+	hub.refuse = func(id string, req api.DecideRequest) error {
+		mu.Lock()
+		sent = append(sent, req)
+		mu.Unlock()
+		return nil
+	}
+	h := start(t, hub, map[string]ed25519.PublicKey{"shop": lk.pub}, func(s *Session) {
+		unattended(s)
+		s.Rules = func(lock, instance, profile string) ProfileRules {
+			if lock == LockLocksql && profile == "ruled" {
+				return SQLRules(func(string) string { return "auto" })
+			}
+			return nil // unknown: not read, or another profile
+		}
+	})
+	as := func(lock string) func(*ticket.Ticket) { return func(tk *ticket.Ticket) { tk.Source.Lock = lock } }
+	prod := func(tk *ticket.Ticket) { tk.Flags.Production = true }
+	left := map[string]api.QueueItem{
+		"locksql read, no rules":                   lk.item(t, ticket.KindRead, ticket.RiskRead, "unruled", "SELECT 1", nil),
+		"locksql read-pii on production, no rules": lk.item(t, ticket.KindRead, ticket.RiskReadPII, "unruled", "SELECT email", prod),
+		"locksql read, another profile":            lk.item(t, ticket.KindRead, ticket.RiskRead, "other", "SELECT 2", nil),
+		"lockfile read":                            lk.item(t, ticket.KindRead, ticket.RiskRead, "ruled", "cat a.txt", as("lockfile")),
+		"lockfile action that reads":               lk.item(t, ticket.KindAction, ticket.RiskRead, "ruled", "ls", func(tk *ticket.Ticket) { tk.Source.Lock, tk.Subject.Verb = "lockfile", "ls" }),
+		"lockmq peek, no rules":                    lk.item(t, ticket.KindAction, ticket.RiskRead, "ruled", "peek q", func(tk *ticket.Ticket) { tk.Source.Lock, tk.Subject.Verb = "lockmq", "peek" }),
+		"lockhttp endpoint": lk.item(t, ticket.KindEndpoint, ticket.RiskRead, "ruled", "GET /", func(tk *ticket.Ticket) {
+			tk.Source.Lock, tk.Subject.Endpoint, tk.Subject.Verb = "lockhttp", "api.example.com", "GET"
+		}),
+		"locklog read, no rules":           lk.item(t, ticket.KindRead, ticket.RiskRead, "ruled", "scan", as("locklog")),
+		"a production write, write = auto": lk.item(t, ticket.KindWrite, ticket.RiskProdWrite, "ruled", "UPDATE", prod),
+		"a production ddl, ddl = auto":     lk.item(t, ticket.KindDDL, ticket.RiskWrite, "ruled", "DROP", prod),
+	}
+	v1 := lk.item(t, ticket.KindRead, ticket.RiskRead, "ruled", "SELECT 3", func(tk *ticket.Ticket) { tk.V, tk.Kind, tk.Subject = ticket.Version, "", nil })
+	left["a version-1 ticket"] = v1
+	for name, it := range left {
+		hub.push(it)
+		if e := h.waitLeft(it.ID); e.Why == "" {
+			t.Errorf("%s: left without a reason", name)
+		}
+	}
+	// The written rule of its own profile still decides.
+	ok := lk.item(t, ticket.KindRead, ticket.RiskRead, "ruled", "SELECT 4", prod)
+	hub.push(ok)
+	if d := h.wait(EvDecided, ok.ID); !d.Approved || d.Rule != "profile:read" {
+		t.Fatalf("the ruled profile's read: %+v", d)
+	}
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 || sent[0].Rule != "profile:read" {
+		t.Fatalf("decisions sent to the hub: %+v, want the ruled read only", sent)
+	}
+	for _, r := range sent {
+		if r.Approved && !strings.HasPrefix(r.Rule, "profile:") {
+			t.Errorf("an approval not by a profile rule: %+v", r)
+		}
 	}
 }
 
@@ -230,9 +302,12 @@ func TestUnattendedVaultTokenPrompt(t *testing.T) {
 	cons := newFakeConsoles()
 	fv := &fakeVaultCLI{}
 	clk := &clock{t: time.Unix(1_800_000_000, 0)}
+	var stamp atomic.Value
+	stamp.Store("token-1")
 	h := start(t, newFakeHub(), nil, func(s *Session) {
 		unattended(s)
-		s.Consoles, s.Vault, s.Now, s.VaultRetry = cons, fv.vault("shop"), clk.now, time.Minute
+		s.Consoles, s.Vault, s.Now, s.VaultRetry, s.VaultRetryMax = cons, fv.vault("shop"), clk.now, time.Minute, 5*time.Minute
+		s.VaultStamp = func() string { return stamp.Load().(string) }
 	})
 	prompt := "Vault token for " + vaultAddr + ": "
 	cons.ask("shop", prompt)
@@ -260,9 +335,39 @@ func TestUnattendedVaultTokenPrompt(t *testing.T) {
 	}
 	// After VaultRetry it is read and typed again (Vault Agent may have
 	// written a new one).
-	clk.add(2 * time.Minute)
+	clk.add(61 * time.Second)
 	if a := h.typedAt(cons); a != cliToken {
 		t.Fatalf("typed %q after the retry delay", a)
+	}
+	// Refused again and again: the delay doubles each time, up to
+	// VaultRetryMax; the same refused token is not typed every minute.
+	for i, wait := range []time.Duration{2 * time.Minute, 4 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
+		cons.ask("shop", prompt)
+		h.consoleStatus("shop", BlockedSecret)
+		n := fv.count()
+		clk.add(wait - 10*time.Second)
+		time.Sleep(1200 * time.Millisecond) // a tick
+		if fv.count() != n {
+			t.Fatalf("refusal %d: typed again before %s", i+2, wait)
+		}
+		clk.add(11 * time.Second)
+		if a := h.typedAt(cons); a != cliToken {
+			t.Fatalf("refusal %d: typed %q", i+2, a)
+		}
+	}
+	// A new token on the host (Vault Agent wrote one): tried at once, and
+	// the delay starts over.
+	cons.ask("shop", prompt)
+	h.consoleStatus("shop", BlockedSecret)
+	stamp.Store("token-2")
+	if a := h.typedAt(cons); a != cliToken {
+		t.Fatalf("typed %q on a new token", a)
+	}
+	cons.ask("shop", prompt)
+	h.consoleStatus("shop", BlockedSecret)
+	clk.add(61 * time.Second)
+	if a := h.typedAt(cons); a != cliToken {
+		t.Fatalf("typed %q: the delay did not start over", a)
 	}
 
 	// The host has no usable token: missing_secret with the reason, tried

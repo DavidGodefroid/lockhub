@@ -489,6 +489,14 @@ func (st *state) cachedSecret(t *tracked) []byte {
 
 // apply carries out the engine's verdict on t.
 func (st *state) apply(t *tracked, v Verdict) {
+	if v.Outcome == Approve && st.s.Unattended && !strings.HasPrefix(v.Rule, profileRulePrefix) {
+		// lox live approves by a written rule of the ticket's profile,
+		// never by an engine default (default:read, default:action: its
+		// lock's rules are unknown, or its lock has none) nor a session's
+		// earlier answer: fail closed, for every lock type.
+		st.leave(t, "no written rule of its profile approves it ("+v.Rule+"): lox live approves by a profile's auto rule only", "ask:norule")
+		return
+	}
 	switch v.Outcome {
 	case Approve:
 		var secret []byte

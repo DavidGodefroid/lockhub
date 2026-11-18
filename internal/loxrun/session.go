@@ -168,8 +168,15 @@ type Session struct {
 	Unattended bool
 	// VaultRetry is how long an unattended session waits before it reads
 	// the host's Vault token again for a console's question it could not
-	// answer (default 30s).
-	VaultRetry time.Duration
+	// answer (default 30s). A token the lock refused is typed again only
+	// after VaultRetry, doubled at each refusal in a row up to
+	// VaultRetryMax (default 30 minutes): the same refused token is not
+	// typed for ever.
+	VaultRetry, VaultRetryMax time.Duration
+	// VaultStamp, if set, tells one host token from the next (the token
+	// file's change): when it changes, the refusals are forgotten and
+	// the waiting consoles get the new token at once.
+	VaultStamp func() string
 }
 
 // name is the command the session's log lines name.
@@ -242,6 +249,12 @@ type state struct {
 	// with it (by answerKey): asked again this soon, the lock refused it.
 	vaultFetches []*tracked
 	vaultCLIAt   map[string]time.Time
+	// vaultRefused counts, per instance, the times in a row its lock
+	// refused the host's token (an unattended session backs off);
+	// vaultStamp is the host token's last stamp (Session.VaultStamp).
+	vaultRefused  map[string]int
+	vaultStamp    string
+	vaultStampSet bool
 	// locks are the locks' feeds read at their consoles, by instance;
 	// tab the lock tab shown ("" the global feed), reveal whether its
 	// statements show in clear (o); loops the refusal loops' lines.
@@ -306,7 +319,7 @@ func newState(s *Session) *state {
 	st := &state{s: s, eng: NewEngine(s.Mode), seen: map[string]*tracked{}, results: map[string]*tracked{},
 		conns: map[string]*ProfileConn{}, active: map[string]time.Time{}, readsAsked: map[string]bool{}, secrets: map[secretKey][]byte{},
 		ran: map[string]ranAt{}, gen: map[string]int{}, consoles: map[string]*LockConsole{},
-		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, vaultCLIAt: map[string]time.Time{}, locks: map[string]*LockFeed{}, dirty: true}
+		consoleCards: map[string]*tracked{}, consoleAnswers: map[string]*consoleAnswer{}, vaultCLIAt: map[string]time.Time{}, vaultRefused: map[string]int{}, locks: map[string]*LockFeed{}, dirty: true}
 	st.eng.Rules = s.Rules
 	st.eng.Caps = s.Caps
 	st.muted = s.Sound != nil && s.Sound.Off
@@ -335,6 +348,9 @@ func (s *Session) Run(ctx context.Context) error {
 	}
 	if s.VaultRetry == 0 {
 		s.VaultRetry = 30 * time.Second
+	}
+	if s.VaultRetryMax == 0 {
+		s.VaultRetryMax = 30 * time.Minute
 	}
 	st := newState(s)
 	defer st.wipe()

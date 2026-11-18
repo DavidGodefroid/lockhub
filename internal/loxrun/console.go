@@ -201,7 +201,10 @@ func (st *state) askConsole(e ConsoleEvent) {
 			// Asked again right after the CLI's token: the lock refused it.
 			delete(st.vaultCLIAt, k)
 			why = "the lock refused it"
+			st.vaultRefused[e.Instance]++
 		} else {
+			delete(st.vaultRefused, e.Instance) // not a refusal in a row
+
 			t.vaultFetching = true
 			t.entry.Tag = "vault:cli"
 			st.vaultFetches = append(st.vaultFetches, t)

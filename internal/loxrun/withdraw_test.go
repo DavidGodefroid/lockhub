@@ -124,3 +124,19 @@ func TestParseArrows(t *testing.T) {
 		t.Errorf("keys %+v", ks)
 	}
 }
+
+// A pending ticket names its agent only when it verified under its
+// lock's pinned key: one merely decoded (no key pinned) names nobody.
+func TestPendingAgentOnlyFromAVerifiedTicket(t *testing.T) {
+	lk := newLockKey()
+	it := lk.item(t, ticket.KindRead, ticket.RiskRead, "p", "SELECT 1", func(tk *ticket.Ticket) { tk.Requester.Agent = "dutydesk:INC-1" })
+	if p := Pending([]api.QueueItem{it}, map[string]ed25519.PublicKey{"shop": lk.pub}); len(p) != 1 || p[0].Agent != "dutydesk:INC-1" || p[0].Unverifiable {
+		t.Fatalf("verified: %+v", p)
+	}
+	if p := Pending([]api.QueueItem{it}, nil); len(p) != 1 || p[0].Agent != "" || p[0].Summary == "" {
+		t.Fatalf("no pinned key: %+v", p)
+	}
+	if p := Pending([]api.QueueItem{it}, map[string]ed25519.PublicKey{"shop": newLockKey().pub}); len(p) != 1 || p[0].Agent != "" || !p[0].Unverifiable {
+		t.Fatalf("another key: %+v", p)
+	}
+}
